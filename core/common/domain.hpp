@@ -1,10 +1,13 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <variant>
 #include <vector>
+
+#include "common/error_code.hpp"
 
 namespace cfx {
 
@@ -239,6 +242,184 @@ struct Link {
     LinkState state;
     bool paired;
     u64 lastHeartbeatAt;
+};
+
+enum class InputType : u8 {
+    Mouse,
+    Keyboard,
+};
+
+enum class AddressType : u8 {
+    IPv4,
+    IPv6,
+    Hostname,
+};
+
+struct PublicKey {
+    std::vector<u8> bytes;
+    bool isPresent{false};
+
+    static PublicKey empty() noexcept { return PublicKey{}; }
+    bool isEmpty() const noexcept { return !isPresent && bytes.empty(); }
+};
+
+struct Capabilities {
+    std::vector<InputType> supportedInputTypes;
+    ScreenBoundary screenBoundary;
+    bool supportsCircular{false};
+    u16 protocolVersion{0};
+
+    bool isValid() const noexcept {
+        return protocolVersion > 0 && screenBoundary.isValid();
+    }
+};
+
+struct EndpointAddress {
+    AddressType addressType;
+    std::string value;
+    u16 port;
+    u8 priority;
+};
+
+struct TopologyMembership {
+    std::string topologyId;
+    std::optional<NodeId> leftNeighbor;
+    std::optional<NodeId> rightNeighbor;
+    u32 segmentIndex;
+};
+
+struct SessionEpoch {
+    u64 value{0};
+
+    void increment() noexcept { ++value; }
+    bool isMonotonicAfter(const SessionEpoch& prev) const noexcept {
+        return value > prev.value;
+    }
+};
+
+struct SessionInstanceId {
+    NodeId nodeId;
+    u64 createdAt{0};
+    bool isActive{true};
+};
+
+struct SessionFence {
+    NodeId nodeId;
+    SessionEpoch epoch;
+    SessionInstanceId instanceId;
+
+    static SessionFence newSession(const NodeId& nid) noexcept {
+        SessionFence f;
+        f.nodeId = nid;
+        f.epoch.value = 1;
+        f.instanceId.nodeId = nid;
+        f.instanceId.createdAt = 0;
+        f.instanceId.isActive = true;
+        return f;
+    }
+};
+
+struct NodeIdentity {
+    NodeId nodeId;
+    PublicKey publicKey;
+    Platform platform;
+    Capabilities capabilities;
+    std::vector<EndpointAddress> endpointAddresses;
+    std::optional<TopologyMembership> topologyMembership;
+    SessionEpoch sessionEpoch;
+
+    bool isValid() const noexcept {
+        return !nodeId.isNull() && capabilities.isValid();
+    }
+};
+
+struct DiscoveryRecord {
+    NodeId nodeId;
+    Platform platform;
+    std::vector<InputType> capabilitiesFingerprint;
+    SessionEpoch sessionEpoch;
+    u16 protocolVersion;
+    std::string topologyId;
+    std::vector<EndpointAddress> endpointAddresses;
+    u64 lastSeenAt;
+};
+
+struct DiscoveryDigest {
+    NodeId nodeId;
+    Platform platform;
+    std::vector<InputType> capabilitiesFingerprint;
+    SessionEpoch sessionEpoch;
+    u16 protocolVersion;
+    std::string topologyId;
+
+    std::vector<std::pair<std::string, std::string>> toTxtRecord() const;
+};
+
+enum class PairingState : u8 {
+    Discovered,
+    Untrusted,
+    Pairing,
+    Trusted,
+    Registering,
+    Registered,
+    Member,
+    Rejected,
+    Rollback,
+};
+
+struct TrustedNodeEntry {
+    NodeId nodeId;
+    u64 pairedAt;
+    SessionEpoch lastSeenEpoch;
+};
+
+struct RegistrationRecord {
+    NodeId peerNodeId;
+    NodeIdentity peerIdentity;
+    PairingState currentState;
+    PairingState previousState;
+    u64 enteredAt;
+    std::optional<ErrorCode> failureReason;
+};
+
+struct MembershipEntry {
+    NodeId nodeId;
+    TopologyMembership topologyMembership;
+    u64 joinedAt;
+    bool isOnline;
+};
+
+enum class TopologyCommitState : u8 {
+    Active,
+    Proposed,
+    Validated,
+    Prepared,
+    ActivationAuthorized,
+    Committing,
+    RolledBack,
+    Locked,
+};
+
+struct TopologyVersion {
+    u64 value{0};
+    std::string topologyId;
+    u64 lastCommitAt{0};
+    TopologyCommitState commitState{TopologyCommitState::Active};
+};
+
+struct TopologyChangeProposal {
+    TopologyVersion proposedVersion;
+    std::vector<MembershipEntry> membershipChange;
+    NodeId proposedBy;
+    u64 proposedAt;
+};
+
+enum class SessionFenceVerdict : u8 {
+    Accept,
+    Reject,
+    StaleEpoch,
+    InstanceConflict,
+    UnknownNode,
 };
 
 }  // namespace cfx

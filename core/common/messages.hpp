@@ -95,13 +95,85 @@ struct PairingMessage {
     std::string pairingCode;
 };
 
+struct DiscoveryAnnouncement {
+    DiscoveryDigest digest;
+    SessionFence fence;
+};
+
+struct PairingRequest {
+    NodeId requesterNodeId;
+    std::string pairingCode;
+    SessionFence fence;
+};
+
+struct PairingResponse {
+    NodeId responderNodeId;
+    bool accepted;
+    std::optional<NodeIdentity> identity;
+    SessionFence fence;
+};
+
+struct RegistrationRequest {
+    NodeIdentity identity;
+    SessionFence fence;
+};
+
+struct RegistrationResponse {
+    NodeId responderNodeId;
+    bool accepted;
+    std::optional<TopologyMembership> membership;
+    SessionFence fence;
+};
+
+enum class MembershipChangeType : u8 {
+    Joined,
+    Left,
+    Updated,
+};
+
+struct MembershipChangeNotification {
+    MembershipChangeType changeType;
+    NodeId memberId;
+    TopologyMembership membership;
+    TopologyVersion topologyVersion;
+    SessionFence fence;
+};
+
+struct IdentityRecoveryRequest {
+    NodeId nodeId;
+    SessionEpoch lastKnownEpoch;
+    SessionInstanceId lastKnownInstance;
+    SessionFence fence;
+};
+
+struct IdentityRecoveryResponse {
+    NodeId responderNodeId;
+    bool recovered;
+    std::optional<NodeIdentity> identity;
+    SessionFence fence;
+};
+
+struct GoodbyeAnnouncement {
+    NodeId nodeId;
+    SessionFence fence;
+};
+
 using ControlMessage = std::variant<
     HandoffRequestMessage,
     HandoffResponseMessage,
     HeartbeatMessage,
     TopologyDeclarationMessage,
     TopologySyncMessage,
-    PairingMessage
+    PairingMessage,
+    DiscoveryAnnouncement,
+    PairingRequest,
+    PairingResponse,
+    RegistrationRequest,
+    RegistrationResponse,
+    MembershipChangeNotification,
+    IdentityRecoveryRequest,
+    IdentityRecoveryResponse,
+    GoodbyeAnnouncement
 >;
 
 struct SendResult {

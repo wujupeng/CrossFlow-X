@@ -126,4 +126,21 @@ std::optional<EndpointIdentity> TopologyView::neighborOf(const NodeId& nodeId, E
     return std::nullopt;
 }
 
+std::vector<std::pair<std::string, std::string>> DiscoveryDigest::toTxtRecord() const {
+    std::vector<std::pair<std::string, std::string>> record;
+    record.reserve(8);
+    record.emplace_back("nid", std::to_string(nodeId.high) + std::to_string(nodeId.low));
+    record.emplace_back("plat", platform == Platform::Mac ? "mac" : "win");
+    record.emplace_back("epoch", std::to_string(sessionEpoch.value));
+    record.emplace_back("pver", std::to_string(protocolVersion));
+    record.emplace_back("tid", topologyId);
+    std::string caps;
+    for (auto cap : capabilitiesFingerprint) {
+        if (!caps.empty()) caps += ",";
+        caps += (cap == InputType::Mouse) ? "mouse" : "keyboard";
+    }
+    record.emplace_back("caps", caps);
+    return record;
+}
+
 }  // namespace cfx

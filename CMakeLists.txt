@@ -6,7 +6,7 @@ project(CrossFlow-X
     DESCRIPTION "CrossFlow-X: Driverless user-mode cross-platform input flow forwarding"
 )
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -38,6 +38,10 @@ add_subdirectory(core/s02_topology)
 add_subdirectory(core/s03_handoff)
 add_subdirectory(core/s04_coord)
 add_subdirectory(core/s05_transport)
+add_subdirectory(core/s06_identity)
+add_subdirectory(core/s07_discovery)
+add_subdirectory(core/s08_pairing)
+add_subdirectory(core/s09_membership)
 add_subdirectory(platform/common)
 add_subdirectory(platform/mac)
 add_subdirectory(platform/win)
@@ -50,6 +54,10 @@ target_link_libraries(cfx_agent PRIVATE
     cfx_s03_handoff
     cfx_s04_coord
     cfx_s05_transport
+    cfx_s06_identity
+    cfx_s07_discovery
+    cfx_s08_pairing
+    cfx_s09_membership
     cfx_platform_common
 )
 if(CFX_PLATFORM_MAC)
