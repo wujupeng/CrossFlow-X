@@ -5,7 +5,14 @@
 > **第一原则**：NodeID 是身份，IP 只是当前可达地址。
 > **CF0 冻结基线引用**：本阶段所有需求严格遵循 `.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）冻结的全部架构基线，包括 Driverless User-Mode Architecture、C++20 技术栈、Canonical Input Event 规范化隔离、Handoff 六态 FSM（ARMED/PENDING/ACK/ACTIVE/COOLDOWN/RECOVERY）、12 条合法状态路径、防抖/冷却/驻留/熔断、PREPARE→ACK→COMMIT→ACTIVE 事务语义、Relative/Absolute Coordinate 双语义、Input/Control 双平面隔离、FSM 单线程所有权、7 个核心契约、CF0 Architecture Safety Invariant（P1 No Split-Brain / P2 No Void-Owner / P3 Recoverable）。
 > **CF0 接口契约引用**：CF1 复用 CF0 冻结的 `ITopologyManager`、`EndpointIdentity`、`NodeId`、`TopologyView`、`ScreenBoundary`、`Platform` 等领域模型与接口（见第 7 章）。
-> **文档状态**：DRAFT v1 → 待用户审查冻结
+> **文档状态**：DRAFT v2 → 待用户审查冻结（v1 经大G项目经理 Gate Review 裁决 **CONDITIONAL PASS / 禁止 FROZEN**；v2 补齐 4 个协议级 Amendment + 1 个 Verification Matrix + 两点拓扑澄清，待重新提交 Gate Review）
+> **Gate Review 修订记录（v2）**：
+> - **CF1-AMEND-001**：PublicKey Lifecycle Contract —— 冻结 NodeID 与 PublicKey 生命周期解耦，具体算法延迟至 CF8
+> - **CF1-AMEND-002**：Pairing / Registration State Contract —— 冻结完整状态机与 Discovery≠Trust≠Pairing≠Registration≠Membership 分层
+> - **CF1-AMEND-003**：Topology Version / Atomic Commit Contract —— 冻结版本提交语义与覆盖规则
+> - **CF1-AMEND-004**：Session Fencing Contract —— 新增 SessionInstanceID 实例 Fence + EPOCH-001～006 六条测试契约
+> - **两点拓扑澄清**：NodeCount ≥3 为 Circular 有效运行态最小规模；1/2 Node 属 DEGRADED，不得启用循环 Handoff
+> - **Verification Matrix**：S01～S05 关键安全需求统一映射至 Contract/Invariant/Violation/Observable Evidence/Acceptance Test 格式
 
 ---
 
@@ -108,6 +115,30 @@
 
 **拓扑标识（Topology ID）**
 : 标识一个拓扑实例的字符串或 UUID，同一拓扑内所有端点共享同一 Topology ID；用于区分不同拓扑并防止误加入。
+
+**信任凭证（Trust Credential / Public Key）**
+: 端点的密码学身份凭证，用于未来 CF8 阶段的端点认证、报文签名、加密协商；CF1 阶段仅冻结其与 NodeID 的生命周期解耦契约，不规定具体算法、编码、签名、轮换协议（归属 CF8）。
+: 备注：PublicKey 是 Trust Credential，NodeID 是 Stable Identity，二者生命周期独立。
+
+**会话实例栅栏（Session Instance ID）**
+: 标识当前具体进程/运行时实例的栅栏值，在同一 Session Epoch 内区分多个并发进程实例；与 Session Epoch 共同构成 (NodeID, Epoch, InstanceID) 三元组会话栅栏。
+: 备注：Epoch 是"第几代会话"的纪元，InstanceID 是"当前具体 Agent Instance"的进程栅栏；解决同 NodeID 多进程冲突与崩溃后旧进程未退出场景。
+
+**配对状态机（Pairing State Machine）**
+: 端点从被发现到成为拓扑成员的完整状态流转模型，状态集为 {DISCOVERED, UNTRUSTED, PAIRING_REQUEST, PAIRED, TRUSTED, VERSION_NEGOTIATION, CAPABILITY_NEGOTIATION, REGISTRATION, REGISTERED, MEMBER, REJECTED, ROLLBACK}；任一阶段失败进入 REJECTED/ROLLBACK 并保持原有安全状态。
+: 备注：冻结 Discovery ≠ Trust ≠ Pairing ≠ Registration ≠ Topology Membership 五层分层，防止"发现即信任"错误实现。
+
+**拓扑版本（Topology Version）**
+: 拓扑视图的单调递增版本号，标识拓扑成员关系的代际；任一成员加入/离开必须递增 Topology Version，全拓扑经 Atomic Commit 同步至新版本。
+: 备注：与 CF0 §6.3 version 同义；CF1 增补 Atomic Commit 语义与版本覆盖规则。
+
+**节点数（Node Count）**
+: 拓扑中当前在线的端点数量；与段数（Segment Count）不同——Node Count 是运行态实际成员数，Segment Count 是拓扑配置的逻辑段数。
+: 备注：Circular topology 有效运行态要求 Node Count ≥ 3；Node Count ∈ {1, 2} 属 DEGRADED / NON-CIRCULAR，可存在但不得启用循环 Handoff。
+
+**段数（Segment Count）**
+: 拓扑配置中相邻端点之间的逻辑切换段数；线性循环拓扑的 Segment Count = Node Count（回环闭合）；与 CF0 契约③ segmentCount ≥ 2 对齐。
+: 备注：Segment Count 是配置态概念，Node Count 是运行态概念；成员离开导致 Node Count 下降但 Segment Count 不变。
 
 ---
 
@@ -324,6 +355,47 @@ Init -> Mdns : 发布 Node Identity 声明\n(NodeID, Platform, Capabilities, Add
    a. 触发条件：系统随机数源不可用导致 UUIDv4 生成失败。
    b. 系统行为：启动失败，记录致命错误，提示用户检查系统环境。
    c. 用户感知：Agent 无法启动，日志提示身份初始化失败。
+
+### **5.1.4 PublicKey 生命周期契约（CF1-AMEND-001）**
+
+> **修订背景**：大G项目经理 Gate Review 裁决 CF1 v1 缺少 PublicKey 与 NodeID 生命周期解耦的冻结语义契约。本节冻结该契约的语义层（非实现层），具体算法、编码、签名、轮换协议延迟至 CF8 冻结。本节全部规则采用 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一格式。
+
+#### **5.1.4.1 业务规则**
+
+1. **PublicKey 与 NodeID 身份定位规则**：当系统定义端点身份时，PublicKey 必须被定位为 Trust Credential（信任凭证），NodeID 必须被定位为 Stable Identity（稳定身份）；二者承担不同语义角色，禁止混用。
+   a. **Contract**：PublicKey = Trust Credential；NodeID = Stable Identity；二者语义角色独立。
+   b. **Invariant**：NodeID 的稳定身份属性不依赖 PublicKey 的存在性或有效性。
+   c. **Violation**：将 PublicKey 作为 NodeID 的生成输入，或 NodeID 随 PublicKey 变更而变更。
+   d. **Observable Evidence**：Node Identity 结构中 node_id 字段与 public_key 字段独立赋值，无派生关系。
+   e. **Acceptance Test**：[端点更换 PublicKey] → [NodeID 不变，拓扑成员关系不变，信任记录不变]
+
+2. **生命周期解耦规则**：当端点的 PublicKey 发生更换（含轮换、撤销、重签）时，系统必须保持 Stable NodeID 不变；PublicKey 不参与 NodeID 的生成、持久化、加载、恢复任何生命周期环节。
+   a. **Contract**：PublicKey 更换不得改变 NodeID；NodeID 生命周期独立于 PublicKey 生命周期。
+   b. **Invariant**：∀ 更换事件 e ∈ {轮换, 撤销, 重签}：NodeID_after(e) = NodeID_before(e)。
+   c. **Violation**：PublicKey 更换触发 NodeID 重新生成，或 NodeID 恢复依赖 PublicKey 校验。
+   d. **Observable Evidence**：PublicKey 更换前后，本地持久化的 NodeID 字节序列完全一致；拓扑中其他端点对该 NodeID 的成员关系与信任记录未变更。
+   e. **Acceptance Test**：[端点 A 更换 PublicKey 从 PK1 到 PK2] → [NodeID_A 不变，对端 B 持有的 (NodeID_A, Membership_A) 不变]
+
+3. **NodeID 生成不依赖 PublicKey 规则**：当本端首次启动并生成 Stable NodeID 时，系统必须仅依据本地随机源生成 UUIDv4 NodeID，禁止将 PublicKey（无论是否存在）作为 NodeID 生成的输入或种子。
+   a. **Contract**：NodeID = UUIDv4(local_random_source)；NodeID 生成函数不接收 PublicKey 参数。
+   b. **Invariant**：NodeID 生成路径的输入集合中不含 PublicKey。
+   c. **Violation**：NodeID = f(PublicKey) 或 NodeID 生成消费 PublicKey 摘要。
+   d. **Observable Evidence**：NodeID 生成代码路径无 PublicKey 读取；两次启动（一次有 PublicKey、一次无 PublicKey）可生成独立 NodeID。
+   e. **Acceptance Test**：[本端无 PublicKey + 首次启动] → [成功生成 UUIDv4 NodeID，不报缺 PublicKey 错误]
+
+4. **具体算法延迟至 CF8 规则**：CF1 阶段禁止规定 PublicKey 的具体算法（Ed25519 / X25519 / RSA 等）、编码格式、签名协议、轮换策略；这些归属 CF8 Security/Pairing 冻结。CF1 仅冻结 PublicKey 字段位存在性与生命周期解耦契约。
+   a. **Contract**：CF1 冻结 {字段存在性, 生命周期解耦}；CF8 冻结 {算法, 编码, 签名, 轮换}。
+   b. **Invariant**：CF1 spec.md 中不出现具体密码学算法名称作为强制约束。
+   c. **Violation**：CF1 阶段实现或强制特定密码学算法。
+   d. **Observable Evidence**：CF1 spec.md §5.1.4 无 "Ed25519/X25519/RSA" 等算法强制条款；public_key 字段标注 "CF8 冻结算法"。
+   e. **Acceptance Test**：[审查 CF1 spec.md] → [无具体密码学算法强制约束，仅冻结生命周期解耦]
+
+5. **禁止项：禁止 PublicKey 覆盖 NodeID**：系统禁止接受任何来自网络的报文以 PublicKey 变更为由覆盖本端 Stable NodeID；NodeID 仅由本地生成与持久化决定（复用 §5.1.1 规则 13）。
+   a. **Contract**：本端 NodeID 不受对端声明的 PublicKey 影响。
+   b. **Invariant**：本端 NodeID 写入路径仅含本地生成与本地持久化加载两个来源。
+   c. **Violation**：网络报文携带的 PublicKey 触发本端 NodeID 重写。
+   d. **Observable Evidence**：收到携带新 PublicKey 的网络报文后，本端 NodeID 持久化文件无变更。
+   e. **Acceptance Test**：[收到声称本端应采用新 PublicKey 的网络报文] → [本端 NodeID 不变，记录告警]
 
 ---
 
@@ -550,6 +622,88 @@ end
    b. 系统行为：拒绝注册，记录安全告警，不进入握手。
    c. 用户感知：注册被拒，提示需先完成配对。
 
+### **5.3.4 配对/注册状态契约（CF1-AMEND-002）**
+
+> **修订背景**：大G项目经理 Gate Review 裁决 CF1 v1 缺少从发现到拓扑成员的完整状态机冻结，存在 Coding Agent 将"发现一个 NodeID"错误实现成"自动信任该 NodeID"的风险。本节冻结完整状态模型与五层分层契约。全部规则采用 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一格式。
+
+#### **5.3.4.1 完整状态模型**
+
+端点从被发现到成为拓扑成员的完整状态流转（成功路径）：
+
+```
+DISCOVERED
+    ↓
+UNTRUSTED
+    ↓
+PAIRING_REQUEST
+    ↓
+PAIRED / TRUSTED
+    ↓
+VERSION_NEGOTIATION
+    ↓
+CAPABILITY_NEGOTIATION
+    ↓
+REGISTRATION
+    ↓
+REGISTERED
+    ↓
+MEMBER
+```
+
+失败路径（任一阶段失败）：
+
+```
+任何阶段
+   ↓
+REJECTED / ROLLBACK
+   ↓
+保持原有安全状态
+```
+
+#### **5.3.4.2 业务规则**
+
+1. **状态机完整定义规则**：当端点处理对端从发现到成员的全流程时，对端的状态必须处于且仅处于以下状态之一：DISCOVERED（已发现未信任）、UNTRUSTED（待配对）、PAIRING_REQUEST（配对请求中）、PAIRED/TRUSTED（已配对可信）、VERSION_NEGOTIATION（版本协商中）、CAPABILITY_NEGOTIATION（能力协商中）、REGISTRATION（注册中）、REGISTERED（已注册未入拓扑）、MEMBER（已加入拓扑）、REJECTED（已拒绝）、ROLLBACK（回滚中）；禁止出现中间态、重叠态或未定义态。
+   a. **Contract**：对端状态 ∈ {DISCOVERED, UNTRUSTED, PAIRING_REQUEST, PAIRED, TRUSTED, VERSION_NEGOTIATION, CAPABILITY_NEGOTIATION, REGISTRATION, REGISTERED, MEMBER, REJECTED, ROLLBACK}，任意时刻唯一。
+   b. **Invariant**：状态机状态唯一性；合法转移仅沿成功路径或失败路径，无跨层跳跃。
+   c. **Violation**：从 DISCOVERED 直接跳到 MEMBER（跳过配对与注册），或从 PAIRED 直接跳到 MEMBER（跳过版本/能力协商与注册）。
+   d. **Observable Evidence**：运行时对端状态查询返回上述枚举之一；状态转移日志记录 (from_state, to_state) 且转移合法。
+   e. **Acceptance Test**：[审查对端状态转移序列] → [每步转移均在成功路径或失败路径的合法边集合内]
+
+2. **五层分层不可跃迁规则**：当系统处理端点关系时，必须严格区分五层并禁止跃迁：Discovery（发现）≠ Trust（信任）≠ Pairing（配对）≠ Registration（注册）≠ Topology Membership（拓扑成员）；发现一个 NodeID 不等于信任该 NodeID，信任不等于配对完成，配对不等于注册完成，注册不等于已成为拓扑成员。
+   a. **Contract**：Discovery ≠ Trust ≠ Pairing ≠ Registration ≠ Topology Membership；五层各自独立，上层依赖下层完成但不可合并。
+   b. **Invariant**：对端处于第 k 层完成态时，不自动进入第 k+1 层；必须由显式触发推进。
+   c. **Violation**：发现对端 NodeID 后自动加入 Trusted List（Discovery→Trust 跃迁），或配对成功后自动加入拓扑（Pairing→Membership 跃迁）。
+   d. **Observable Evidence**：对端在 DISCOVERED 态时 Trusted List 不含该 NodeID；在 PAIRED 态时拓扑成员关系不含该 NodeID；在 REGISTERED 态时拓扑成员关系仍不含该 NodeID 直至进入 MEMBER。
+   e. **Acceptance Test**：[端点 B 被发现但未配对] → [B 不在 Trusted List，B 不在拓扑成员关系，B 不可参与 Handoff]
+
+3. **Discovery 不建立信任规则**：当端点 A 通过 mDNS 发现端点 B 的 Node Identity 声明时，系统必须仅将 B 记录为已发现（DISCOVERED 态），禁止自动将 B 加入 Trusted Node List 或赋予任何信任属性；信任建立必须经显式配对确认流程。
+   a. **Contract**：Discovery 输出 ∈ {已发现记录}；Discovery 输出 ∉ Trusted Node List。
+   b. **Invariant**：Discovery 流程不写入 Trusted Node List。
+   c. **Violation**：mDNS 发现后 B 自动出现在 Trusted List。
+   d. **Observable Evidence**：Discovery 完成后查询 Trusted List，不含新发现 NodeID；需配对码确认后才出现。
+   e. **Acceptance Test**：[A 发现 B 的 mDNS 声明] → [B 状态=DISCOVERED，Trusted List 不含 NodeID_B]
+
+4. **失败回滚保持安全状态规则**：当端点在配对/注册任一阶段失败（配对码错误、版本不兼容、能力不兼容、Topology ID 不一致、链路中断）时，系统必须进入 REJECTED 或 ROLLBACK 态，回滚该次流程的全部副作用，保持原有安全状态（不新增信任记录、不新增拓扑成员、不产生半注册状态）。
+   a. **Contract**：失败 → REJECTED/ROLLBACK → 安全状态保持（无副作用残留）。
+   b. **Invariant**：失败前后，Trusted Node List 与 Topology Membership 集合不变。
+   c. **Violation**：注册中途失败但对端已部分加入 Trusted List 或拓扑成员关系。
+   d. **Observable Evidence**：失败后 Trusted List 与 Membership 与流程启动前一致；日志记录回滚原因与回滚点。
+   e. **Acceptance Test**：[B 注册至 CAPABILITY_NEGOTIATION 阶段失败] → [B 状态=ROLLBACK，Trusted List 与 Membership 无 B 的残留]
+
+5. **MEMBER 态前置规则**：当端点进入 MEMBER 态（正式拓扑成员）时，系统必须保证此前已完成 DISCOVERED → PAIRED → VERSION_NEGOTIATION → CAPABILITY_NEGOTIATION → REGISTRATION → REGISTERED 全部成功；禁止任何跳步进入 MEMBER。
+   a. **Contract**：MEMBER 态的前置状态序列 = [DISCOVERED, PAIRED, VERSION_NEGOTIATION, CAPABILITY_NEGOTIATION, REGISTRATION, REGISTERED]，全部成功。
+   b. **Invariant**：进入 MEMBER 的转移边仅来自 REGISTERED。
+   c. **Violation**：从 PAIRED 直接转移到 MEMBER。
+   d. **Observable Evidence**：MEMBER 态端点的状态历史含全部前置成功记录。
+   e. **Acceptance Test**：[B 进入 MEMBER 态] → [B 的状态历史含全部六步成功转移]
+
+6. **禁止项：禁止发现即信任**：系统禁止在 Discovery 阶段（DISCOVERED 态）赋予对端任何信任属性或允许其参与 Handoff；信任必须经显式配对确认（复用 CF0 §4.3.1）。
+   a. **Contract**：DISCOVERED 态对端 ∉ Trusted List，不可参与 Handoff。
+   b. **Invariant**：Trusted List 写入唯一来源为配对确认成功。
+   c. **Violation**：Discovery 完成即允许对端参与 Handoff。
+   d. **Observable Evidence**：DISCOVERED 态对端触发 Handoff 时被拒绝并记录告警。
+   e. **Acceptance Test**：[B 处于 DISCOVERED 态 + 触发涉及 B 的 Handoff] → [Handoff 被拒绝，记录 CFX-W-DISC-UNTRUSTED]
+
 ---
 
 ## **5.4 Topology Membership Management（CF1-S04）**
@@ -580,9 +734,11 @@ end
 7. **拓扑版本递增规则**：拓扑成员关系变更必须递增拓扑视图版本号（复用 CF0 §6.3 version）；版本号单调递增，全拓扑同步。
    a. 验收条件：[成员加入/离开] → [拓扑版本号递增并同步全拓扑]
 
-8. **段数下限规则**：拓扑段数必须 ≥2，禁止两点退化（复用 CF0 契约③ / §5.3.1.16）；成员变更后若段数 <2 必须告警。
-   a. 验收条件：[成员离开导致仅剩 2 端点] → [段数=1，告警两点退化，但不崩溃]
-   b. 验收条件：[成员离开导致仅剩 1 端点] → [该端点保持主控态，拓扑暂停切换]
+8. **节点数与段数区分规则（两点拓扑澄清）**：系统必须区分 Node Count（运行态实际在线端点数）与 Segment Count（配置态逻辑段数）；Circular topology 有效运行态要求 **Node Count ≥ 3**；Node Count ∈ {1, 2} 属 DEGRADED / NON-CIRCULAR 运行态，可以存在但**不得启用循环 Handoff**；Segment Count ≥ 2 为配置态约束（复用 CF0 契约③），成员离开导致 Node Count 下降但 Segment Count 不变。
+   a. 验收条件：[Node Count ≥ 3 + Segment Count ≥ 2] → [Circular topology 有效运行，循环 Handoff 启用]
+   b. 验收条件：[Node Count = 2] → [DEGRADED 态，循环 Handoff 禁用，告警 CFX-W-TOPO-DEGRADED-NON-CIRCULAR，不崩溃]
+   c. 验收条件：[Node Count = 1] → [该端点保持主控态，拓扑暂停切换，告警 CFX-W-TOPO-DEGRADED-SINGLE]
+   d. 验收条件：[成员离开导致 Node Count 从 3 降至 2] → [Segment Count 不变，循环 Handoff 自动禁用，告警两点退化]
 
 9. **成员关系与 CF0 TopologyView 一致规则**：CF1 维护的拓扑成员关系必须与 CF0 `ITopologyManager` 的 TopologyView 保持一致；CF1 通过 CF0 接口提供动态维护的 TopologyView 供 Handoff FSM 查询。
    a. 验收条件：[查询 CF0 ITopologyManager.currentView()] → [与 CF1 维护的成员关系一致]
@@ -648,6 +804,106 @@ C -> C : 同上
    a. 触发条件：两个端点同时向拓扑发起注册加入。
    b. 系统行为：按注册到达顺序串行处理；NodeID 冲突则拒绝二者（复用规则 5.1.1.3）。
    c. 用户感知：端点依次加入或冲突端点被拒。
+
+### **5.4.4 拓扑版本/原子提交契约（CF1-AMEND-003）**
+
+> **修订背景**：大G项目经理 Gate Review 裁决 CF1 v1 缺少 TopologyVersion 的原子提交语义与版本覆盖规则，存在旧消息把高版本覆盖回低版本的风险（与 CF0 Safety Invariant 不完全兼容）。本节冻结版本提交语义与覆盖规则。全部规则采用 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一格式。
+
+#### **5.4.4.1 版本提交语义**
+
+```
+TopologyVersion N+1
+    ↓
+Proposal（提案）
+    ↓
+Validation（校验）
+    ↓
+Atomic Commit（原子提交）
+    ↓
+Version N+1 Active（新版本激活）
+```
+
+#### **5.4.4.2 版本覆盖规则**
+
+```
+if incoming_version < current_version:
+    reject stale update（拒绝过期更新）
+
+if incoming_version == current_version:
+    idempotent（幂等）
+
+if incoming_version > current_version:
+    validate → commit（校验后提交）
+```
+
+#### **5.4.4.3 业务规则**
+
+1. **版本单调递增规则**：当拓扑成员关系发生变更时，系统必须递增 Topology Version；Topology Version 单调递增，不得回跳；全拓扑经 Atomic Commit 同步至新版本（复用 §5.4.1 规则 7）。
+   a. **Contract**：成员变更 → TopologyVersion_new = TopologyVersion_old + 1；TopologyVersion 单调递增。
+   b. **Invariant**：∀ t1 < t2：TopologyVersion(t1) ≤ TopologyVersion(t2)。
+   c. **Violation**：TopologyVersion 回跳或不变更。
+   d. **Observable Evidence**：成员变更日志记录 (old_version, new_version) 且 new_version = old_version + 1。
+   e. **Acceptance Test**：[连续 3 次成员变更] → [TopologyVersion 从 N 递增至 N+3，无回跳]
+
+2. **过期更新拒绝规则**：当系统收到携带 incoming_version < current_version 的拓扑更新消息时，必须拒绝该过期更新，不应用其副作用，记录告警 CFX-W-TOPO-STALE-VERSION；防止旧消息覆盖高版本。
+   a. **Contract**：incoming_version < current_version → reject（拒绝过期更新，不应用副作用）。
+   b. **Invariant**：current_version 不因 incoming_version < current_version 的消息而降低或回退。
+   c. **Violation**：旧消息（低版本）覆盖当前高版本拓扑视图。
+   d. **Observable Evidence**：拒绝日志含 (incoming_version, current_version, rejected)；current_version 未变。
+   e. **Acceptance Test**：[current_version=5 + 收到 incoming_version=3 的更新] → [拒绝，current_version 保持 5，记录 CFX-W-TOPO-STALE-VERSION]
+
+3. **同版本幂等规则**：当系统收到携带 incoming_version == current_version 的拓扑更新消息时，必须幂等处理——若消息内容与当前视图一致则确认无变更，若内容不一致则记录告警并按运维配置裁决（疑似并发提交冲突）。
+   a. **Contract**：incoming_version == current_version → idempotent（幂等，不重复应用副作用）。
+   b. **Invariant**：同版本消息不产生重复的成员加入/离开副作用。
+   c. **Violation**：同版本消息触发重复成员变更或重复版本递增。
+   d. **Observable Evidence**：同版本消息处理后 TopologyVersion 与 Membership 集合不变。
+   e. **Acceptance Test**：[current_version=5 + 收到 incoming_version=5 的相同更新] → [幂等确认，无副作用，TopologyVersion 保持 5]
+
+4. **高版本校验后提交规则**：当系统收到携带 incoming_version > current_version 的拓扑更新消息时，必须执行 Validation（校验成员关系合法性、邻居数 ≤2、线性排列、NodeID 唯一）后执行 Atomic Commit（原子提交：要么全部应用并激活新版本，要么全部回滚不产生半提交状态）。
+   a. **Contract**：incoming_version > current_version → validate → atomic commit → version active。
+   b. **Invariant**：Atomic Commit 语义——提交后全拓扑一致处于新版本，或回滚后全拓扑一致处于旧版本，无中间态。
+   c. **Violation**：部分端点应用新版本、部分端点保持旧版本（split-brain）。
+   d. **Observable Evidence**：提交日志含 (old_version, new_version, commit=atomic)；全拓扑端点查询 currentView() 返回一致版本。
+   e. **Acceptance Test**：[current_version=5 + 收到 incoming_version=6 的合法更新] → [校验通过，原子提交，全拓扑 current_version=6]
+
+5. **原子提交全或无规则**：当系统执行 Atomic Commit 时，必须保证全或无语义——要么全拓扑端点成功应用新版本并激活，要么任一端点失败则整体回滚至旧版本，不产生部分端点在新版本、部分在旧版本的中间态。
+   a. **Contract**：Atomic Commit = (全拓扑应用新版本) ∨ (全拓扑回滚旧版本)；无中间态。
+   b. **Invariant**：提交过程中任意时刻，全拓扑端点的 TopologyVersion 至多两个相邻值 {N, N+1}，且 N+1 端点集合在有限时间内收敛为全拓扑或空集。
+   c. **Violation**：提交中途部分端点失败但已应用端点不回滚，导致长期版本分裂。
+   d. **Observable Evidence**：提交超时或失败后，全拓扑端点 current_version 一致回退至 old_version。
+   e. **Acceptance Test**：[提交至 3/5 端点时第 4 端点失败] → [整体回滚，全拓扑 current_version 回退至 old_version，无分裂]
+
+6. **禁止项：禁止旧消息覆盖高版本**：系统禁止接受 incoming_version < current_version 的消息应用任何拓扑变更；必须拒绝并记录告警。此规则与 CF0 Safety Invariant P1 No Split-Brain 兼容——旧消息不得破坏当前一致的拓扑视图。
+   a. **Contract**：incoming_version < current_version 的消息不产生任何拓扑变更副作用。
+   b. **Invariant**：current_version 与 Membership 不因过期消息而回退。
+   c. **Violation**：过期消息覆盖当前高版本视图，导致拓扑回退或分裂。
+   d. **Observable Evidence**：过期消息仅产生拒绝日志，无 Membership 变更。
+   e. **Acceptance Test**：[current_version=10 + 收到 incoming_version=2 的过期消息] → [拒绝，current_version=10 不变，Membership 不变，记录 CFX-W-TOPO-STALE-VERSION]
+
+### **5.4.5 两点拓扑澄清细化**
+
+> **修订背景**：大G项目经理 Gate Review 指出 CF1 v1 在"段数下限"与"两点退化"术语上存在语义矛盾，需与 CF0 契约③"禁止两点退化"保持绝对一致并明确 Node Count 与 Segment Count 的区分。本节细化澄清。
+
+1. **Circular 有效运行态最小规模规则**：当拓扑启用循环 Handoff 时，运行态 Node Count 必须 ≥ 3；Node Count = 3 为 Circular topology 的最小有效运行态（如 Mac → Win-A → Win-B → Mac 三段回环）。
+   a. **Contract**：循环 Handoff 启用 → Node Count ≥ 3。
+   b. **Invariant**：循环 Handoff 启用态下 Node Count ≥ 3 恒成立。
+   c. **Violation**：Node Count = 2 时仍启用循环 Handoff（两点回环无实际切换意义且违反 CF0 契约③）。
+   d. **Observable Evidence**：循环 Handoff 启用标志为 true 时，运行时 Node Count ≥ 3。
+   e. **Acceptance Test**：[Node Count = 2 + 循环 Handoff 启用] → [强制禁用循环 Handoff，告警 CFX-W-TOPO-DEGRADED-NON-CIRCULAR]
+
+2. **DEGRADED 态定义规则**：当 Node Count ∈ {1, 2} 时，拓扑进入 DEGRADED / NON-CIRCULAR 运行态；该态可以存在（端点保持在线、本地键鼠可用），但不得启用循环 Handoff；系统必须告警并等待 Node Count 恢复至 ≥ 3 后自动恢复循环 Handoff。
+   a. **Contract**：Node Count ∈ {1, 2} → DEGRADED 态 → 循环 Handoff 禁用 + 告警。
+   b. **Invariant**：DEGRADED 态下循环 Handoff 禁用标志为 true；本地键鼠不失效（CF0 P2 No Void-Owner 保持）。
+   c. **Violation**：DEGRADED 态下仍允许循环 Handoff 或本地键鼠失效。
+   d. **Observable Evidence**：DEGRADED 态告警日志 + 循环 Handoff 禁用标志 + 本地键鼠可用。
+   e. **Acceptance Test**：[Node Count 从 3 降至 2] → [进入 DEGRADED 态，循环 Handoff 禁用，告警，本地键鼠可用；Node Count 恢复至 3 后循环 Handoff 自动恢复]
+
+3. **与 CF0 契约③绝对一致规则**：CF1 的两点拓扑澄清必须与 CF0 契约③"禁止两点退化"保持绝对一致——CF0 禁止将系统设计为 Mac ↔ 单一 Windows 的两点退化解作为能力上界；CF1 允许 Node Count = 2 作为运行态退化特例存在，但禁止其作为循环拓扑的有效运行态，禁止启用循环 Handoff。
+   a. **Contract**：CF1 两点澄清 ⊂ CF0 契约③；两点仅作退化特例，不作循环有效运行态。
+   b. **Invariant**：循环 Handoff 启用 → Node Count ≥ 3（与 CF0 契约③ segmentCount ≥ 2 且非两点退化对齐）。
+   c. **Violation**：CF1 允许 Node Count = 2 启用循环 Handoff，与 CF0 契约③冲突。
+   d. **Observable Evidence**：CF1 spec.md §5.4.5 与 CF0 spec.md §7.3 契约③陈述无矛盾。
+   e. **Acceptance Test**：[交叉审查 CF1 §5.4.5 与 CF0 §7.3] → [无语义矛盾，两点退化处理一致]
 
 ---
 
@@ -750,6 +1006,85 @@ note over A,B: 身份恢复完成\nA 重新参与 Handoff\nSafety Invariant 全�
    b. 系统行为：重连期间涉及该端点的 Handoff 暂停（规则 5.5.1.7）；恢复完成后由 CF0 FSM 按既有安全路径处理。
    c. 用户感知：恢复期间切换暂停，恢复后正常；无 split-brain 或控制权丢失。
 
+### **5.5.4 会话栅栏契约（CF1-AMEND-004）**
+
+> **修订背景**：大G项目经理 Gate Review 裁决 CF1 v1 仅有 SessionEpoch 但 Epoch 不是实例 Fence，无法解决同一 NodeID 的多进程冲突、崩溃后旧进程未退出+新进程启动、同 Epoch 冲突检测等场景。本节新增 SessionInstanceID 构成三层会话栅栏并冻结 EPOCH-001～006 六条测试契约。全部规则采用 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一格式。
+
+#### **5.5.4.1 三层会话栅栏模型**
+
+```
+NodeID
+    ↓
+Stable Identity（永久稳定身份）
+
+SessionEpoch
+    ↓
+Monotonic Session Era（单调会话纪元，第几代会话）
+
+SessionInstanceID
+    ↓
+Current Process / Runtime Instance Fence（当前具体 Agent Instance 进程栅栏）
+```
+
+完整会话栅栏为三元组 **(NodeID, SessionEpoch, SessionInstanceID)**：
+- **NodeID**：永久稳定身份，跨重启不变（§5.1.1）。
+- **SessionEpoch**：单调会话纪元，每次启动/重连递增（§5.5.1）。
+- **SessionInstanceID**：当前进程/运行时实例栅栏，在同一 Epoch 内区分多个并发进程实例（如崩溃后旧进程未退出 + 新进程启动）。
+
+#### **5.5.4.2 业务规则（EPOCH-001 ～ EPOCH-006 六条测试契约）**
+
+1. **EPOCH-001：SessionEpoch 单调递增规则**：当端点启动或重连时，系统必须递增 SessionEpoch；SessionEpoch 从 1 开始单调递增，不得回跳；对端通过 SessionEpoch 区分同一 NodeID 的不同会话纪元。
+   a. **Contract**：启动/重连 → SessionEpoch_new = SessionEpoch_old + 1；SessionEpoch 单调递增不得回跳。
+   b. **Invariant**：∀ t1 < t2：SessionEpoch(t1) ≤ SessionEpoch(t2)；SessionEpoch ≥ 1。
+   c. **Violation**：SessionEpoch 回跳（如重启后 Epoch 变小）或不变更。
+   d. **Observable Evidence**：启动日志记录 (old_epoch, new_epoch) 且 new_epoch = old_epoch + 1；持久化文件 epoch 值单调。
+   e. **Acceptance Test**：[端点连续启动 3 次] → [SessionEpoch 序列为 1, 2, 3，无回跳]
+
+2. **EPOCH-002：低 Epoch 消息拒绝规则**：当系统收到对端携带 incoming_epoch < recorded_epoch 的消息时，必须拒绝该消息（判定为过期会话），不应用其任何副作用（拓扑变更、身份恢复、Handoff），记录告警 CFX-W-SESSION-STALE-EPOCH。
+   a. **Contract**：incoming_epoch < recorded_epoch → reject（拒绝过期会话消息，不应用副作用）。
+   b. **Invariant**：recorded_epoch 不因过期消息而降低；过期消息不修改 Topology/Trust/Ownership/Endpoint Address/Handoff State。
+   c. **Violation**：过期会话消息修改当前拓扑或触发 Handoff。
+   d. **Observable Evidence**：拒绝日志含 (node_id, incoming_epoch, recorded_epoch, rejected)；当前状态无变更。
+   e. **Acceptance Test**：[recorded_epoch=5 + 收到 incoming_epoch=3 的消息] → [拒绝，recorded_epoch 保持 5，无副作用，记录 CFX-W-SESSION-STALE-EPOCH]
+
+3. **EPOCH-003：同 Epoch 不同 InstanceID 并发实例冲突检测规则**：当系统收到对端携带 (epoch, instance_id) 且 epoch == recorded_epoch 但 instance_id ≠ recorded_instance_id 的消息时，必须检测为并发实例冲突（同一 NodeID 同一 Epoch 下两个进程实例同时运行），记录告警 CFX-E-SESSION-INSTANCE-CONFLICT，要求人工排查，不自动裁决（避免选错实例）。
+   a. **Contract**：epoch == recorded_epoch ∧ instance_id ≠ recorded_instance_id → 并发实例冲突告警 + 不自动裁决。
+   b. **Invariant**：同 (NodeID, Epoch) 下至多一个 InstanceID 被接受为当前会话；冲突时不自动选择任一实例。
+   c. **Violation**：同 Epoch 多 InstanceID 并存且系统自动选择其一继续处理，可能选到僵尸旧进程。
+   d. **Observable Evidence**：冲突告警日志含 (node_id, epoch, instance_id_1, instance_id_2)；运维收到冲突告警。
+   e. **Acceptance Test**：[recorded=(epoch=5, inst=A) + 收到 (epoch=5, inst=B)] → [记录 CFX-E-SESSION-INSTANCE-CONFLICT，不自动裁决，告警人工排查]
+
+4. **EPOCH-004：新 Epoch 自动淘汰旧 Session 规则**：当系统收到对端携带 incoming_epoch > recorded_epoch 的消息时，必须接受新会话，自动淘汰旧 Session（旧 InstanceID 失效），更新 recorded_epoch 与 recorded_instance_id 为新值，触发身份恢复流程。
+   a. **Contract**：incoming_epoch > recorded_epoch → 接受新会话，旧 Session 淘汰，更新 (epoch, instance_id)。
+   b. **Invariant**：更新后 recorded_epoch = incoming_epoch，recorded_instance_id = incoming_instance_id；旧 InstanceID 不再被接受。
+   c. **Violation**：新 Epoch 消息被忽略或旧 Session 未淘汰导致同 NodeID 双会话并存。
+   d. **Observable Evidence**：更新日志含 (old_epoch, new_epoch, old_inst, new_inst)；旧 InstanceID 后续消息被拒绝。
+   e. **Acceptance Test**：[recorded=(epoch=5, inst=A) + 收到 (epoch=6, inst=B)] → [接受，recorded 更新为 (6, B)，旧 (5, A) 消息后续被拒绝]
+
+5. **EPOCH-005：旧 Session Control Message 不得修改关键状态规则**：当系统判定消息来自旧 Session（incoming_epoch < recorded_epoch，或同 Epoch 不同 InstanceID）时，该消息必须不得修改以下任一关键状态：Topology（拓扑成员关系）、Trust（信任记录）、Ownership（控制权归属）、Endpoint Address（端点地址）、Handoff State（切换状态机）；旧 Session 消息仅可被忽略或用于诊断日志。
+   a. **Contract**：旧 Session 消息 → ¬modify(Topology ∪ Trust ∪ Ownership ∪ EndpointAddress ∪ HandoffState)。
+   b. **Invariant**：旧 Session 消息处理前后，上述五类关键状态集合不变。
+   c. **Violation**：旧 Session 的 Control Message 触发拓扑成员变更或 Handoff 状态转移或控制权变更。
+   d. **Observable Evidence**：旧 Session 消息处理后，五类关键状态的快照与处理前一致；仅日志记录该消息。
+   e. **Acceptance Test**：[旧 Session (epoch=3) 发送成员变更通知] → [Topology/Trust/Ownership/EndpointAddress/HandoffState 全部不变，仅记录诊断日志]
+
+6. **EPOCH-006：Reconnect 不重新 Pairing 规则**：当已配对端点（在 Trusted Node List 中）断线重连时，系统必须通过 (NodeID, 新 Epoch, 新 InstanceID) 直接恢复身份，禁止要求重新配对；重连恢复复用 §5.5.1 规则 3 的身份恢复流程。
+   a. **Contract**：已配对端点重连 → (NodeID, Epoch, InstanceID) 身份恢复，¬重新配对。
+   b. **Invariant**：重连恢复路径不经过配对码确认步骤；Trusted List 中 NodeID 保持不变。
+   c. **Violation**：已配对端点重连被要求重新输入配对码。
+   d. **Observable Evidence**：重连恢复日志含 (node_id, new_epoch, new_inst, recovery=without_pairing)；无配对码请求记录。
+   e. **Acceptance Test**：[已配对端点 A 断线重连] → [直接身份恢复，不要求配对码，Trusted List 中 NodeID_A 不变]
+
+#### **5.5.4.3 解决的场景**
+
+上述六条契约共同解决以下场景：
+
+1. **同一 NodeID 的多进程冲突**：EPOCH-003 检测同 Epoch 不同 InstanceID 并告警，不自动裁决。
+2. **崩溃后旧进程未退出 + 新进程启动**：新进程递增 Epoch（EPOCH-001），旧进程消息因低 Epoch 被拒绝（EPOCH-002），新 Epoch 自动淘汰旧 Session（EPOCH-004）。
+3. **同 Epoch 冲突检测**：EPOCH-003 显式检测并告警人工排查。
+4. **旧 Session 消息拒绝**：EPOCH-002 拒绝低 Epoch 消息，EPOCH-005 保证旧 Session 不修改关键状态。
+5. **新旧 Session 竞争**：EPOCH-004 新 Epoch 淘汰旧 Session，EPOCH-006 重连不重新配对保证恢复连续性。
+
 ---
 
 # **6. 数据约束**
@@ -806,6 +1141,30 @@ note over A,B: 身份恢复完成\nA 重新参与 Handoff\nSafety Invariant 全�
 4. **session_epoch**：声明端点的当前 Session Epoch。
 5. **protocol_version**：声明端点的协议版本号。
 6. **topology_id**：声明端点的 Topology ID，用于跨拓扑隔离。
+
+## **6.8 Session Instance ID（CF1-AMEND-004 新增）**
+
+1. **value**：当前进程/运行时实例栅栏值，UUIDv4 或等价唯一标识，在同一 Session Epoch 内区分多个并发进程实例；进程启动时生成，进程生命周期内不变。
+2. **node_id**：所属端点的 Stable NodeID。
+3. **session_epoch**：所属会话纪元（与 §6.4 Session Epoch 关联），标识该 InstanceID 所属的 Epoch。
+4. **created_at**：实例创建时间戳（进程启动时间，复用 CF0 单调时间戳语义）。
+5. **is_active**：布尔值，标识该实例是否为当前活跃实例；新 Epoch 到来时旧实例 is_active 置 false。
+
+## **6.9 Pairing State（CF1-AMEND-002 新增）**
+
+1. **peer_node_id**：对端 Stable NodeID，状态机所属的对端标识。
+2. **current_state**：当前配对/注册状态，取值为 {DISCOVERED, UNTRUSTED, PAIRING_REQUEST, PAIRED, TRUSTED, VERSION_NEGOTIATION, CAPABILITY_NEGOTIATION, REGISTRATION, REGISTERED, MEMBER, REJECTED, ROLLBACK} 之一；任意时刻唯一。
+3. **previous_state**：上一状态，用于 ROLLBACK 时回退至安全状态。
+4. **entered_at**：进入当前状态的时间戳（复用 CF0 单调时间戳语义）。
+5. **failure_reason**：失败原因（仅 REJECTED/ROLLBACK 态填充），取值为配对码错误/版本不兼容/能力不兼容/Topology ID 不一致/链路中断/NodeID 冲突等之一。
+
+## **6.10 Topology Version（CF1-AMEND-003 新增）**
+
+1. **value**：当前拓扑视图版本号，无符号整数，从 1 开始单调递增，不得回跳（复用 CF0 §6.3 version）。
+2. **topology_id**：所属拓扑的 Topology ID。
+3. **last_commit_at**：最近一次 Atomic Commit 时间戳。
+4. **commit_state**：提交状态，取值为 {PROPOSAL, VALIDATION, COMMITTING, ACTIVE, ROLLED_BACK} 之一；ACTIVE 为稳态，其余为瞬态。
+5. **incoming_version**：待处理消息携带的版本号，用于版本覆盖规则判定（incoming < current → reject；incoming == current → idempotent；incoming > current → validate → commit）。
 
 ---
 
@@ -914,7 +1273,160 @@ CF1 在 CF0 冻结的五个架构地基之上，新增五个身份与发现地�
 
 ---
 
+# **9. CF1 Requirement Verification Matrix**
+
+> **矩阵性质**：本章为大G项目经理 Gate Review 要求新增的验证矩阵，将 CF1-S01～CF1-S05 的关键安全需求统一映射至 Contract / Invariant / Violation / Observable Evidence / Acceptance Test 格式，确保每条需求可验证、可审查、可追溯。矩阵不重复 §5 各规则的完整陈述，仅提取关键安全需求的核心验证结构。全部条目与 §5 对应规则交叉引用一致。
+
+## **9.1 S01 Node Identity Model 验证矩阵**
+
+### CF1-S01-REQ-001：Stable NodeID 不变性
+- **Contract**：NodeID 生成后，IP 变更/网卡变更/重启/断线重连均不得改变 NodeID。
+- **Invariant**：∀ 网络事件 e ∈ {IP变更, 网卡切换, 重启, 断线重连}：NodeID_after(e) = NodeID_before(e)。
+- **Violation**：重启或 IP 变更后 NodeID 改变。
+- **Observable Evidence**：持久化文件 NodeID 字节序列跨事件一致；运行时查询 NodeID 返回同一值。
+- **Acceptance Test**：[端点 IP 从 192.168.1.10 变更为 192.168.1.20 后重启] → [NodeID 与变更前完全一致]
+- **对应规则**：§5.1.1 规则 2
+
+### CF1-S01-REQ-002：NodeID 不可伪造（禁止网络覆盖）
+- **Contract**：本端 NodeID 仅由本地生成与持久化决定；禁止从网络接收覆盖本端 NodeID。
+- **Invariant**：本端 NodeID 写入路径仅含 {本地生成, 本地持久化加载}。
+- **Violation**：网络报文触发本端 NodeID 重写。
+- **Observable Evidence**：收到声称本端 NodeID 应为 X 的网络报文后，持久化文件 NodeID 不变。
+- **Acceptance Test**：[收到声称本端 NodeID 应为 X 的网络报文] → [拒绝并忽略，本端 NodeID 不变]
+- **对应规则**：§5.1.1 规则 13
+
+### CF1-S01-REQ-003（AMEND-001）：PublicKey 与 NodeID 生命周期解耦
+- **Contract**：PublicKey = Trust Credential，NodeID = Stable Identity；PublicKey 更换不得改变 NodeID。
+- **Invariant**：∀ 更换事件 e ∈ {轮换, 撤销, 重签}：NodeID_after(e) = NodeID_before(e)；NodeID 生成不依赖 PublicKey。
+- **Violation**：PublicKey 更换触发 NodeID 重新生成，或 NodeID = f(PublicKey)。
+- **Observable Evidence**：PublicKey 更换前后 NodeID 字节序列一致；NodeID 生成代码路径无 PublicKey 读取。
+- **Acceptance Test**：[端点 A 更换 PublicKey 从 PK1 到 PK2] → [NodeID_A 不变，对端 B 持有的 (NodeID_A, Membership_A) 不变]
+- **对应规则**：§5.1.4 规则 1, 2, 3
+
+## **9.2 S02 Discovery Protocol 验证矩阵**
+
+### CF1-S02-REQ-001：不依赖固定 IP 发现
+- **Contract**：发现机制禁止要求端点配置固定 IP；DHCP/动态 IP/网卡切换环境下必须完成发现与被发现。
+- **Invariant**：发现能力不依赖端点 IP 的固定性。
+- **Violation**：发现机制绑定具体 IP 或要求固定 IP 配置。
+- **Observable Evidence**：端点经 DHCP 获取新 IP 后仍可被发现；发现记录以 NodeID 为键不以 IP 为键。
+- **Acceptance Test**：[端点通过 DHCP 获取新 IP] → [仍可被发现并发现其他端点，发现记录以 NodeID 为键]
+- **对应规则**：§5.2.1 规则 1, 2
+
+### CF1-S02-REQ-002：发现以 NodeID 为键（IP 解耦）
+- **Contract**：发现结果以 Stable NodeID 为身份键记录对端；Endpoint Addresses 仅作可达地址记录。
+- **Invariant**：发现记录主键 = NodeID；地址变更更新地址但不更新 NodeID 与信任关系。
+- **Violation**：发现记录以 IP 为键，IP 变更导致 NodeID 或信任关系丢失。
+- **Observable Evidence**：对端 IP 变更后重新发现，发现记录 NodeID 不变，Addresses 更新，Trust 保留。
+- **Acceptance Test**：[对端 IP 变更后重新发现] → [NodeID 不变，Endpoint Addresses 更新，信任关系保留]
+- **对应规则**：§5.2.1 规则 4
+
+### CF1-S02-REQ-003：跨拓扑隔离
+- **Contract**：发现声明携带 Topology ID；仅 Topology ID 一致的端点互相发现并纳入候选。
+- **Invariant**：Topology ID 不一致的端点不加入同一拓扑。
+- **Violation**：不同 Topology ID 的端点被纳入同一拓扑。
+- **Observable Evidence**：跨拓扑端点互相发现但忽略，不产生成员关系。
+- **Acceptance Test**：[端点 A 属 Topology-1 + 端点 B 属 Topology-2] → [A、B 互相发现但忽略，不加入同一拓扑]
+- **对应规则**：§5.2.1 规则 9
+
+## **9.3 S03 Registration & Handshake 验证矩阵**
+
+### CF1-S03-REQ-001：配对前置（未配对拒绝注册）
+- **Contract**：端点首次注册前必须完成配对确认；未配对端点的注册请求必须被拒绝。
+- **Invariant**：注册握手入口校验 NodeID ∈ Trusted Node List；未配对 NodeID 不进入握手。
+- **Violation**：未配对端点完成注册并加入拓扑。
+- **Observable Evidence**：未配对端点注册请求被拒绝并记录安全告警；Trusted List 不含该 NodeID。
+- **Acceptance Test**：[A 未配对 B + A 发起注册] → [注册被拒绝，提示需先配对，记录安全告警]
+- **对应规则**：§5.3.1 规则 2
+
+### CF1-S03-REQ-002：注册原子性（全或无）
+- **Contract**：注册流程原子完成——要么全部步骤成功并加入拓扑，要么任一步失败则整体回滚，不产生半注册状态。
+- **Invariant**：注册失败后 Trusted List 与 Membership 与流程启动前一致。
+- **Violation**：注册中途失败但对端已部分加入 Trusted List 或拓扑成员关系。
+- **Observable Evidence**：失败后无半注册状态残留；日志记录回滚原因与回滚点。
+- **Acceptance Test**：[注册中途 Capabilities 不兼容] → [整体回滚，对端不加入拓扑，无半注册状态]
+- **对应规则**：§5.3.1 规则 9
+
+### CF1-S03-REQ-003（AMEND-002）：五层分层不可跃迁
+- **Contract**：Discovery ≠ Trust ≠ Pairing ≠ Registration ≠ Topology Membership；五层各自独立，上层依赖下层完成但不可合并或跃迁。
+- **Invariant**：对端处于第 k 层完成态时不自动进入第 k+1 层；必须由显式触发推进。
+- **Violation**：发现对端 NodeID 后自动加入 Trusted List（Discovery→Trust 跃迁），或配对成功后自动加入拓扑（Pairing→Membership 跃迁）。
+- **Observable Evidence**：DISCOVERED 态对端不在 Trusted List；PAIRED 态对端不在拓扑成员关系；REGISTERED 态仍不在成员关系直至 MEMBER。
+- **Acceptance Test**：[端点 B 被发现但未配对] → [B 不在 Trusted List，B 不在拓扑成员关系，B 不可参与 Handoff]
+- **对应规则**：§5.3.4 规则 2, 3, 6
+
+## **9.4 S04 Topology Membership 验证矩阵**
+
+### CF1-S04-REQ-001：循环拓扑有效运行态（Node Count ≥ 3）
+- **Contract**：循环 Handoff 启用 → Node Count ≥ 3；Node Count ∈ {1, 2} 属 DEGRADED，循环 Handoff 禁用。
+- **Invariant**：循环 Handoff 启用态下 Node Count ≥ 3 恒成立；DEGRADED 态下循环 Handoff 禁用且本地键鼠不失效。
+- **Violation**：Node Count = 2 时仍启用循环 Handoff，或 DEGRADED 态本地键鼠失效。
+- **Observable Evidence**：循环 Handoff 启用标志为 true 时 Node Count ≥ 3；DEGRADED 态告警日志 + 循环 Handoff 禁用 + 本地键鼠可用。
+- **Acceptance Test**：[Node Count 从 3 降至 2] → [进入 DEGRADED 态，循环 Handoff 禁用，告警 CFX-W-TOPO-DEGRADED-NON-CIRCULAR，本地键鼠可用]
+- **对应规则**：§5.4.1 规则 8, §5.4.5 规则 1, 2
+
+### CF1-S04-REQ-002（AMEND-003）：过期更新拒绝（版本覆盖规则）
+- **Contract**：incoming_version < current_version → reject（拒绝过期更新，不应用副作用）。
+- **Invariant**：current_version 不因 incoming_version < current_version 的消息而降低或回退。
+- **Violation**：旧消息（低版本）覆盖当前高版本拓扑视图。
+- **Observable Evidence**：拒绝日志含 (incoming_version, current_version, rejected)；current_version 与 Membership 未变。
+- **Acceptance Test**：[current_version=5 + 收到 incoming_version=3 的更新] → [拒绝，current_version 保持 5，记录 CFX-W-TOPO-STALE-VERSION]
+- **对应规则**：§5.4.4 规则 2, 6
+
+### CF1-S04-REQ-003（AMEND-003）：原子提交全或无
+- **Contract**：Atomic Commit = (全拓扑应用新版本) ∨ (全拓扑回滚旧版本)；无中间态。
+- **Invariant**：提交过程中任意时刻全拓扑端点 TopologyVersion 至多两个相邻值 {N, N+1}，且 N+1 端点集合在有限时间内收敛为全拓扑或空集。
+- **Violation**：部分端点应用新版本、部分端点保持旧版本（split-brain）。
+- **Observable Evidence**：提交日志含 (old_version, new_version, commit=atomic)；提交超时或失败后全拓扑 current_version 一致回退。
+- **Acceptance Test**：[提交至 3/5 端点时第 4 端点失败] → [整体回滚，全拓扑 current_version 回退至 old_version，无分裂]
+- **对应规则**：§5.4.4 规则 4, 5
+
+## **9.5 S05 Session Epoch & Reconnection 验证矩阵**
+
+### CF1-S05-REQ-001（AMEND-004 / EPOCH-002）：低 Epoch 消息拒绝
+- **Contract**：incoming_epoch < recorded_epoch → reject（拒绝过期会话消息，不应用副作用）。
+- **Invariant**：recorded_epoch 不因过期消息而降低；过期消息不修改 Topology/Trust/Ownership/Endpoint Address/Handoff State。
+- **Violation**：过期会话消息修改当前拓扑或触发 Handoff。
+- **Observable Evidence**：拒绝日志含 (node_id, incoming_epoch, recorded_epoch, rejected)；当前状态无变更。
+- **Acceptance Test**：[recorded_epoch=5 + 收到 incoming_epoch=3 的消息] → [拒绝，recorded_epoch 保持 5，无副作用，记录 CFX-W-SESSION-STALE-EPOCH]
+- **对应规则**：§5.5.4 规则 2（EPOCH-002）
+
+### CF1-S05-REQ-002（AMEND-004 / EPOCH-005）：旧 Session 不修改关键状态
+- **Contract**：旧 Session 消息 → ¬modify(Topology ∪ Trust ∪ Ownership ∪ EndpointAddress ∪ HandoffState)。
+- **Invariant**：旧 Session 消息处理前后，上述五类关键状态集合不变。
+- **Violation**：旧 Session 的 Control Message 触发拓扑成员变更或 Handoff 状态转移或控制权变更。
+- **Observable Evidence**：旧 Session 消息处理后五类关键状态快照与处理前一致；仅日志记录该消息。
+- **Acceptance Test**：[旧 Session (epoch=3) 发送成员变更通知] → [Topology/Trust/Ownership/EndpointAddress/HandoffState 全部不变，仅记录诊断日志]
+- **对应规则**：§5.5.4 规则 5（EPOCH-005）
+
+### CF1-S05-REQ-003：重连不破坏 CF0 Safety Invariant
+- **Contract**：断线重连与身份恢复过程中 CF0 Safety Invariant（P1 No Split-Brain / P2 No Void-Owner / P3 Recoverable）必须始终成立。
+- **Invariant**：恢复期间 Control Owner 数量 ≤ 1（P1）；本地键鼠不永久失效（P2）；恢复在有限时间内完成 ≤ 3s（P3）。
+- **Violation**：恢复期间产生双主控（P1 破坏）或本地键鼠永久失效（P2 破坏）或恢复无限期挂起（P3 破坏）。
+- **Observable Evidence**：恢复期间 Handoff 暂停涉及该端点；恢复完成后 P1 ∧ P2 ∧ P3 可验证通过。
+- **Acceptance Test**：[A 断线重连恢复期间] → [拓扑中 Control Owner 数量 ≤1，A 本地键鼠不永久失效，恢复后满足 P1 ∧ P2 ∧ P3]
+- **对应规则**：§5.5.1 规则 6, §7.5
+
+## **9.6 验证矩阵与 CF0 Safety Invariant 对齐**
+
+| CF1 需求 | 保障的 CF0 Safety Invariant | 对齐说明 |
+|---------|---------------------------|---------|
+| CF1-S01-REQ-001（NodeID 不变性） | P3 Recoverable | NodeID 不变保证重连可恢复身份 |
+| CF1-S01-REQ-002（NodeID 不可伪造） | P1 No Split-Brain | 禁止网络覆盖防止身份劫持导致双主控 |
+| CF1-S01-REQ-003（PublicKey 解耦） | P3 Recoverable | PublicKey 更换不破坏身份恢复连续性 |
+| CF1-S03-REQ-001（配对前置） | P1 No Split-Brain | 未配对端点不参与 Handoff 防止控制权窃取 |
+| CF1-S03-REQ-002（注册原子性） | P1 No Split-Brain, P2 No Void-Owner | 无半注册状态防止 split-brain 与控制权悬空 |
+| CF1-S03-REQ-003（五层分层） | P1 No Split-Brain | 禁止发现即信任防止未授权端点获取控制权 |
+| CF1-S04-REQ-002（过期更新拒绝） | P1 No Split-Brain | 旧消息不覆盖高版本防止拓扑分裂 |
+| CF1-S04-REQ-003（原子提交全或无） | P1 No Split-Brain | 无中间态防止版本分裂 |
+| CF1-S05-REQ-001（低 Epoch 拒绝） | P1 No Split-Brain | 过期会话不修改状态防止旧进程干扰 |
+| CF1-S05-REQ-002（旧 Session 不修改关键状态） | P1 No Split-Brain, P2 No Void-Owner | 旧 Session 不触发 Handoff/控制权变更 |
+| CF1-S05-REQ-003（重连不破坏 Safety Invariant） | P1 ∧ P2 ∧ P3 | 直接延续 CF0 Safety Invariant |
+
+---
+
 > **文档结束**
 > 本规格定义 CF1-S01 ～ CF1-S05 五个身份与发现地基，严格遵循 CF0 冻结的全部架构基线（C++20、Driverless User-Mode、Handoff 六态 FSM、7 契约、Safety Invariant），落地"NodeID 是身份，IP 只是当前可达地址"第一原则，为后续 CF2 ～ CF11 工程实现阶段奠定身份与发现基础。
 > **本次生成（v1）**：Node Identity 七要素模型；mDNS 无固定 IP 发现；注册配对握手；动态拓扑成员管理（含循环支持）；Session Epoch 身份恢复；与 CF0 接口契约对齐；CF0 Safety Invariant 延续。
-> 待用户审查确认后，本文档状态由 DRAFT v1 转为 FROZEN。
+> **本次修订（v2，Gate Review CONDITIONAL PASS 补齐）**：CF1-AMEND-001 PublicKey 生命周期解耦契约；CF1-AMEND-002 配对/注册完整状态机与五层分层契约；CF1-AMEND-003 拓扑版本原子提交与覆盖规则契约；CF1-AMEND-004 SessionInstanceID 三层会话栅栏与 EPOCH-001～006 六条测试契约；两点拓扑澄清（NodeCount ≥3 / DEGRADED / NodeCount vs SegmentCount）；§9 CF1 Requirement Verification Matrix（S01～S05 关键安全需求统一映射至 Contract/Invariant/Violation/Observable Evidence/Acceptance Test）。五大地基与整体结构保持不变，全部新增内容采用 EARS 格式 + 统一验证格式，严格遵循 CF0 冻结约束与 Safety Invariant。
+> 待用户审查确认后，本文档状态由 DRAFT v2 转为 FROZEN 并重新提交 Gate Review。
