@@ -7,3 +7,13 @@ target_link_libraries(test_cf1 PRIVATE
     cfx_s09_membership
 )
 add_test(NAME test_cf1 COMMAND test_cf1)
+
+add_executable(test_cf1_integration test_cf1_integration.cpp)
+target_link_libraries(test_cf1_integration PRIVATE
+    cfx_common
+    cfx_s06_identity
+    cfx_s07_discovery
+    cfx_s08_pairing
+    cfx_s09_membership
+)
+add_test(NAME test_cf1_integration COMMAND test_cf1_integration)
