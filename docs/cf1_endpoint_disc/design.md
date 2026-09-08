@@ -4,7 +4,7 @@
 > **对应需求规格**：`.codeartsdoer/specs/cf1_endpoint_disc/spec.md`（v2，1432 行，五个身份与发现地基 CF1-S01～CF1-S05 + 4 个 Amendment + Verification Matrix，已 FROZEN）
 > **CF0 冻结基线引用**：`.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）+ `.codeartsdoer/specs/cf0_arch_freeze/design.md`（v3，3449 行），本设计严格遵循 CF0 冻结的全部架构基线（C++20 技术栈、Driverless User-Mode、Handoff 六态 FSM、7 核心契约、CF0 Architecture Safety Invariant P1/P2/P3、8 线程模型、双平面隔离）。
 > **第一原则**：NodeID 是身份，IP 只是当前可达地址。
-> **文档状态**：DRAFT v2 → 待 PM Gate Review（v1 经大G项目经理 Gate Review 裁决 **CONDITIONAL PASS / 暂不 FROZEN / 暂不授权 spec-task-agent**；v2 为轻量 Design Amendment，修复 2 个 Design Blocker + 1 个非 Blocker 关系统一，保留 v1 主体结构不重写）
+> **文档状态**：DRAFT v3 → 待 PM Gate Review（v1 经大G项目经理 Gate Review 裁决 **CONDITIONAL PASS / 暂不 FROZEN / 暂不授权 spec-task-agent**；v2 为轻量 Design Amendment，修复 BLOCKER-001 / BLOCKER-002 + 1 个非 Blocker 关系统一；**v3 为轻量 Design Amendment，修复 BLOCKER-003（Topology Atomic Commit 严格语义）+ BLOCKER-004（Coordinator Identity Lifecycle），新增 D-TOPO-ATOMIC-005 / D-TOPO-COORD-005 两条 Design Contract，保留 v2 主体结构不重写**）
 > **设计范围**：仅覆盖 CF1-S01～CF1-S05 五个身份与发现地基的增量设计方案 + 4 个 Amendment 的 Design Contract + Verification Matrix 回映，不引入规格外能力，不修改 CF0 Frozen Architecture，不重新设计 Handoff FSM。
 > **执行纪律遵循**：严格遵守大G项目经理 10 条执行纪律（不修改 CF0 Frozen / 不重新设计 Handoff FSM / 4 Amendment 转 Design Contract / 三元 Fence / TopologyVersion 原子提交 / Pairing 状态机实现边界 / Input/Control 双平面隔离 / Design Contract 回映 Verification Matrix / Gate Review 后再编码）。
 > **Amendment Record（v2，轻量 Design Amendment，非架构返工）**：
@@ -12,6 +12,10 @@
 > - **BLOCKER-002 修复**：Topology Atomic Commit Authority——补充轻量单协调者提交模型，定义 D-TOPO-COORD-001～004 四条契约（任一时刻单一 Authority / 所有 Proposal 经 Coordinator / 并发 Proposal deterministic reject 或 serialize / Coordinator 故障 → COMMITTING → timeout → ABORT/ROLLBACK → 旧版本保持 Active）。**不引入 Raft/Paxos/Consensus**。
 > - **非 Blocker 关系统一**：`TopologyView.version` 保持 u64（不污染 CF0 Frozen 的 `ITopologyManager.currentView()`）；`TopologyVersion`（含 value:u64 + topologyId + lastCommitAt + commitState）由 `ITopologyVersionManager` 单独管理。
 > - **保持不变**：CF1 Design v1 主体结构（不重写 2360 行）、CF0 Frozen Architecture、Handoff 六态 FSM、现有 TopologyVersion API 总体方向。
+> **Amendment Record（v3，轻量 Design Amendment，非架构返工）**：
+> - **BLOCKER-003 修复**（§2.6.3 / §2.6.7 / §2.11.4 / §2.11.9）：**修正 Topology Atomic Commit 严格语义**——撤回 v2 §2.6.3 / §2.6.6 中"TCP 可靠有序 + 全拓扑 ACK + Rollback 即可证明分布式全局 Atomic Commit"的过强论断。TCP 仅保证单连接消息可靠有序，不保证所有节点同时完成状态切换，更不保证 Commit 后发生故障时所有节点一定能够 Rollback。新增 **D-TOPO-ATOMIC-005** 严格协议状态机：CURRENT N → PROPOSED N+1 → VALIDATED N+1 → PREPARED N+1 → ACTIVATION AUTHORIZED → LOCAL ATOMIC SNAPSHOT SWAP → ACTIVE N+1。明确 Proposal ≠ Active / Prepare ≠ Active / ACK ≠ Active / 仅唯一 Coordinator 发出 Activate/Commit Authorization 后节点才能将 N+1 设为 Active / Coordinator Failure 时其他节点禁止自主 Commit / Coordinator Failure 必须保持旧版本 N 为 authoritative baseline / 新会话或恢复后必须重新验证并重新提交 / stale version 必须被拒绝 / 不允许两个 Active TopologyVersion Authority / 与 CF0 Safety Invariant P1 No Split-Brain 一致。新增 DC-S04-008 + EV-BLOCKER-003-1～7 + AT-BLOCKER-003-1～7。
+> - **BLOCKER-004 修复**（§2.6.6 / §2.6.8 / §2.11.4 / §2.11.9）：**补充 Topology Commit Coordinator Identity Lifecycle**——明确初始 Coordinator 由运维配置预先指定（Topology Authority NodeID），第一版**禁止自动 Coordinator Election**；Coordinator 身份经 NodeID 校验 + Topology Authority Membership 校验；Coordinator NodeID 必须属于 Topology Authority；Coordinator 离线期间 Topology Commit = LOCKED / NOT AUTHORIZED，禁止新的 Proposal；禁止多个节点同时声称 Coordinator；不引入 Raft/Paxos/Consensus；不修改 CF0 Frozen Architecture；不重新设计 Handoff FSM。新增 **D-TOPO-COORD-005** Coordinator Identity Lifecycle 状态机：NO COORDINATOR → TOPOLOGY COMMIT LOCKED → 禁止新的 Topology Commit → 旧 Active Version 保持 authoritative。新增 DC-S04-009 + EV-BLOCKER-004-1～6 + AT-BLOCKER-004-1～6。
+> - **保持不变**：CF1 Design v2 主体结构（不重写 2567 行）、CF0 Frozen Architecture、Handoff 六态 FSM、Input Plane / Control Plane 隔离、CF0 Safety Invariant P1/P2/P3、现有 TopologyVersion API 总体方向、v2 BLOCKER-001 / BLOCKER-002 修复成果。
 
 ---
 
@@ -1825,16 +1829,32 @@ Atomic Commit 全或无语义保障（N-10，spec §5.4.4.3 规则 5）：
 
 **全或无保障机制**：
 
-- CF0 Control Plane TCP 可靠有序传输保证 Commit 提案送达（不丢不重不乱序）。
+- CF0 Control Plane TCP 可靠有序传输保证 Commit 提案**在单连接上**送达（不丢不重不乱序）。
 - 全拓扑 ACK 收敛超时（1s）判定提交失败触发整体回滚。
 - 回滚通知经 Control Plane 可靠有序传输保证全拓扑回退一致。
 - 提交过程中任意时刻全拓扑端点的 `TopologyVersion` 至多两个相邻值 `{N, N+1}`，且 N+1 端点集合在有限时间内收敛为全拓扑或空集。
+
+> **v3 BLOCKER-003 修正（重要语义澄清）**：v2 本节及 §2.6.6 曾声称"TCP 可靠有序 + 全拓扑 ACK + Rollback 即可证明分布式全局 Atomic Commit"。**该论断过强，v3 予以撤回**。TCP 仅能保证单连接上的消息可靠有序，**不能**保证：
+> (a) 所有节点同时完成状态切换；
+> (b) Commit 后发生故障时所有节点一定能够 Rollback（节点可能在收到 Commit 后、收到 Rollback 前崩溃）；
+> (c) 不存在两个 Active TopologyVersion Authority。
+>
+> 因此 v3 引入 **D-TOPO-ATOMIC-005**（§2.6.7）严格协议状态机与 **D-TOPO-COORD-005**（§2.6.8）Coordinator Identity Lifecycle，明确：
+> - Proposal ≠ Active；Prepare ≠ Active；ACK ≠ Active；
+> - 只有唯一 Coordinator 发出 Activate/Commit Authorization 后节点才能将 N+1 设为 Active；
+> - Coordinator Failure 时其他节点禁止自主 Commit，必须保持旧版本 N 为 authoritative baseline；
+> - 新会话/恢复后必须重新验证并重新提交；stale version 必须被拒绝；
+> - 不允许出现两个 Active TopologyVersion Authority；
+> - 与 CF0 Safety Invariant P1 No Split-Brain 严格一致。
+>
+> 本节描述的"全或无"语义仅在 D-TOPO-ATOMIC-005 严格协议状态机（§2.6.7）+ Coordinator Identity Lifecycle（§2.6.8）共同约束下成立。
 
 **与 CF0 Safety Invariant P1 No Split-Brain 兼容**（spec §5.4.4.3 规则 6）：
 
 - Atomic Commit 无中间态防止版本分裂（split-brain）。
 - 旧消息（incoming_version < current_version）不覆盖当前高版本，防止拓扑回退或分裂。
 - 此规则与 CF0 Safety Invariant P1 兼容——旧消息不得破坏当前一致的拓扑视图。
+- **v3 补充**：P1 兼容性依赖 D-TOPO-ATOMIC-005 严格协议状态机（§2.6.7）保障"任一时刻至多一个 Active TopologyVersion Authority"，与 D-TOPO-COORD-001（单一 Coordinator）+ D-TOPO-COORD-005（Coordinator Identity Lifecycle）共同构成完整防脑裂证据链。
 
 ### 2.6.4 与 CF0 ITopologyManager 集成
 
@@ -1959,6 +1979,311 @@ end note
 - Coordinator 故障不导致脑裂：故障期间所有 Proposal 无法提交（D-TOPO-COORD-002），全拓扑端点本地超时回滚至旧版本（D-TOPO-COORD-004），旧版本保持 Active，无版本分裂。
 - 与 CF0 Safety Invariant P1 No Split-Brain 兼容：任一时刻全拓扑 `current_version` 至多两个相邻值 `{N, N+1}`，且 N+1 集合在 Coordinator 故障时收敛为空集（回滚）。
 - 与 CF0 Safety Invariant P3 Recoverable 兼容：Coordinator 恢复后从旧版本继续，拓扑可继续提交新 Proposal。
+
+### 2.6.7 Topology Atomic Commit 严格协议状态机（v3 BLOCKER-003 修复，D-TOPO-ATOMIC-005）
+
+**问题背景**：v2 §2.6.3 / §2.6.6 曾声称"TCP 可靠有序 + 全拓扑 ACK + Rollback 即可证明分布式全局 Atomic Commit"。该论断过强——TCP 仅保证单连接消息可靠有序，**不保证**所有节点同时完成状态切换，**更不保证** Commit 后发生故障时所有节点一定能够 Rollback（节点可能在收到 Commit 后、收到 Rollback 前崩溃，导致部分节点 Active N+1、部分节点 Active N 的脑裂）。v3 引入严格协议状态机明确区分 Proposal / Prepare / ACK / Activate / Active 各阶段语义，并明确 Coordinator 在 Activate 阶段的唯一授权地位。
+
+**严格协议状态机**：
+
+```text
+CURRENT N (Active Version N 为 authoritative baseline)
+   │
+   ▼  [收到合法 Proposal: incoming_version = N+1]
+PROPOSED N+1 (Proposal 已登记，未校验，未激活)
+   │
+   ▼  [Validation: 成员关系合法 / 邻居数 ≤2 / 线性排列 / NodeID 唯一]
+VALIDATED N+1 (校验通过，未分发 Prepare，未激活)
+   │
+   ▼  [Coordinator 向全拓扑分发 Prepare(N+1)]
+PREPARED N+1 (各节点本地 Prepare 完成，未激活)
+   │
+   │  [全拓扑 Prepare ACK 收敛至 Coordinator]
+   ▼
+ACTIVATION AUTHORIZED (Coordinator 唯一发出 Activate/Commit Authorization)
+   │
+   ▼  [各节点收到 Activate Authorization → 本地原子快照交换]
+LOCAL ATOMIC SNAPSHOT SWAP (本地 current_version: N → N+1 原子切换)
+   │
+   ▼
+ACTIVE N+1 (新版本成为 authoritative baseline)
+```
+
+**关键语义约束**（v3 显式化）：
+
+| # | 约束 | 说明 |
+|---|------|------|
+| 1 | Proposal ≠ Active | PROPOSED N+1 态 `current_version` 仍为 N，N+1 仅登记在 `pending_proposal` 槽，不对外可见 |
+| 2 | Prepare ≠ Active | PREPARED N+1 态 `current_version` 仍为 N，节点已就绪但未切换 |
+| 3 | ACK ≠ Active | 全拓扑 Prepare ACK 收敛仅触发 Coordinator 进入 ACTIVATION AUTHORIZED，各节点 `current_version` 仍为 N |
+| 4 | Activate Authorization 唯一源 | 仅唯一 Coordinator（D-TOPO-COORD-001 + D-TOPO-COORD-005）发出 Activate/Commit Authorization 后节点才能执行 LOCAL ATOMIC SNAPSHOT SWAP 将 N+1 设为 Active |
+| 5 | Coordinator Failure 禁止自主 Commit | Coordinator 在 ACTIVATION AUTHORIZED 之前故障 → 各节点禁止自主 Commit，必须保持 N 为 authoritative baseline |
+| 6 | Coordinator Failure 保持旧版本 | Coordinator 故障期间 N 为 authoritative baseline，N+1 提案作废，新会话/恢复后必须重新验证并重新提交 |
+| 7 | stale version 拒绝 | 任何 `incoming_version < current_version` 的 Activate/Commit 消息必须拒绝，记录 `CFX-W-TOPO-STALE-VERSION` |
+| 8 | 单一 Active Authority | 任一时刻全拓扑至多一个 Active TopologyVersion Authority，禁止两个 Active Authority 并存 |
+| 9 | 与 CF0 P1 一致 | 本协议状态机与 CF0 Safety Invariant P1 No Split-Brain 严格一致——无两个 Active Authority 即无版本脑裂 |
+
+**Design Contract D-TOPO-ATOMIC-005（五元组完整定义）**：
+
+```text
+Contract
+  TopologyVersion N→N+1 的激活必须经严格协议状态机：
+    CURRENT N → PROPOSED N+1 → VALIDATED N+1 → PREPARED N+1
+    → ACTIVATION AUTHORIZED（唯一 Coordinator 发出 Activate Authorization）
+    → LOCAL ATOMIC SNAPSHOT SWAP → ACTIVE N+1。
+  Proposal / Prepare / ACK 阶段均不改变 Active Version；
+  仅 ACTIVATION AUTHORIZED 后节点才能将 N+1 设为 Active；
+  Coordinator Failure 时其他节点禁止自主 Commit，必须保持 N 为 authoritative baseline；
+  新会话/恢复后必须重新验证并重新提交；stale version 必须拒绝；
+  任一时刻全拓扑至多一个 Active TopologyVersion Authority。
+
+Invariant
+  (I1) Proposal / Prepare / ACK 阶段：∀ node ∈ Topology: node.current_version == N
+  (I2) ACTIVATION AUTHORIZED 阶段：仅 Coordinator 持 Activate Authorization，∀ follower: follower.current_version == N
+  (I3) ACTIVE N+1 阶段：∀ node ∈ Topology: node.current_version == N+1（原子切换完成）
+  (I4) 任一时刻 |{ authority ∈ Topology : authority.isActiveAuthority() }| ≤ 1
+  (I5) Coordinator Failure 期间：∀ node: node.current_version == N（N 为 authoritative baseline）
+  (I6) ∀ incoming_version < current_version: reject（stale version 拒绝）
+  (I7) 与 CF0 P1 No Split-Brain 一致：无两个 Active Authority ⟹ 无版本脑裂
+
+Violation
+  (V1) 节点在 Proposal / Prepare / ACK 阶段即将 current_version 设为 N+1（跃迁非法）
+  (V2) 非 Coordinator 节点自主发出 Activate Authorization（违反唯一源）
+  (V3) Coordinator Failure 后其他节点自主 Commit（违反禁止自主 Commit）
+  (V4) Coordinator Failure 后 N+1 残留为半提交态（违反 N 为 authoritative baseline）
+  (V5) 新会话/恢复后未重新验证即激活旧 N+1（违反重新提交要求）
+  (V6) stale Activate/Commit 消息被接受（违反 stale version 拒绝）
+  (V7) 全拓扑出现两个 Active Authority（违反单一 Active Authority，脑裂）
+
+Observable Evidence
+  EV-BLOCKER-003-1: PREPARE 阶段日志含 (phase=PREPARED, current_version=N, pending=N+1)，current_version 未变
+  EV-BLOCKER-003-2: ACK 阶段日志含 (phase=ACK_COLLECTED, current_version=N, activation=NOT_AUTHORIZED)，current_version 未变
+  EV-BLOCKER-003-3: Activate Authorization 日志含 (coordinator_node_id, phase=ACTIVATION_AUTHORIZED, authorization=UNIQUE_SOURCE)
+  EV-BLOCKER-003-4: ACTIVE N+1 日志含 (phase=ACTIVE, current_version=N+1, swap=LOCAL_ATOMIC_SNAPSHOT)
+  EV-BLOCKER-003-5: Coordinator Failure 日志含 (coordinator_node_id, phase=*, failure=true, action=KEEP_BASELINE_N, autonomous_commit=FORBIDDEN)
+  EV-BLOCKER-003-6: stale Activate/Commit 拒绝日志含 (incoming_version, current_version, rejected=CFX-W-TOPO-STALE-VERSION)
+  EV-BLOCKER-003-7: Active Authority 计数日志含 (active_authority_count, assert<=1)
+
+Acceptance Test
+  AT-BLOCKER-003-1: PREPARE 不改变 Active Version
+    [3 节点拓扑, current_version=5, Coordinator 发起 N=6 提案] → [全拓扑进入 PREPARED, 各节点 current_version 仍为 5]
+  AT-BLOCKER-003-2: 未获得 Coordinator Activate 不得 Active
+    [3 节点拓扑, 全拓扑 PREPARE ACK 已收敛, Coordinator 未发出 Activate] → [各节点 current_version 仍为 5, 无节点自主切换至 6]
+  AT-BLOCKER-003-3: Coordinator 崩溃后成员不得自主 Commit
+    [3 节点拓扑, Coordinator 在 ACTIVATION AUTHORIZED 之前崩溃] → [B/C 节点禁止自主 Commit, current_version 保持 5, N=5 为 authoritative baseline]
+  AT-BLOCKER-003-4: Commit 消息部分到达时不得产生新的合法 Coordinator
+    [3 节点拓扑, Coordinator 发出 Activate 后崩溃, Activate 仅到达 B 未到达 C] → [B 不得因收到 Activate 即自称新 Coordinator; B/C 保持 current_version=5; 无新 Coordinator 产生]
+  AT-BLOCKER-003-5: stale Commit 必须拒绝
+    [current_version=10, 收到 incoming_version=8 的 stale Activate/Commit] → [拒绝, current_version=10 不变, 记录 CFX-W-TOPO-STALE-VERSION]
+  AT-BLOCKER-003-6: Recovery 后必须重新完成合法 Commit
+    [Coordinator 故障后恢复, 旧 N+1 提案作废] → [新会话必须重新发起 Proposal→Validation→Prepare→Activate→Active 流程, 不得直接激活旧 N+1]
+  AT-BLOCKER-003-7: 全程不得出现两个 Active Authority
+    [任意测试场景下周期性查询全拓扑 active_authority_count] → [active_authority_count ≤ 1 恒成立]
+```
+
+**实现组件映射**：
+
+| 协议阶段 | 实现组件 | 关键方法 |
+|---------|---------|---------|
+| CURRENT N | `ITopologyVersionManager.currentVersion()` | 返回 `TopologyVersion{value=N, commitState=ACTIVE}` |
+| PROPOSED N+1 | `TopologyVersionManager.proposeChange()` | 登记 `pending_proposal`，`commitState=PROPOSAL`，`current_version` 不变 |
+| VALIDATED N+1 | `TopologyVersionManager.validate()` | 校验通过，`commitState=VALIDATION`，`current_version` 不变 |
+| PREPARED N+1 | `TopologyVersionManager.distributePrepare()` | 经 `IControlPlaneChannel.send()` 分发 Prepare，各节点 `commitState=PREPARED`，`current_version` 不变 |
+| ACTIVATION AUTHORIZED | `TopologyVersionManager.authorizeActivation()` | **仅 Coordinator 调用**，`commitState=ACTIVATION_AUTHORIZED`，`current_version` 不变 |
+| LOCAL ATOMIC SNAPSHOT SWAP | `TopologyVersionManager.localAtomicSwap()` | 各节点原子 `current_version: N → N+1`，`commitState=ACTIVE` |
+| ACTIVE N+1 | `ITopologyVersionManager.currentVersion()` | 返回 `TopologyVersion{value=N+1, commitState=ACTIVE}` |
+
+**`TopologyCommitState` 枚举扩展**（v3 新增 `Prepared` / `ActivationAuthorized` 两态）：
+
+```cpp
+enum class TopologyCommitState : u8 {
+    Proposal,              // 提案阶段（v2 已有）
+    Validation,            // 校验阶段（v2 已有）
+    Prepared,              // v3 新增：Prepare 已分发，ACK 收敛中，current_version 未变
+    ActivationAuthorized,  // v3 新增：Coordinator 已发出 Activate Authorization，待本地原子切换
+    Committing,            // 提交中（v2 已有，v3 保留为兼容别名，等价于 ActivationAuthorized + LocalAtomicSwap 进行中）
+    Active,                // 稳态（新版本激活）
+    RolledBack,            // 回滚（提交失败）
+};
+```
+
+**与 CF0 Safety Invariant 严格对齐**：
+
+- **P1 No Split-Brain**：D-TOPO-ATOMIC-005 (I4) 单一 Active Authority + D-TOPO-COORD-001 单一 Coordinator + D-TOPO-COORD-005 Coordinator Identity Lifecycle 共同保障无版本脑裂。
+- **P2 No Void-Owner**：Coordinator Failure 期间 N 为 authoritative baseline，本地键鼠不失效（CF0 P2 保持）。
+- **P3 Recoverable**：Coordinator 恢复后从 N 继续，新 Proposal 可正常提交至 N+1（AT-BLOCKER-003-6 保障重新提交流程）。
+
+**不引入 Raft/Paxos/Consensus 的重申**：本协议状态机为**中心化协调者模型**（Coordinator 唯一发出 Activate Authorization），不依赖多数派投票、不依赖共识算法。Coordinator 由运维配置预先指定（D-TOPO-COORD-005），第一版禁止自动 Election。
+
+### 2.6.8 Topology Commit Coordinator Identity Lifecycle（v3 BLOCKER-004 修复，D-TOPO-COORD-005）
+
+**问题背景**：v2 §2.6.6 定义了 D-TOPO-COORD-001～004 四条契约，但未明确 Coordinator 的**身份生命周期**：谁是初始 Coordinator / Coordinator 身份如何被验证 / Coordinator NodeID 是否属于 Topology Authority / Coordinator 离线时是否允许新 Proposal / 第一版是否允许自动 Election / Coordinator 离线期间拓扑提交的状态 / 是否允许多个节点同时声称 Coordinator。v3 补充 D-TOPO-COORD-005 完整定义 Coordinator Identity Lifecycle。
+
+**设计决策**：第一版优先采用**预先确定的 Topology Authority NodeID**（运维配置显式指定 Coordinator NodeID），**不采用动态 Election**。理由：
+
+1. CF1 为身份与发现地基阶段，拓扑规模有限（单一局域网，Node Count 通常 ≤ 数十），运维配置预先指定 Coordinator 足以承载。
+2. 动态 Election（如 Raft Leader Election）引入额外复杂度与节点数要求，与 CF1 軽量发现阶段定位不符。
+3. 预先确定 Coordinator NodeID 与 D-TOPO-COORD-001（单一 Authority）天然兼容——配置唯一指定即唯一 Coordinator。
+4. 不修改 CF0 Frozen Architecture（执行纪律 1），不重新设计 Handoff FSM（执行纪律 2），不引入 Raft/Paxos/Consensus。
+
+**Coordinator Identity Lifecycle 状态机**：
+
+```text
+[启动] 运维配置加载 coordinator_node_id
+   │
+   ▼  [校验: coordinator_node_id ∈ Topology Authority Membership]
+COORDINATOR IDENTIFIED (Coordinator NodeID 已确定, 身份已验证)
+   │
+   ▼  [Coordinator 节点在线 + FSM Thread 健康]
+COORDINATOR ONLINE (Topology Commit AUTHORIZED, 接受新 Proposal)
+   │
+   │  [Coordinator 节点离线 / 进程崩溃 / 网络分区 / FSM Thread 阻塞]
+   ▼
+NO COORDINATOR (Coordinator 离线, 身份悬空)
+   │
+   ▼
+TOPOLOGY COMMIT LOCKED (Topology Commit = LOCKED / NOT AUTHORIZED)
+   │
+   ▼  [禁止新的 Topology Commit, 旧 Active Version N 保持 authoritative]
+COMMIT LOCKED (新 Proposal 一律 REJECT, 记录 CFX-W-TOPO-COORD-OFFLINE)
+   │
+   │  [Coordinator 节点恢复在线 + 身份重新验证]
+   ▼
+COORDINATOR RECOVERED (从旧 Active Version N 继续, 不自动重提交前作废的 N+1 提案)
+   │
+   ▼
+COORDINATOR ONLINE (恢复接受新 Proposal)
+```
+
+**Coordinator 身份验证流程**：
+
+| # | 验证项 | 验证方法 | 失败行为 |
+|---|--------|---------|---------|
+| 1 | Coordinator NodeID 存在性 | 运维配置含 `coordinator_node_id` 字段 | 启动失败，记录 `CFX-E-TOPO-COORD-CONFIG-MISSING` |
+| 2 | Coordinator NodeID ∈ Topology Authority | `ITopologyAuthorityMembership.contains(coordinator_node_id)` | 启动失败，记录 `CFX-E-TOPO-COORD-NOT-IN-AUTHORITY` |
+| 3 | Coordinator NodeID 唯一性 | 全拓扑仅一个节点加载 `role=coordinator` 配置 | 启动告警，记录 `CFX-W-TOPO-COORD-DUPLICATE-CLAIM`，按 NodeID 字典序最小者保留 |
+| 4 | Coordinator 身份签名验证（CF8 强加密启用时） | `IIdentityVerifier.verify(coordinator_node_id, signature)` | 拒绝该节点自称 Coordinator，记录 `CFX-E-TOPO-COORD-IDENTITY-INVALID` |
+| 5 | Coordinator 在线心跳 | `CoordinatorHealthMonitor`（≤1s 心跳周期，3 周期阈值） | 转入 NO COORDINATOR 态 |
+
+**Coordinator 离线期间行为约束**：
+
+| # | 约束 | 说明 |
+|---|------|------|
+| 1 | 禁止新的 Proposal | Coordinator 离线期间任何 Proposal 一律 REJECT，记录 `CFX-W-TOPO-COORD-OFFLINE` |
+| 2 | Topology Commit = LOCKED / NOT AUTHORIZED | 离线期间 `ITopologyVersionManager.commitState()` 返回 `LOCKED`，不接受任何 Activate 请求 |
+| 3 | 旧 Active Version N 保持 authoritative | 离线期间 `current_version` 保持 N，N 为 authoritative baseline |
+| 4 | 禁止自主 Commit | 任何节点不得因 Coordinator 离线即自称新 Coordinator 或自主 Commit（D-TOPO-ATOMIC-005 (V3)） |
+| 5 | 禁止自动 Election | 第一版禁止自动 Coordinator Election，必须等待原 Coordinator 恢复或运维显式切换配置 |
+| 6 | 禁止多节点同时声称 Coordinator | 任一时刻至多一个节点 `role=coordinator`（D-TOPO-COORD-001 + 身份验证项 3） |
+
+**Design Contract D-TOPO-COORD-005（五元组完整定义）**：
+
+```text
+Contract
+  Topology Commit Coordinator 身份生命周期：
+  (1) 初始 Coordinator 由运维配置预先指定（coordinator_node_id），第一版禁止自动 Election；
+  (2) Coordinator 身份经 NodeID 校验 + Topology Authority Membership 校验 +（CF8 启用时）签名验证；
+  (3) Coordinator NodeID 必须属于 Topology Authority Membership；
+  (4) Coordinator 离线期间 Topology Commit = LOCKED / NOT AUTHORIZED，禁止新的 Proposal；
+  (5) Coordinator 离线期间旧 Active Version N 保持 authoritative baseline；
+  (6) 禁止多个节点同时声称 Coordinator；
+  (7) 不引入 Raft/Paxos/Consensus；
+  (8) 不修改 CF0 Frozen Architecture，不重新设计 Handoff FSM。
+
+Invariant
+  (I1) 启动期：coordinator_node_id ∈ TopologyAuthorityMembership（身份验证通过）
+  (I2) 任一时刻 |{ node ∈ Topology : node.role == coordinator }| ≤ 1
+  (I3) Coordinator 离线期间：ITopologyVersionManager.commitState() == LOCKED
+  (I4) Coordinator 离线期间：∀ node: node.current_version == N（N 为 authoritative baseline）
+  (I5) Coordinator 离线期间：∀ proposal: proposal.verdict == REJECT（禁止新 Proposal）
+  (I6) 第一版无自动 Election：Coordinator 变更仅经运维配置显式切换
+  (I7) 不引入 Raft/Paxos/Consensus：无多数派投票逻辑、无 Leader Election 算法
+  (I8) CF0 Frozen Architecture 不变：CF0 接口签名 / 领域对象 / FSM / 线程模型 / 双平面隔离均不修改
+  (I9) Handoff FSM 不重新设计：CF0 六态 FSM 冻结
+
+Violation
+  (V1) 启动时 coordinator_node_id ∉ TopologyAuthorityMembership（身份验证失败仍自称 Coordinator）
+  (V2) 全拓扑出现两个节点 role=coordinator（多 Coordinator 并存）
+  (V3) Coordinator 离线期间 Topology Commit 未 LOCKED，仍接受 Proposal
+  (V4) Coordinator 离线期间某节点 current_version 切换至 N+1（违反 N 为 authoritative baseline）
+  (V5) Coordinator 离线期间某节点自主发出 Activate Authorization（违反禁止自主 Commit）
+  (V6) 第一版出现自动 Election 行为（违反禁止自动 Election）
+  (V7) 引入 Raft/Paxos/Consensus 库依赖或多数派投票逻辑
+  (V8) 修改 CF0 接口签名 / 领域对象 / FSM / 线程模型 / 双平面隔离
+  (V9) 重新设计 Handoff FSM
+
+Observable Evidence
+  EV-BLOCKER-004-1: 启动日志含 (coordinator_node_id, topology_authority_membership=CONTAINS, role=coordinator, election=AUTO_FORBIDDEN)
+  EV-BLOCKER-004-2: Coordinator 在线日志含 (coordinator_node_id, state=ONLINE, commit=AUTHORIZED, heartbeat=healthy)
+  EV-BLOCKER-004-3: Coordinator 离线日志含 (coordinator_node_id, state=OFFLINE, commit=LOCKED, new_proposal=REJECT, reason=CFX-W-TOPO-COORD-OFFLINE)
+  EV-BLOCKER-004-4: Coordinator 离线期间 current_version 日志含 (current_version=N, authoritative_baseline=N, no_autonomous_commit=true)
+  EV-BLOCKER-004-5: Coordinator 恢复日志含 (coordinator_node_id, state=RECOVERED, from_version=N, no_auto_recommit=true)
+  EV-BLOCKER-004-6: 多 Coordinator 检测日志含 (coordinator_claim_count, assert<=1, duplicate_claim=CFX-W-TOPO-COORD-DUPLICATE-CLAIM)
+
+Acceptance Test
+  AT-BLOCKER-004-1: 初始 Coordinator 由配置预先指定
+    [运维配置 coordinator_node_id=A, 启动 3 节点拓扑] → [仅 A 节点 role=coordinator, B/C 节点 role=follower, 无自动 Election 日志]
+  AT-BLOCKER-004-2: Coordinator 身份验证
+    [运维配置 coordinator_node_id=X, 但 X ∉ TopologyAuthorityMembership] → [启动失败, 记录 CFX-E-TOPO-COORD-NOT-IN-AUTHORITY, 无节点自称 Coordinator]
+  AT-BLOCKER-004-3: Coordinator 离线期间 Topology Commit LOCKED
+    [3 节点拓扑, A 为 Coordinator, 终止 A 进程] → [B/C 检测 A 离线, ITopologyVersionManager.commitState()==LOCKED, 新 Proposal 一律 REJECT, 记录 CFX-W-TOPO-COORD-OFFLINE]
+  AT-BLOCKER-004-4: Coordinator 离线期间旧版本保持 authoritative
+    [AT-BLOCKER-004-3 之后] → [B/C current_version 保持 N, N 为 authoritative baseline, 无节点自主 Commit 至 N+1]
+  AT-BLOCKER-004-5: Coordinator 恢复后从旧版本继续
+    [AT-BLOCKER-004-4 之后, 重启 A 进程] → [A 恢复 role=coordinator, 从旧版本 N 继续, 不自动重提交前作废的 N+1 提案, 后续新 Proposal 可正常提交]
+  AT-BLOCKER-004-6: 禁止多节点同时声称 Coordinator
+    [3 节点拓扑, B/C 同时配置 role=coordinator] → [启动告警 CFX-W-TOPO-COORD-DUPLICATE-CLAIM, 按 NodeID 字典序最小者保留, 其余降级为 follower, coordinator_count==1]
+```
+
+**实现组件映射**：
+
+| 生命周期阶段 | 实现组件 | 关键方法 |
+|------------|---------|---------|
+| COORDINATOR IDENTIFIED | `CoordinatorIdentityManager.loadFromConfig()` | 加载 `coordinator_node_id`，校验 ∈ Topology Authority |
+| COORDINATOR ONLINE | `CoordinatorHealthMonitor` + `ITopologyVersionManager.authorizeActivation()` | 心跳健康，接受 Proposal，可发出 Activate Authorization |
+| NO COORDINATOR | `CoordinatorHealthMonitor.detectOffline()` | 心跳超时（3 周期 × 1s = 3s），转入离线态 |
+| TOPOLOGY COMMIT LOCKED | `ITopologyVersionManager.commitState()` 返回 `LOCKED` | 新 Proposal 一律 REJECT |
+| COMMIT LOCKED | `TopologyVersionManager.rejectProposal()` | 记录 `CFX-W-TOPO-COORD-OFFLINE`，`current_version` 保持 N |
+| COORDINATOR RECOVERED | `CoordinatorIdentityManager.verifyOnRecovery()` | 重新身份验证，从 N 继续，不自动重提交旧 N+1 提案 |
+
+**`TopologyCommitState` 枚举再扩展**（v3 新增 `Locked` 态，表示 Coordinator 离线期间 Topology Commit 锁定）：
+
+```cpp
+// v3 在 §2.6.7 扩展基础上再新增 Locked 态
+enum class TopologyCommitState : u8 {
+    Proposal,              // 提案阶段
+    Validation,            // 校验阶段
+    Prepared,              // Prepare 已分发
+    ActivationAuthorized,  // Coordinator 已发出 Activate Authorization
+    Committing,            // v2 兼容别名
+    Active,                // 稳态（新版本激活）
+    RolledBack,            // 回滚（提交失败）
+    Locked,                // v3 新增：Coordinator 离线，Topology Commit LOCKED
+};
+```
+
+**与 D-TOPO-COORD-001～004 的关系**：
+
+| 契约 | D-TOPO-COORD-005 补充点 |
+|------|----------------------|
+| D-TOPO-COORD-001（单一 Authority） | 补充：单一 Authority 由运维配置预先指定 + 身份验证 + 禁止自动 Election |
+| D-TOPO-COORD-002（所有 Proposal 经 Coordinator） | 补充：Coordinator 离线期间 Proposal 一律 REJECT（无 Coordinator 可经） |
+| D-TOPO-COORD-003（并发 Proposal 串行化） | 不变（Coordinator 离线期间无 Proposal 可处理） |
+| D-TOPO-COORD-004（Coordinator 故障 → ABORT/ROLLBACK） | 补充：故障期间 Topology Commit = LOCKED，旧版本 N 为 authoritative baseline，恢复后不自动重提交 |
+
+**与 CF0 Safety Invariant 严格对齐**：
+
+- **P1 No Split-Brain**：D-TOPO-COORD-005 (I2) 单一 Coordinator + (I5) 离线期间禁止新 Proposal + (V5) 禁止自主 Commit 共同保障无版本脑裂。
+- **P2 No Void-Owner**：Coordinator 离线期间 N 为 authoritative baseline，本地键鼠不失效（CF0 P2 保持）。
+- **P3 Recoverable**：Coordinator 恢复后从 N 继续，新 Proposal 可正常提交（AT-BLOCKER-004-5 保障）。
+
+**不修改 CF0 Frozen Architecture 的保障**：
+
+- D-TOPO-COORD-005 全部新增逻辑由 `CoordinatorIdentityManager` + `CoordinatorHealthMonitor` + `ITopologyVersionManager` 扩展承载，不修改 CF0 任何接口签名、领域对象、FSM、线程模型、双平面隔离。
+- `TopologyCommitState` 枚举扩展（新增 `Prepared` / `ActivationAuthorized` / `Locked`）由 CF1 `ITopologyVersionManager` 单独管理，不嵌入 CF0 `ITopologyManager.currentView()` 返回值（与 v2 非 Blocker 关系统一一致）。
+- Handoff 六态 FSM 不重新设计（执行纪律 2），CF1 仅通过 `IRegistrationManager.isMember()` 校验对端注册状态。
+
+**不引入 Raft/Paxos/Consensus 的重申**：D-TOPO-COORD-005 为**中心化协调者身份生命周期模型**，无多数派投票、无 Leader Election 管法、无共识协议。Coordinator 由运维配置预先指定，离线期间 Topology Commit LOCKED，恢复后从旧版本继续。
 
 ## 2.7 Session Fencing 详细设计（AMEND-004）
 
@@ -2406,6 +2731,8 @@ CF1 并发模型与 CF0 完全对齐（执行纪律 7）：
 | DC-S04-005: 所有 Proposal 经 Coordinator（v2 BLOCKER-002，D-TOPO-COORD-002） | `TopologyVersionManager.proposeChange()` 入口校验 + 转发 | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5 | P1 No Split-Brain |
 | DC-S04-006: 并发 Proposal deterministic reject/serialize（v2 BLOCKER-002，D-TOPO-COORD-003） | Coordinator `in_flight_proposal` 单槽 | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5 | P1 No Split-Brain |
 | DC-S04-007: Coordinator 故障 → ABORT/ROLLBACK → 旧版本保持 Active（v2 BLOCKER-002，D-TOPO-COORD-004） | Coordinator 故障检测 + 超时回滚 | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5, 6 | P1 No Split-Brain, P3 Recoverable |
+| DC-S04-008: Topology Atomic Commit 严格协议状态机（v3 BLOCKER-003，D-TOPO-ATOMIC-005） | `TopologyVersionManager` 严格协议状态机（CURRENT N → PROPOSED → VALIDATED → PREPARED → ACTIVATION AUTHORIZED → LOCAL ATOMIC SNAPSHOT SWAP → ACTIVE N+1）+ `TopologyCommitState` 扩展 `Prepared`/`ActivationAuthorized` | CF1-S04-REQ-003（隐含） | §5.4.4 规则 4, 5, 6 | P1 No Split-Brain |
+| DC-S04-009: Coordinator Identity Lifecycle（v3 BLOCKER-004，D-TOPO-COORD-005） | `CoordinatorIdentityManager` + `CoordinatorHealthMonitor` + `TopologyCommitState::Locked` + 运维配置预先指定 Coordinator NodeID + 禁止自动 Election | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5, 6 | P1 No Split-Brain, P3 Recoverable |
 
 ### 2.11.5 S05 Session Epoch & Reconnection Design Contract 回映
 
@@ -2433,10 +2760,10 @@ CF1 并发模型与 CF0 完全对齐（执行纪律 7）：
 |-----------|---------------------|-----------------------------|---------|
 | AMEND-001 PublicKey Lifecycle | 3（DC-S01-003 + PublicKey 字段位 + 生命周期解耦） | CF1-S01-REQ-003 | 执行纪律 3 |
 | AMEND-002 Pairing/Registration State Machine | 3（DC-S03-003 + 7 状态 FSM + 五层分层） | CF1-S03-REQ-003 | 执行纪律 3, 6 |
-| AMEND-003 TopologyVersion Atomic Commit | 6（DC-S04-002 + DC-S04-003 + DC-S04-004～007，v2 BLOCKER-002 Topology Commit Authority 4 条契约） | CF1-S04-REQ-002, CF1-S04-REQ-003 | 执行纪律 3, 5 |
+| AMEND-003 TopologyVersion Atomic Commit | 8（DC-S04-002 + DC-S04-003 + DC-S04-004～007，v2 BLOCKER-002 Topology Commit Authority 4 条契约 + DC-S04-008 v3 BLOCKER-003 D-TOPO-ATOMIC-005 严格协议状态机 + DC-S04-009 v3 BLOCKER-004 D-TOPO-COORD-005 Coordinator Identity Lifecycle） | CF1-S04-REQ-002, CF1-S04-REQ-003 | 执行纪律 3, 5 |
 | AMEND-004 Session Fencing | 4（DC-S05-001 + DC-S05-002 + DC-S05-004 + EPOCH-001～006，v2 BLOCKER-001 Bootstrap Admission） | CF1-S05-REQ-001, CF1-S05-REQ-002, CF1-S05-REQ-003 | 执行纪律 3, 4 |
 
-**执行纪律 8 验证**：全部 4 个 Amendment 已转为 Design Contract 并回映到 CF1 spec.md §9 Verification Matrix 的 Requirement ID，确保可追溯性。v2 新增 5 条 Design Contract（DC-S04-004～007 Topology Commit Authority + DC-S05-004 Bootstrap Admission）回映至 CF1-S04-REQ-003 / CF1-S05-REQ-001（隐含），覆盖两个 Design Blocker 修复。
+**执行纪律 8 验证**：全部 4 个 Amendment 已转为 Design Contract 并回映到 CF1 spec.md §9 Verification Matrix 的 Requirement ID，确保可追溯性。v2 新增 5 条 Design Contract（DC-S04-004～007 Topology Commit Authority + DC-S05-004 Bootstrap Admission）回映至 CF1-S04-REQ-003 / CF1-S05-REQ-001（隐含），覆盖两个 Design Blocker 修复。**v3 新增 2 条 Design Contract（DC-S04-008 D-TOPO-ATOMIC-005 严格协议状态机 + DC-S04-009 D-TOPO-COORD-005 Coordinator Identity Lifecycle）回映至 CF1-S04-REQ-003（隐含），覆盖 BLOCKER-003 / BLOCKER-004 两个 Design Blocker 修复**。
 
 ### 2.11.8 v2 Blocker 修复 Observable Evidence & Acceptance Test
 
@@ -2484,6 +2811,79 @@ CF1 并发模型与 CF0 完全对齐（执行纪律 7）：
 | AT-BLOCKER-002-4 | Coordinator 故障回滚 | 拓扑 3 节点，A 为 Coordinator，A 正在 COMMITTING（Version N→N+1） | 终止 A 进程（模拟 Coordinator 故障） | B/C 本地 ACK 超时（1s）→ ABORT/ROLLBACK → `current_version == N`；无 N+1 半提交态；旧版本保持 Active |
 | AT-BLOCKER-002-5 | Coordinator 恢复后继续 | AT-BLOCKER-002-4 之后 | 重启 A 进程（或重新选举 B 为 Coordinator） | 新 Coordinator 从旧版本 N 继续；后续 Proposal 可正常提交至 N+1；P3 Recoverable 保障 |
 | AT-BLOCKER-002-6 | 不引入共识算法 | 代码库审计 | 静态依赖分析 | 无 Raft/Paxos/Consensus 库依赖；`TopologyVersionManager` 无多数派投票逻辑；DEGRADED Node Count=1/2 时 Coordinator 仍可运行（不依赖多数派） |
+
+### 2.11.9 v3 Blocker 修复 Observable Evidence & Acceptance Test
+
+本小节为 v3 Design Amendment 的两个 Design Blocker（BLOCKER-003 / BLOCKER-004）各提供 Observable Evidence（可观测证据）与 Acceptance Test（验收测试），确保修复可验证、可追溯。所有 Evidence / Test 与 §2.6.7 D-TOPO-ATOMIC-005 / §2.6.8 D-TOPO-COORD-005 五元组定义中的 Observable Evidence / Acceptance Test 一一对应。
+
+#### 2.11.9.1 BLOCKER-003：Topology Atomic Commit 严格协议语义
+
+**Observable Evidence**（对应 D-TOPO-ATOMIC-005 Observable Evidence）：
+
+| 证据 ID | 证据陈述 | 观测点 | 观测方式 |
+|---------|---------|--------|---------|
+| EV-BLOCKER-003-1 | PREPARE 阶段不改变 Active Version | `TopologyVersionManager.distributePrepare()` 日志 | 日志含 `(phase=PREPARED, current_version=N, pending=N+1)`；`current_version` 未变 |
+| EV-BLOCKER-003-2 | ACK 收敛不改变 Active Version | `TopologyVersionManager.collectAck()` 日志 | 日志含 `(phase=ACK_COLLECTED, current_version=N, activation=NOT_AUTHORIZED)`；`current_version` 未变 |
+| EV-BLOCKER-003-3 | Activate Authorization 唯一源 | `TopologyVersionManager.authorizeActivation()` 日志 | 日志含 `(coordinator_node_id, phase=ACTIVATION_AUTHORIZED, authorization=UNIQUE_SOURCE)`；仅 Coordinator 节点产生此日志 |
+| EV-BLOCKER-003-4 | LOCAL ATOMIC SNAPSHOT SWAP 原子切换 | `TopologyVersionManager.localAtomicSwap()` 日志 | 日志含 `(phase=ACTIVE, current_version=N+1, swap=LOCAL_ATOMIC_SNAPSHOT)`；切换原子完成 |
+| EV-BLOCKER-003-5 | Coordinator Failure 保持旧版本 baseline | `CoordinatorHealthMonitor.detectOffline()` + 各节点回滚日志 | 日志含 `(coordinator_node_id, phase=*, failure=true, action=KEEP_BASELINE_N, autonomous_commit=FORBIDDEN)`；各节点 `current_version` 保持 N |
+| EV-BLOCKER-003-6 | stale Activate/Commit 拒绝 | `TopologyVersionManager.handleIncomingUpdate()` 拒绝日志 | 日志含 `(incoming_version, current_version, rejected=CFX-W-TOPO-STALE-VERSION)`；`current_version` 未变 |
+| EV-BLOCKER-003-7 | 单一 Active Authority | 全拓扑 `active_authority_count` 周期性查询日志 | 日志含 `(active_authority_count, assert<=1)`；任一时刻 `active_authority_count ≤ 1` |
+
+**Acceptance Test**（对应 D-TOPO-ATOMIC-005 Acceptance Test）：
+
+| 测试 ID | 测试场景 | 前置条件 | 执行步骤 | 期望结果 |
+|---------|---------|---------|---------|---------|
+| AT-BLOCKER-003-1 | PREPARE 不改变 Active Version | 3 节点拓扑（A/B/C），A 为 Coordinator，`current_version=5` | A 发起 N=6 提案，全拓扑进入 PREPARED 态 | 各节点日志含 `(phase=PREPARED, current_version=5)`；`current_version` 仍为 5 |
+| AT-BLOCKER-003-2 | 未获得 Coordinator Activate 不得 Active | 3 节点拓扑，全拓扑 PREPARE ACK 已收敛至 A | A 不发出 Activate Authorization | B/C 节点 `current_version` 仍为 5；无节点自主切换至 6 |
+| AT-BLOCKER-003-3 | Coordinator 崩溃后成员不得自主 Commit | 3 节点拓扑，A 为 Coordinator，A 在 ACTIVATION AUTHORIZED 之前崩溃 | 终止 A 进程 | B/C 节点禁止自主 Commit；`current_version` 保持 5；N=5 为 authoritative baseline；日志含 `autonomous_commit=FORBIDDEN` |
+| AT-BLOCKER-003-4 | Commit 消息部分到达不得产生新合法 Coordinator | 3 节点拓扑，A 发出 Activate 后崩溃，Activate 仅到达 B 未到达 C | 检查 B/C 节点行为 | B 不得因收到 Activate 即自称新 Coordinator；B/C `current_version` 保持 5；无新 Coordinator 产生 |
+| AT-BLOCKER-003-5 | stale Commit 必须拒绝 | `current_version=10` | 收到 `incoming_version=8` 的 stale Activate/Commit | 拒绝；`current_version=10` 不变；记录 `CFX-W-TOPO-STALE-VERSION` |
+| AT-BLOCKER-003-6 | Recovery 后必须重新完成合法 Commit | AT-BLOCKER-003-3 之后，A 恢复在线 | 重启 A 进程，提交新 Proposal | 旧 N+1 提案作废；新会话必须重新发起 Proposal→Validation→Prepare→Activate→Active 流程；不得直接激活旧 N+1 |
+| AT-BLOCKER-003-7 | 全程不得出现两个 Active Authority | 任意测试场景 | 周期性查询全拓扑 `active_authority_count` | `active_authority_count ≤ 1` 恒成立；无两个 Active Authority 并存 |
+
+#### 2.11.9.2 BLOCKER-004：Topology Commit Coordinator Identity Lifecycle
+
+**Observable Evidence**（对应 D-TOPO-COORD-005 Observable Evidence）：
+
+| 证据 ID | 证据陈述 | 观测点 | 观测方式 |
+|---------|---------|--------|---------|
+| EV-BLOCKER-004-1 | 初始 Coordinator 由配置预先指定 | 启动日志 + `CoordinatorIdentityManager.loadFromConfig()` 日志 | 启动日志含 `(coordinator_node_id, topology_authority_membership=CONTAINS, role=coordinator, election=AUTO_FORBIDDEN)`；无自动 Election 日志 |
+| EV-BLOCKER-004-2 | Coordinator 在线状态 | `CoordinatorHealthMonitor` 心跳日志 | 日志含 `(coordinator_node_id, state=ONLINE, commit=AUTHORIZED, heartbeat=healthy)` |
+| EV-BLOCKER-004-3 | Coordinator 离线 Topology Commit LOCKED | `CoordinatorHealthMonitor.detectOffline()` + `TopologyVersionManager.rejectProposal()` 日志 | 日志含 `(coordinator_node_id, state=OFFLINE, commit=LOCKED, new_proposal=REJECT, reason=CFX-W-TOPO-COORD-OFFLINE)` |
+| EV-BLOCKER-004-4 | Coordinator 离线期间旧版本保持 authoritative | 各节点 `current_version` 日志 | 日志含 `(current_version=N, authoritative_baseline=N, no_autonomous_commit=true)`；`current_version` 保持 N |
+| EV-BLOCKER-004-5 | Coordinator 恢复从旧版本继续 | `CoordinatorIdentityManager.verifyOnRecovery()` 日志 | 日志含 `(coordinator_node_id, state=RECOVERED, from_version=N, no_auto_recommit=true)`；不自动重提交前作废的 N+1 提案 |
+| EV-BLOCKER-004-6 | 禁止多节点同时声称 Coordinator | 启动日志 + `CoordinatorIdentityManager` 唯一性校验日志 | 日志含 `(coordinator_claim_count, assert<=1, duplicate_claim=CFX-W-TOPO-COORD-DUPLICATE-CLAIM)`；`coordinator_count == 1` |
+
+**Acceptance Test**（对应 D-TOPO-COORD-005 Acceptance Test）：
+
+| 测试 ID | 测试场景 | 前置条件 | 执行步骤 | 期望结果 |
+|---------|---------|---------|---------|---------|
+| AT-BLOCKER-004-1 | 初始 Coordinator 由配置预先指定 | 运维配置 `coordinator_node_id=A` | 启动 3 节点拓扑（A/B/C） | 仅 A 节点 `role=coordinator`；B/C 节点 `role=follower`；无自动 Election 日志 |
+| AT-BLOCKER-004-2 | Coordinator 身份验证 | 运维配置 `coordinator_node_id=X`，但 X ∉ TopologyAuthorityMembership | 启动拓扑 | 启动失败；记录 `CFX-E-TOPO-COORD-NOT-IN-AUTHORITY`；无节点自称 Coordinator |
+| AT-BLOCKER-004-3 | Coordinator 离线 Topology Commit LOCKED | 3 节点拓扑，A 为 Coordinator | 终止 A 进程 | B/C 检测 A 离线；`ITopologyVersionManager.commitState()==LOCKED`；新 Proposal 一律 REJECT；记录 `CFX-W-TOPO-COORD-OFFLINE` |
+| AT-BLOCKER-004-4 | Coordinator 离线旧版本保持 authoritative | AT-BLOCKER-004-3 之后 | 检查 B/C 节点 `current_version` | B/C `current_version` 保持 N；N 为 authoritative baseline；无节点自主 Commit 至 N+1 |
+| AT-BLOCKER-004-5 | Coordinator 恢复后从旧版本继续 | AT-BLOCKER-004-4 之后 | 重启 A 进程 | A 恢复 `role=coordinator`；从旧版本 N 继续；不自动重提交前作废的 N+1 提案；后续新 Proposal 可正常提交 |
+| AT-BLOCKER-004-6 | 禁止多节点同时声称 Coordinator | 3 节点拓扑，B/C 同时配置 `role=coordinator` | 启动拓扑 | 启动告警 `CFX-W-TOPO-COORD-DUPLICATE-CLAIM`；按 NodeID 字典序最小者保留；其余降级为 follower；`coordinator_count==1` |
+
+#### 2.11.9.3 v3 Blocker 修复与 CF0 Safety Invariant 对齐验证
+
+| Blocker | 对应 Design Contract | P1 No Split-Brain | P2 No Void-Owner | P3 Recoverable |
+|---------|---------------------|-------------------|------------------|----------------|
+| BLOCKER-003 | D-TOPO-ATOMIC-005（DC-S04-008） | (I4) 单一 Active Authority + (V3) 禁止自主 Commit + (V7) 禁止两 Active Authority | Coordinator Failure 期间 N 为 authoritative baseline，本地键鼠不失效 | AT-BLOCKER-003-6 恢复后重新提交 |
+| BLOCKER-004 | D-TOPO-COORD-005（DC-S04-009） | (I2) 单一 Coordinator + (I5) 离线禁止新 Proposal + (V5) 禁止自主 Commit | Coordinator 离线期间 N 为 authoritative baseline，本地键鼠不失效 | AT-BLOCKER-004-5 恢复后从 N 继续 |
+
+**v3 修复不引入 Raft/Paxos/Consensus 的审计**：
+
+- D-TOPO-ATOMIC-005：中心化协调者模型，Coordinator 唯一发出 Activate Authorization，无多数派投票、无共识协议。
+- D-TOPO-COORD-005：Coordinator 由运维配置预先指定，第一版禁止自动 Election，无 Leader Election 管法。
+- 代码库静态依赖审计：无 Raft/Paxos/Consensus 库依赖；`TopologyVersionManager` / `CoordinatorIdentityManager` / `CoordinatorHealthMonitor` 无多数派投票逻辑。
+
+**v3 修复不修改 CF0 Frozen Architecture 的审计**：
+
+- 全部新增逻辑由 `CoordinatorIdentityManager` + `CoordinatorHealthMonitor` + `ITopologyVersionManager` 扩展承载，不修改 CF0 任何接口签名、领域对象、FSM、线程模型、双平面隔离。
+- `TopologyCommitState` 枚举扩展（新增 `Prepared` / `ActivationAuthorized` / `Locked`）由 CF1 `ITopologyVersionManager` 单独管理，不嵌入 CF0 `ITopologyManager.currentView()` 返回值。
+- Handoff 六态 FSM 不重新设计（执行纪律 2）。
 
 ## 2.12 与后续阶段的接口契约
 
@@ -2561,7 +2961,12 @@ CF1 为 CF2～CF11 工程实现阶段提供以下身份与发现基础：
 > - **BLOCKER-002 修复**（§2.1.3.3 / §2.6.3 / §2.6.6）：Topology Atomic Commit Authority 单协调者模型——定义 D-TOPO-COORD-001～004 四条契约（单一 Authority / 所有 Proposal 经 Coordinator / 并发 Proposal deterministic reject 或 serialize / Coordinator 故障 → ABORT/ROLLBACK → 旧版本保持 Active）。**不引入 Raft/Paxos/Consensus**。新增 DC-S04-004～007 + EV-BLOCKER-002-1～5 + AT-BLOCKER-002-1～6。
 > - **非 Blocker 关系统一**（§1.2.2 / §2.3.2 / §2.6.4）：`TopologyView.version` 保持 u64（不污染 CF0 Frozen 的 `ITopologyManager.currentView()`）；`TopologyVersion`（含 value:u64 + topologyId + lastCommitAt + commitState）由 `ITopologyVersionManager` 单独管理。
 > - **Verification Matrix 更新**（§2.11.4 / §2.11.5 / §2.11.7 / §2.11.8）：新增 5 条 Design Contract + 9 条 Observable Evidence + 10 条 Acceptance Test，覆盖两个 Blocker 修复。
-> **保持不变**：CF1 Design v1 主体结构（不重写 2360 行）、CF0 Frozen Architecture（不修改 CF0 接口签名、领域对象定义、FSM 状态机、线程模型、双平面隔离架构）、Handoff 六态 FSM（不重新设计）、Input Plane / Control Plane 隔离（CF1 报文全部归属 Control Plane）、CF0 Safety Invariant P1/P2/P3（CF1 失败/恢复不得破坏）、现有 TopologyVersion API 总体方向。
+> **v3 Design Amendment（轻量修订，非架构返工，修复 2 个 Design Blocker）**：
+> - **BLOCKER-003 修复**（§2.6.3 / §2.6.7 / §2.11.4 / §2.11.9）：**修正 Topology Atomic Commit 严格语义**——撤回 v2 §2.6.3 / §2.6.6 中"TCP 可靠有序 + 全拓扑 ACK + Rollback 即可证明分布式全局 Atomic Commit"的过强论断。TCP 仅保证单连接消息可靠有序，不保证所有节点同时完成状态切换，更不保证 Commit 后发生故障时所有节点一定能够 Rollback。新增 **D-TOPO-ATOMIC-005**（DC-S04-008）严格协议状态机：CURRENT N → PROPOSED N+1 → VALIDATED N+1 → PREPARED N+1 → ACTIVATION AUTHORIZED → LOCAL ATOMIC SNAPSHOT SWAP → ACTIVE N+1。明确 Proposal ≠ Active / Prepare ≠ Active / ACK ≠ Active / 仅唯一 Coordinator 发出 Activate/Commit Authorization 后节点才能将 N+1 设为 Active / Coordinator Failure 时其他节点禁止自主 Commit / Coordinator Failure 必须保持旧版本 N 为 authoritative baseline / 新会话或恢复后必须重新验证并重新提交 / stale version 必须被拒绝 / 不允许两个 Active TopologyVersion Authority / 与 CF0 Safety Invariant P1 No Split-Brain 一致。`TopologyCommitState` 扩展 `Prepared` / `ActivationAuthorized` 两态。新增 EV-BLOCKER-003-1～7 + AT-BLOCKER-003-1～7。
+> - **BLOCKER-004 修复**（§2.6.6 / §2.6.8 / §2.11.4 / §2.11.9）：**补充 Topology Commit Coordinator Identity Lifecycle**——明确初始 Coordinator 由运维配置预先指定（Topology Authority NodeID），第一版**禁止自动 Coordinator Election**；Coordinator 身份经 NodeID 校验 + Topology Authority Membership 校验 +（CF8 启用时）签名验证；Coordinator NodeID 必须属于 Topology Authority；Coordinator 离线期间 Topology Commit = LOCKED / NOT AUTHORIZED，禁止新的 Proposal；禁止多个节点同时声称 Coordinator；不引入 Raft/Paxos/Consensus；不修改 CF0 Frozen Architecture；不重新设计 Handoff FSM。新增 **D-TOPO-COORD-005**（DC-S04-009）Coordinator Identity Lifecycle 状态机：NO COORDINATOR → TOPOLOGY COMMIT LOCKED → 禁止新的 Topology Commit → 旧 Active Version 保持 authoritative。`TopologyCommitState` 扩展 `Locked` 态。新增 `CoordinatorIdentityManager` + `CoordinatorHealthMonitor` 实现组件。新增 EV-BLOCKER-004-1～6 + AT-BLOCKER-004-1～6。
+> - **Verification Matrix 更新**（§2.11.4 / §2.11.7 / §2.11.9）：新增 2 条 Design Contract + 13 条 Observable Evidence + 13 条 Acceptance Test，覆盖两个 Blocker 修复。
+> **保持不变**：CF1 Design v1 主体结构（不重写 2360 行）、CF1 Design v2 主体结构（不重写 2567 行）、CF0 Frozen Architecture（不修改 CF0 接口签名、领域对象定义、FSM 状态机、线程模型、双平面隔离架构）、Handoff 六态 FSM（不重新设计）、Input Plane / Control Plane 隔离（CF1 报文全部归属 Control Plane）、CF0 Safety Invariant P1/P2/P3（CF1 失败/恢复不得破坏）、现有 TopologyVersion API 总体方向、v2 BLOCKER-001 / BLOCKER-002 修复成果。
 > **执行纪律遵循**：严格遵守大G项目经理 10 条执行纪律（①不修改 CF0 Frozen / ②不重新设计 Handoff FSM / ③4 Amendment 转 Design Contract / ④三元 Fence / ⑤TopologyVersion 原子提交 / ⑥Pairing 状态机实现边界 / ⑦Input/Control 双平面隔离 / ⑧Design Contract 回映 Verification Matrix / ⑨Design 完成后 Gate Review / ⑩Design 通过后授权 spec-task-agent）。
 > **v2 Amendment 约束遵循**：保留现有 CF1 Design 主体结构（不重写）/ 不修改 CF0 Frozen Architecture / 不重新设计 Handoff FSM / 更新对应 Design Contract / 更新 Verification Matrix 映射 / 为两个 Blocker 各增加 Observable Evidence / 为两个 Blocker 各增加 Acceptance Test / 更新文档版本与 Amendment Record / 不引入 Raft/Paxos/Consensus / 不进入 spec-task-agent / 完成后等待 PM Gate Review。
-> 待 PM Gate Review 裁决通过后，本文档状态由 DRAFT v2 转为 FROZEN，授权 spec-task-agent 进行任务分解。
+> **v3 Amendment 约束遵循**：保留现有 CF1 Design v2 主体结构（不重写 2567 行）/ 不修改 CF0 Frozen Architecture / 不重新设计 Handoff FSM / 撤回 v2 §2.6.3 / §2.6.6 过强论断 / 新增 D-TOPO-ATOMIC-005 严格协议状态机 / 新增 D-TOPO-COORD-005 Coordinator Identity Lifecycle / 更新对应 Design Contract / 更新 Verification Matrix 映射 / 为两个 Blocker 各增加 Observable Evidence / 为两个 Blocker 各增加 Acceptance Test / 更新文档版本与 Amendment Record / 不引入 Raft/Paxos/Consensus / 不进入 spec-task-agent / 完成后等待 PM Gate Review。
+> 待 PM Gate Review 裁决通过后，本文档状态由 DRAFT v3 转为 FROZEN，授权 spec-task-agent 进行任务分解。
