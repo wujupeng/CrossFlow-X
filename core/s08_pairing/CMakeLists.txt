@@ -7,8 +7,13 @@ add_library(cfx_s08_pairing STATIC
     pairing_fsm.cpp
     trusted_node_list.hpp
     trusted_node_list.cpp
+    registration_manager.hpp
+    registration_manager.cpp
+    handshake_orchestrator.hpp
+    handshake_orchestrator.cpp
 )
 
 target_include_directories(cfx_s08_pairing PUBLIC
     ${CMAKE_SOURCE_DIR}/core
 )
+

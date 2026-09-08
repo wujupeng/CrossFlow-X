@@ -7,8 +7,11 @@ add_library(cfx_s06_identity STATIC
     node_identity_manager.cpp
     session_fence.hpp
     session_fence.cpp
+    identity_recovery_manager.hpp
+    identity_recovery_manager.cpp
 )
 
 target_include_directories(cfx_s06_identity PUBLIC
     ${CMAKE_SOURCE_DIR}/core
 )
+

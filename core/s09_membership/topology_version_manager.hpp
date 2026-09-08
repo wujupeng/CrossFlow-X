@@ -1,6 +1,7 @@
 #pragma once
 
 #include <optional>
+#include <string>
 
 #include "common/domain.hpp"
 #include "common/error_code.hpp"
@@ -26,12 +27,22 @@ public:
     std::optional<ErrorCode> setCoordinator(const NodeId& authorityNodeId) noexcept override;
     bool isCommitLocked() const noexcept override;
 
+    std::optional<ErrorCode> setLocalNodeId(const NodeId& nodeId) noexcept;
+    std::optional<ErrorCode> setTopologyAuthority(const NodeId& authorityNodeId) noexcept;
+    std::optional<ErrorCode> authorizeActivation() noexcept;
+    std::optional<ErrorCode> markCoordinatorOffline() noexcept;
+    std::optional<ErrorCode> markCoordinatorOnline() noexcept;
+    bool isAuthorityConfigured() const noexcept;
+    std::optional<NodeId> authorityNodeId() const noexcept;
+
 private:
     TopologyVersion current_{};
     TopologyCommitState state_{TopologyCommitState::Active};
     std::optional<TopologyChangeProposal> pendingProposal_;
     std::optional<NodeId> coordinatorId_;
     std::optional<NodeId> localNodeId_;
+    std::optional<NodeId> authorityNodeId_;
+    bool coordinatorOnline_{true};
 };
 
 }  // namespace cfx
