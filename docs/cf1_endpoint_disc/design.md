@@ -4,9 +4,14 @@
 > **对应需求规格**：`.codeartsdoer/specs/cf1_endpoint_disc/spec.md`（v2，1432 行，五个身份与发现地基 CF1-S01～CF1-S05 + 4 个 Amendment + Verification Matrix，已 FROZEN）
 > **CF0 冻结基线引用**：`.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）+ `.codeartsdoer/specs/cf0_arch_freeze/design.md`（v3，3449 行），本设计严格遵循 CF0 冻结的全部架构基线（C++20 技术栈、Driverless User-Mode、Handoff 六态 FSM、7 核心契约、CF0 Architecture Safety Invariant P1/P2/P3、8 线程模型、双平面隔离）。
 > **第一原则**：NodeID 是身份，IP 只是当前可达地址。
-> **文档状态**：DRAFT v1 → 待用户审查冻结
+> **文档状态**：DRAFT v2 → 待 PM Gate Review（v1 经大G项目经理 Gate Review 裁决 **CONDITIONAL PASS / 暂不 FROZEN / 暂不授权 spec-task-agent**；v2 为轻量 Design Amendment，修复 2 个 Design Blocker + 1 个非 Blocker 关系统一，保留 v1 主体结构不重写）
 > **设计范围**：仅覆盖 CF1-S01～CF1-S05 五个身份与发现地基的增量设计方案 + 4 个 Amendment 的 Design Contract + Verification Matrix 回映，不引入规格外能力，不修改 CF0 Frozen Architecture，不重新设计 Handoff FSM。
 > **执行纪律遵循**：严格遵守大G项目经理 10 条执行纪律（不修改 CF0 Frozen / 不重新设计 Handoff FSM / 4 Amendment 转 Design Contract / 三元 Fence / TopologyVersion 原子提交 / Pairing 状态机实现边界 / Input/Control 双平面隔离 / Design Contract 回映 Verification Matrix / Gate Review 后再编码）。
+> **Amendment Record（v2，轻量 Design Amendment，非架构返工）**：
+> - **BLOCKER-001 修复**：Bootstrap / Session Fence 两级 Message Admission 边界——明确 Bootstrap 类消息（DiscoveryAnnouncement / PairingRequest / PairingResponse）允许未知 NodeID，走独立 Trust Gate；Established Session 类消息（Registration / MembershipChange / IdentityRecovery / Goodbye / Topology update）才执行 NodeID→Epoch→InstanceID 三元 Fence。禁止 SessionFence 将首次 Pairing 锁死。
+> - **BLOCKER-002 修复**：Topology Atomic Commit Authority——补充轻量单协调者提交模型，定义 D-TOPO-COORD-001～004 四条契约（任一时刻单一 Authority / 所有 Proposal 经 Coordinator / 并发 Proposal deterministic reject 或 serialize / Coordinator 故障 → COMMITTING → timeout → ABORT/ROLLBACK → 旧版本保持 Active）。**不引入 Raft/Paxos/Consensus**。
+> - **非 Blocker 关系统一**：`TopologyView.version` 保持 u64（不污染 CF0 Frozen 的 `ITopologyManager.currentView()`）；`TopologyVersion`（含 value:u64 + topologyId + lastCommitAt + commitState）由 `ITopologyVersionManager` 单独管理。
+> - **保持不变**：CF1 Design v1 主体结构（不重写 2360 行）、CF0 Frozen Architecture、Handoff 六态 FSM、现有 TopologyVersion API 总体方向。
 
 ---
 
@@ -204,7 +209,7 @@ CF0 冻结基线（spec.md v2 + design.md v3）已落地五个架构地基 CF0-S
 - **业务规则**：线性排列校验；回环闭合；邻居数量上限 ≤2；版本号单调递增。
 - **扩展点**：`TopologyView` 可扩展 topology_id 字段；`NeighborRelation` 可扩展 segment_index 字段。
 - **约束**：
-  - **CF1 扩展边界**：`TopologyView` 增 `topologyId` 字段（跨拓扑隔离）；`NeighborRelation` 增 `segmentIndex` 字段；`version` 字段升级为 `TopologyVersion`（含 Atomic Commit 状态机，AMEND-003）。
+  - **CF1 扩展边界**：`TopologyView` 增 `topologyId` 字段（跨拓扑隔离）；`NeighborRelation` 增 `segmentIndex` 字段；`version` **保持 u64**（v2 非 Blocker 修复，不污染 CF0 `ITopologyManager.currentView()`）；`TopologyVersion`（含 Atomic Commit 状态机，AMEND-003）由 `ITopologyVersionManager` 单独管理，不嵌入 `TopologyView`。
   - **契约③约束**：`segmentCount() >= 2` 必须保持；CF1 的 Node Count ≥3 循环有效运行态与 CF0 契约③"禁两点退化"绝对一致（§5.4.5）。
   - **线程安全**：领域对象本身无共享状态，线程安全；动态维护由 FSM Thread 串行执行（复用 CF0 契约⑦）。
 
@@ -678,11 +683,11 @@ end note
 
 #### 2.1.3.3 TopologyVersion Atomic Commit 流程设计（AMEND-003 Design Contract）
 
-下图展示拓扑版本原子提交流程（spec §5.4.4 / AMEND-003）。流程由 `TopologyVersionManager` 驱动，运行在 FSM Thread 内。版本覆盖规则严格遵循：incoming < current → reject / incoming == current → idempotent / incoming > current → validate → atomic commit。
+下图展示拓扑版本原子提交流程（spec §5.4.4 / AMEND-003，v2 BLOCKER-002 修复）。流程由 `TopologyVersionManager` 驱动，运行在 FSM Thread 内。**Topology Commit Authority 单协调者模型**（v2 BLOCKER-002 修复）：所有 Proposal 必须进入 Coordinator；并发 Proposal deterministic reject 或 serialize；Coordinator 故障 → COMMITTING → timeout → ABORT/ROLLBACK → 旧版本保持 Active。版本覆盖规则严格遵循：incoming < current → reject / incoming == current → idempotent / incoming > current → validate → atomic commit。**不引入 Raft/Paxos/Consensus**。
 
 ```plantuml
 @startuml
-title CF1 TopologyVersion Atomic Commit 流程 (spec §5.4.4 / AMEND-003)
+title CF1 TopologyVersion Atomic Commit 流程 (spec §5.4.4 / AMEND-003, v2 BLOCKER-002)
 
 start
 :收到拓扑更新消息\n(incoming_version, Membership 变更);
@@ -707,20 +712,30 @@ else (incoming_version > current_version, 高版本)
   :进入 Proposal 阶段;
   :Validation 校验\n(成员关系合法性 / 邻居数 ≤2\n/ 线性排列 / NodeID 唯一);
   if (Validation 通过?) then (是)
-    :进入 Atomic Commit 阶段;
-    :向全拓扑发送 Commit 提案\n(经 CF0 Control Plane 可靠有序);
-    :等待全拓扑 ACK 收敛;
-    if (全拓扑 ACK 收敛?) then (是)
-      :Version N+1 Active;
-      :全拓扑 current_version = N+1;
-      :记录提交日志\n(old_version, new_version, commit=atomic);
+    :进入 Atomic Commit 阶段\n(Commit State = COMMITTING);
+
+    ' === v2 BLOCKER-002: Topology Commit Authority 单协调者模型 ===
+    :Proposal 提交至 Coordinator\n(D-TOPO-COORD-002);
+    if (Coordinator 当前有进行中 Proposal?) then (是, 并发 Proposal)
+      :deterministic reject 或 serialize\n(D-TOPO-COORD-003);
+      :记录告警 CFX-W-TOPO-PROPOSAL-SERIALIZE;
       stop
-    else (否, 任一端点失败/超时)
-      :整体回滚至旧版本;
-      :全拓扑 current_version = N;
-      :记录回滚日志;
-      :无中间态 (全或无);
-      stop
+    else (否, Coordinator 空闲)
+      :Coordinator 向全拓扑分发 Commit 提案\n(经 CF0 Control Plane 可靠有序);
+      :等待全拓扑 ACK 收敛 (超时 1s);
+      if (全拓扑 ACK 收敛?) then (是)
+        :Version N+1 Active\n(Commit State = ACTIVE);
+        :全拓扑 current_version = N+1;
+        :记录提交日志\n(old_version, new_version, commit=atomic,\n coordinator=authoritative);
+        stop
+      else (否, 任一端点失败/超时\n或 Coordinator 故障)
+        :Coordinator 判定 ABORT/ROLLBACK\n(D-TOPO-COORD-004);
+        :整体回滚至旧版本;
+        :全拓扑 current_version = N;
+        :Commit State = ROLLED_BACK → ACTIVE (旧版本);
+        :记录回滚日志\n(无中间态, 旧版本保持 Active);
+        stop
+      endif
     endif
   else (否, Validation 失败)
     :拒绝提交;
@@ -736,55 +751,86 @@ endif
 
 - 全拓扑端点要么全部成功应用新版本并激活（current_version = N+1），要么任一端点失败则整体回滚至旧版本（current_version = N），无中间态。
 - 保障机制：CF0 Control Plane TCP 可靠有序传输保证 Commit 提案送达；全拓扑 ACK 收敛超时（1s）判定提交失败触发整体回滚；回滚通知经 Control Plane 可靠有序传输保证全拓扑回退一致。
+- **Topology Commit Authority 单协调者模型**（v2 BLOCKER-002 修复）：任一时刻一个 Topology Commit Authority（D-TOPO-COORD-001）；所有 Proposal 必须进入 Coordinator（D-TOPO-COORD-002）；并发 Proposal deterministic reject 或 serialize（D-TOPO-COORD-003）；Coordinator 故障 → COMMITTING → timeout → ABORT/ROLLBACK → 旧版本保持 Active（D-TOPO-COORD-004）。**不引入 Raft/Paxos/Consensus**——TCP 可靠有序 ≠ 分布式 Atomic Commit，但单协调者 + 全拓扑 ACK 收敛 + 超时回滚足以保障 CF1 拓扑规模下的全或无语义。
 - 与 CF0 Safety Invariant P1 No Split-Brain 兼容：Atomic Commit 无中间态防止版本分裂（split-brain）。
 
 #### 2.1.3.4 Session Fencing 三元栅栏设计（AMEND-004 Design Contract）
 
-下图展示 (NodeID, SessionEpoch, SessionInstanceID) 三元会话栅栏的消息准入检查流程（spec §5.5.4 / AMEND-004）。流程由 `SessionFence` 驱动，每条 incoming 消息经 NodeID Check → Epoch Check → InstanceID Check → ACCEPT/REJECT。
+下图展示 (NodeID, SessionEpoch, SessionInstanceID) 三元会话栅栏的消息准入检查流程（spec §5.5.4 / AMEND-004）。流程由 `SessionFence` 驱动。**前置 Message Admission 两级分流**（v2 BLOCKER-001 修复）：incoming 消息先经 Message Admission 分流——Bootstrap 类消息（DiscoveryAnnouncement / PairingRequest / PairingResponse）允许未知 NodeID，走独立 Trust Gate；Established Session 类消息（Registration / MembershipChange / IdentityRecovery / Goodbye / Topology update）才执行 NodeID→Epoch→InstanceID 三元 Fence。
 
 ```plantuml
 @startuml
-title CF1 Session Fencing 三元栅栏消息准入检查 (spec §5.5.4 / AMEND-004)
+title CF1 Session Fencing 三元栅栏消息准入检查 (spec §5.5.4 / AMEND-004, v2 BLOCKER-001)
 
 start
 :收到 incoming 消息\n携带 (NodeID, Epoch, InstanceID);
 
-:NodeID Check;
-if (NodeID ∈ 已注册对端?) then (否)
-  :REJECT (未知对端);
-  :记录告警 CFX-W-SESSION-UNKNOWN-NODE;
-  stop
-else (是)
-  :Epoch Check;
-  if (incoming_epoch < recorded_epoch?) then (是, 过期会话)
-    :REJECT (EPOCH-002);
-    :记录告警 CFX-W-SESSION-STALE-EPOCH;
-    :不修改 Topology/Trust/Ownership\n/EndpointAddress/HandoffState (EPOCH-005);
+' === v2 BLOCKER-001: Message Admission 两级分流 ===
+:Message Admission 两级分流;
+if (消息类型 ∈ Bootstrap 类?\n(DiscoveryAnnouncement / PairingRequest / PairingResponse)) then (是)
+  :进入 Bootstrap / Trust Establishment 通道;
+  :独立 Trust Gate\n(配对码校验 / 协议合法性 / 重放保护);
+  if (Trust Gate 通过?) then (是)
+    :ACCEPT (允许未知 NodeID);
+    :正常处理 Bootstrap 消息;
     stop
-  elseif (incoming_epoch == recorded_epoch?) then (同 Epoch)
-    :InstanceID Check;
-    if (incoming_instance_id == recorded_instance_id?) then (是, 同实例)
-      :ACCEPT (当前活跃会话);
-      :正常处理消息;
+  else (否)
+    :REJECT + 告警\n(CFX-E-PAIR-* / CFX-E-PROTO-*);
+    stop
+  endif
+else (否, Established Session 类消息)
+  :进入 Established Session 通道\n(执行三元 Fence);
+  :NodeID Check;
+  if (NodeID ∈ 已注册对端?) then (否)
+    :REJECT (未知对端);
+    :记录告警 CFX-W-SESSION-UNKNOWN-NODE;
+    stop
+  else (是)
+    :Epoch Check;
+    if (incoming_epoch < recorded_epoch?) then (是, 过期会话)
+      :REJECT (EPOCH-002);
+      :记录告警 CFX-W-SESSION-STALE-EPOCH;
+      :不修改 Topology/Trust/Ownership\n/EndpointAddress/HandoffState (EPOCH-005);
       stop
-    else (否, 不同 InstanceID)
-      :并发实例冲突 (EPOCH-003);
-      :记录告警 CFX-E-SESSION-INSTANCE-CONFLICT;
-      :不自动裁决 (要求人工排查);
+    elseif (incoming_epoch == recorded_epoch?) then (同 Epoch)
+      :InstanceID Check;
+      if (incoming_instance_id == recorded_instance_id?) then (是, 同实例)
+        :ACCEPT (当前活跃会话);
+        :正常处理消息;
+        stop
+      else (否, 不同 InstanceID)
+        :并发实例冲突 (EPOCH-003);
+        :记录告警 CFX-E-SESSION-INSTANCE-CONFLICT;
+        :不自动裁决 (要求人工排查);
+        stop
+      endif
+    else (incoming_epoch > recorded_epoch, 新 Epoch)
+      :接受新会话 (EPOCH-004);
+      :自动淘汰旧 Session (旧 InstanceID 失效);
+      :更新 recorded_epoch = incoming_epoch;
+      :更新 recorded_instance_id = incoming_instance_id;
+      :触发身份恢复流程;
+      :ACCEPT (新会话);
       stop
     endif
-  else (incoming_epoch > recorded_epoch, 新 Epoch)
-    :接受新会话 (EPOCH-004);
-    :自动淘汰旧 Session (旧 InstanceID 失效);
-    :更新 recorded_epoch = incoming_epoch;
-    :更新 recorded_instance_id = incoming_instance_id;
-    :触发身份恢复流程;
-    :ACCEPT (新会话);
-    stop
   endif
 endif
 @enduml
 ```
+
+**Message Admission 两级分类**（v2 BLOCKER-001 修复，spec §5.5.4 / AMEND-004）：
+
+| 准入级别 | 消息类型 | NodeID 要求 | 检查机制 | 说明 |
+|---------|---------|------------|---------|------|
+| **Bootstrap / Trust Establishment** | DiscoveryAnnouncement / PairingRequest / PairingResponse | **允许未知 NodeID** | 独立 Trust Gate（配对码校验 / 协议合法性 / 重放保护 / Topology ID 一致性） | 首次配对时 NodeID 尚未注册，必须放行；配对成功后 NodeID 写入 Trusted List |
+| **Established Session** | RegistrationRequest/Response / MembershipChangeNotification / IdentityRecoveryRequest/Response / GoodbyeAnnouncement / Topology update | **必须已注册** | NodeID→Epoch→InstanceID 三元 Fence（`SessionFence.checkIncoming()`） | 仅对已建立信任关系的对端执行三元栅栏，保障 EPOCH-001～006 |
+
+**禁止 SessionFence 将首次 Pairing 锁死**（v2 BLOCKER-001 核心约束）：
+
+- PairingRequest / PairingResponse 经 Bootstrap 通道处理，**不经过** `SessionFence.checkIncoming()` 的 NodeID Check（否则未知 NodeID → REJECT → 无法配对 → 系统无法启动）。
+- Bootstrap 通道有自己的安全/合法性检查（Trust Gate）：配对码校验（`CFX-E-PAIR-CODE-MISMATCH`）、协议版本合法性、重放保护、Topology ID 一致性。
+- 配对成功后对端 NodeID 写入 Trusted List，后续 Established Session 类消息才进入三元 Fence 通道。
+- DiscoveryAnnouncement 同理：允许未知 NodeID 声明（发现阶段），但仅记录到 DiscoveryTable，不写入 Trusted List（五层分层不可跃迁，AMEND-002）。
 
 **EPOCH-001～006 六条测试契约实现方案**：
 
@@ -1496,7 +1542,7 @@ end note
 | `Platform` | 直接复用 | 无 |
 | `ScreenBoundary` | 直接复用，作为 `Capabilities.screenBoundary` | 无 |
 | `NeighborRelation` | 直接复用 | `TopologyMembership` 增 `topologyId`/`segmentIndex` 字段 |
-| `TopologyView` | 直接复用 | 增 `topologyId` 字段；`version` 升级为 `TopologyVersion`（含 Atomic Commit 状态） |
+| `TopologyView` | 直接复用，**不修改**（执行纪律 1） | 增 `topologyId` 字段；`version` **保持 u64**（v2 非 Blocker 修复，不污染 CF0 `ITopologyManager.currentView()`）；`TopologyVersion`（含 value:u64 + topologyId + lastCommitAt + commitState）由 `ITopologyVersionManager` 单独管理，不嵌入 `TopologyView` |
 | `EndpointIdentity` | 作为 `NodeIdentity` 的基础 | 扩展为七要素 `NodeIdentity` |
 | `TraceId` | 直接复用 | 无 |
 
@@ -1770,10 +1816,12 @@ Atomic Commit 全或无语义保障（N-10，spec §5.4.4.3 规则 5）：
 
 1. `TopologyVersionManager.proposeChange(proposal)` 发起提案。
 2. Validation 校验成员关系合法性、邻居数 ≤2、线性排列、NodeID 唯一。
-3. Validation 通过后向全拓扑发送 Commit 提案（经 `IControlPlaneChannel.send()` 可靠有序传输）。
-4. 等待全拓扑 ACK 收敛（超时 1s）。
-5. 全拓扑 ACK 收敛 → Version N+1 Active（全拓扑 `current_version = N+1`）。
-6. 任一端点失败/超时 → 整体回滚至旧版本（全拓扑 `current_version = N`）。
+3. Validation 通过后向 **Coordinator** 提交 Proposal（v2 BLOCKER-002 修复，D-TOPO-COORD-002）。
+4. Coordinator 校验并发 Proposal（若 Coordinator 当前有进行中 Proposal → deterministic reject 或 serialize，D-TOPO-COORD-003）。
+5. Coordinator 向全拓扑发送 Commit 提案（经 `IControlPlaneChannel.send()` 可靠有序传输）。
+6. 等待全拓扑 ACK 收敛（超时 1s）。
+7. 全拓扑 ACK 收敛 → Version N+1 Active（全拓扑 `current_version = N+1`，Commit State = ACTIVE）。
+8. 任一端点失败/超时/Coordinator 故障 → Coordinator 判定 ABORT/ROLLBACK（D-TOPO-COORD-004）→ 整体回滚至旧版本（全拓扑 `current_version = N`，Commit State = ROLLED_BACK → ACTIVE 旧版本）。
 
 **全或无保障机制**：
 
@@ -1795,7 +1843,12 @@ Atomic Commit 全或无语义保障（N-10，spec §5.4.4.3 规则 5）：
 - CF1 维护的拓扑成员关系必须与 CF0 `ITopologyManager.currentView()` 保持一致。
 - Atomic Commit 成功后，`MembershipManager` 通过 CF0 `ITopologyManager` 接口提供动态维护的 TopologyView 供 CF0 Handoff FSM 查询邻居。
 - CF1 不修改 CF0 `ITopologyManager` 接口签名（执行纪律 1）；通过新增 `IMembershipManager` 接口承载动态成员管理。
-- `TopologyView.version` 字段升级为 `TopologyVersion`（含 Atomic Commit 状态），但 `ITopologyManager.currentView()` 返回的 `TopologyView` 保持向后兼容（version 字段仍为 u64，Atomic Commit 状态由 `ITopologyVersionManager` 单独查询）。
+- **TopologyView.version 与 TopologyVersion 关系统一**（v2 非 Blocker 修复，不污染 CF0 Frozen）：
+  - `TopologyView.version` **保持 u64**（CF0 `ITopologyManager.currentView()` 返回的 `TopologyView` 不变，version 字段仍为 u64 单调递增）。
+  - `TopologyVersion`（含 `value:u64` + `topologyId` + `lastCommitAt` + `commitState: TopologyCommitState`）由 `ITopologyVersionManager` 单独管理，不嵌入 `TopologyView`。
+  - 查询关系：`ITopologyManager.currentView().version == ITopologyVersionManager.currentVersion().value`（二者保持同步，但类型分离）。
+  - `TopologyCommitState` 由 `ITopologyVersionManager.commitState()` 单独查询，不污染 `ITopologyManager.currentView()` 返回值。
+  - 此设计保障 CF0 `ITopologyManager` 接口签名与返回类型完全不变（执行纪律 1），CF1 扩展的 Atomic Commit 状态经独立接口 `ITopologyVersionManager` 暴露。
 
 ### 2.6.5 Node Count vs Segment Count 区分实现
 
@@ -1832,6 +1885,81 @@ Atomic Commit 全或无语义保障（N-10，spec §5.4.4.3 规则 5）：
 - CF1 允许 Node Count = 2 作为运行态退化特例存在，但禁止其作为循环拓扑的有效运行态，禁止启用循环 Handoff。
 - 循环 Handoff 启用 → Node Count ≥3（与 CF0 契约③ segmentCount ≥2 且非两点退化对齐）。
 
+### 2.6.6 Topology Commit Authority 单协调者模型（v2 BLOCKER-002 修复）
+
+**问题背景**：CF1 Design v1 声称"全拓扑原子提交"，但未明确 Commit Coordinator / Authority 角色，未处理并发 Proposal、Coordinator 故障、Timeout/Rollback 等场景。TCP 可靠有序 ≠ 分布式 Atomic Commit。v2 补充轻量单协调者提交模型。
+
+**设计决策**：采用**轻量单协调者（Single Coordinator）提交模型**，**不引入 Raft/Paxos/Consensus**。理由：
+
+1. CF1 拓扑规模有限（单一局域网，Node Count 通常 ≤ 数十），单协调者足以承载。
+2. 共识算法（Raft/Paxos）引入额外复杂度与节点数要求（Raft 需 ≥3 节点多数派），与 CF1 轻量发现阶段定位不符。
+3. CF0 Control Plane TCP 可靠有序传输 + 全拓扑 ACK 收敛 + 超时回滚已提供全或无语义保障；单协调者补充并发 Proposal 串行化与故障回滚，补齐 v1 缺失的 Authority 角色。
+4. Coordinator 角色由 `TopologyVersionManager` 承载（运行在 FSM Thread 内），不引入新模块、不引入新线程。
+
+**Topology Commit Authority 上下文视图**：
+
+```plantuml
+@startuml
+title CF1 Topology Commit Authority 单协调者模型 (v2 BLOCKER-002)
+
+rectangle "Topology Commit Authority\n(TopologyVersionManager, FSM Thread)" as Coord {
+  rectangle "Coordinator" as CR
+}
+
+rectangle "Node A" as NA
+rectangle "Node B" as NB
+rectangle "Node C" as NC
+
+' === Proposal 必须经 Coordinator (D-TOPO-COORD-002) ===
+NA --> CR : Proposal
+NB --> CR : Proposal
+NC --> CR : Proposal
+
+' === Coordinator 分发 Commit 提案 ===
+CR --> NA : Commit 提案
+CR --> NB : Commit 提案
+CR --> NC : Commit 提案
+
+' === ACK 收敛 ===
+NA --> CR : ACK
+NB --> CR : ACK
+NC --> CR : ACK
+
+CR --> CR : 全拓扑 ACK 收敛\n→ COMMIT ACTIVE
+
+note right of Coord
+  D-TOPO-COORD-001: 任一时刻一个 Authority
+  D-TOPO-COORD-002: 所有 Proposal 经 Coordinator
+  D-TOPO-COORD-003: 并发 Proposal deterministic reject / serialize
+  D-TOPO-COORD-004: Coordinator 故障 → COMMITTING → timeout
+          → ABORT/ROLLBACK → 旧版本保持 Active
+  不引入 Raft/Paxos/Consensus
+end note
+@enduml
+```
+
+**四条 Design Contract**：
+
+| 契约 ID | 契约陈述 | 实现组件 | 实现方案 | Observable Evidence |
+|---------|---------|---------|---------|---------------------|
+| **D-TOPO-COORD-001** | 任一时刻一个 Topology Commit Authority | `TopologyVersionManager` 单例（FSM Thread 内） | `TopologyVersionManager` 为单例；同一 Topology ID 下至多一个 Coordinator 实例；启动时选举或配置指定 Coordinator NodeID | 启动日志记录 `(coordinator_node_id, topology_id, role=coordinator)`；任一时刻 `coordinator_count == 1` |
+| **D-TOPO-COORD-002** | 所有 Proposal 必须进入 Coordinator | `TopologyVersionManager.proposeChange()` 入口校验 | 非 Coordinator 节点收到 Proposal → 转发至 Coordinator；Coordinator 节点直接处理；Proposal 经 `IControlPlaneChannel.send()` 可靠有序传输至 Coordinator | Proposal 日志含 `(proposer_node_id, coordinator_node_id, proposal_id, forwarded/direct)`；无 Proposal 绕过 Coordinator |
+| **D-TOPO-COORD-003** | 并发 Proposal 必须 deterministic reject 或 serialize | Coordinator 维护 `in_flight_proposal` 单槽 | Coordinator 当前有进行中 Proposal（Commit State = COMMITTING）时，新 Proposal → deterministic reject（按 `(proposer_node_id, proposal_id)` 字典序拒绝后到者）或 serialize（排队等待前序完成）；记录告警 `CFX-W-TOPO-PROPOSAL-SERIALIZE` | 并发 Proposal 日志含 `(proposal_id_1, proposal_id_2, action=reject/serialize, winner)`；任一时刻 `in_flight_proposal_count <= 1` |
+| **D-TOPO-COORD-004** | Coordinator 故障 → COMMITTING → timeout → ABORT/ROLLBACK → 旧版本保持 Active | Coordinator 故障检测 + 超时回滚 | Coordinator 在 COMMITTING 状态故障（进程崩溃/网络分区/FSM Thread 阻塞）→ 全拓扑端点本地 ACK 超时（1s）→ 各端点判定 ABORT → 本地回滚至旧版本（current_version = N）→ Commit State = ROLLED_BACK → ACTIVE（旧版本）；旧版本保持 Active，无半提交状态；Coordinator 恢复后重新选举（或配置指定新 Coordinator），从旧版本继续 | 故障回滚日志含 `(coordinator_node_id, commit_state=COMMITTING, timeout=1s, action=ABORT/ROLLBACK, active_version=N)`；回滚后全拓扑 `current_version == N`，无 N+1 半提交态 |
+
+**Coordinator 选举/指定策略**（轻量，不引入共识）：
+
+- **配置指定**（默认）：运维配置在拓扑配置中显式指定 Coordinator NodeID（如 `coordinator_node_id: <NodeID>`）。所有端点启动时加载该配置。
+- **确定性回退选举**（配置缺失时）：按 Topology Membership 中 NodeID 字典序最小者作为 Coordinator（deterministic，所有端点一致推导，无需共识）。记录告警 `CFX-W-TOPO-COORD-IMPLICIT`（建议显式配置）。
+- **Coordinator 故障恢复**：Coordinator 节点崩溃 → 其他端点本地 ACK 超时 → ABORT/ROLLBACK → 旧版本保持 Active → 按上述策略重新确定 Coordinator（配置指定的新 NodeID 或字典序最小者）→ 新 Coordinator 从旧版本继续。
+
+**不引入 Raft/Paxos/Consensus 的保障**：
+
+- 单协调者模型不依赖多数派（Raft 需 ≥3 节点多数派），CF1 拓扑规模（含 DEGRADED Node Count=1/2）均可运行。
+- Coordinator 故障不导致脑裂：故障期间所有 Proposal 无法提交（D-TOPO-COORD-002），全拓扑端点本地超时回滚至旧版本（D-TOPO-COORD-004），旧版本保持 Active，无版本分裂。
+- 与 CF0 Safety Invariant P1 No Split-Brain 兼容：任一时刻全拓扑 `current_version` 至多两个相邻值 `{N, N+1}`，且 N+1 集合在 Coordinator 故障时收敛为空集（回滚）。
+- 与 CF0 Safety Invariant P3 Recoverable 兼容：Coordinator 恢复后从旧版本继续，拓扑可继续提交新 Proposal。
+
 ## 2.7 Session Fencing 详细设计（AMEND-004）
 
 ### 2.7.1 三元会话栅栏模型实现
@@ -1865,12 +1993,31 @@ struct SessionFence {
 
 ### 2.7.2 消息准入检查流程实现
 
-`SessionFence.checkIncoming()` 实现消息准入检查流程（O-04，spec §5.5.4.2），每条 incoming 消息经 NodeID Check → Epoch Check → InstanceID Check → ACCEPT/REJECT：
+**Message Admission 两级准入边界**（v2 BLOCKER-001 修复，spec §5.5.4 / AMEND-004）：
+
+incoming Control Message 先经 Message Admission 两级分流，再进入对应检查通道。**禁止 SessionFence 将首次 Pairing 锁死**——Bootstrap 类消息允许未知 NodeID，走独立 Trust Gate；仅 Established Session 类消息执行 `SessionFence.checkIncoming()` 三元 Fence。
+
+| 准入级别 | 消息类型 | NodeID 要求 | 检查通道 | 检查内容 |
+|---------|---------|------------|---------|---------|
+| Bootstrap / Trust Establishment | DiscoveryAnnouncement / PairingRequest / PairingResponse | 允许未知 NodeID | `BootstrapAdmission.check()`（独立 Trust Gate） | 配对码校验 / 协议合法性 / 重放保护 / Topology ID 一致性 |
+| Established Session | RegistrationRequest/Response / MembershipChangeNotification / IdentityRecoveryRequest/Response / GoodbyeAnnouncement / Topology update | 必须已注册 | `SessionFence.checkIncoming()`（三元 Fence） | NodeID Check → Epoch Check → InstanceID Check |
+
+**Bootstrap 通道（`BootstrapAdmission.check()`）**：
+
+- 允许未知 NodeID（首次配对时对端 NodeID 尚未注册）。
+- 独立 Trust Gate 检查：配对码校验（`CFX-E-PAIR-CODE-MISMATCH`）、协议版本合法性（`CFX-E-PROTO-VER`）、重放保护、Topology ID 一致性（`CFX-E-REG-TOPOID-MISMATCH`）。
+- 配对成功后对端 NodeID 写入 Trusted List，后续 Established Session 类消息进入三元 Fence 通道。
+- DiscoveryAnnouncement 仅记录到 DiscoveryTable，不写入 Trusted List（五层分层不可跃迁，AMEND-002）。
+
+**Established Session 通道（`SessionFence.checkIncoming()`）**：
+
+实现消息准入检查流程（O-04，spec §5.5.4.2），每条 incoming 消息经 NodeID Check → Epoch Check → InstanceID Check → ACCEPT/REJECT：
 
 **Step 1: NodeID Check**：
 
-- 校验 `incoming.nodeId` 是否为已注册对端。
+- 校验 `incoming.nodeId` 是否为已注册对端（NodeID ∈ Trusted List ∧ 已完成 Registration）。
 - 未知对端 → REJECT + 告警 `CFX-W-SESSION-UNKNOWN-NODE`。
+- **注**：此检查仅对 Established Session 类消息生效；Bootstrap 类消息已在 Message Admission 分流阶段进入 Bootstrap 通道，不经过此检查（v2 BLOCKER-001 修复）。
 
 **Step 2: Epoch Check**（EPOCH-002）：
 
@@ -2069,7 +2216,9 @@ using Cf1ControlMessage = std::variant<
 
 **契约约束**：
 
-- 全部子类型携带 `SessionFence`（三元栅栏），接收方经 `ISessionFence.checkIncoming()` 校验消息准入。
+- **Message Admission 两级分流**（v2 BLOCKER-001 修复）：
+  - **Bootstrap 类子类型**（DiscoveryAnnouncement / PairingRequest / PairingResponse）：携带 `SessionFence` 用于身份声明与重放保护，但接收方经 `BootstrapAdmission.check()`（独立 Trust Gate）校验，**允许未知 NodeID**，不经过 `SessionFence.checkIncoming()` 的 NodeID Check。禁止 SessionFence 将首次 Pairing 锁死。
+  - **Established Session 类子类型**（RegistrationRequest/Response / MembershipChangeNotification / IdentityRecoveryRequest/Response / GoodbyeAnnouncement）：携带 `SessionFence`，接收方经 `ISessionFence.checkIncoming()` 执行 NodeID→Epoch→InstanceID 三元 Fence，**必须已注册**。
 - 全部子类型携带 `protocolVersion` 或隐含版本号，遵循协议向前兼容。
 - 二进制编解码复用 CF0 `FrameCodec`（固定头 + 变长负载 + 版本号字段前置）。
 - 全部子类型归属 Control Plane，不侵入 Input Plane（执行纪律 7）。
@@ -2253,6 +2402,10 @@ CF1 并发模型与 CF0 完全对齐（执行纪律 7）：
 | DC-S04-001: 循环拓扑有效运行态（Node Count ≥3） | `NodeCountGuard` + `isCircularHandoffEnabled()` | CF1-S04-REQ-001 | §5.4.1 规则 8, §5.4.5 规则 1, 2 | P2 No Void-Owner |
 | DC-S04-002: 过期更新拒绝（版本覆盖规则，AMEND-003） | `TopologyVersionManager.handleIncomingUpdate()` 规则 1 | CF1-S04-REQ-002 | §5.4.4 规则 2, 6 | P1 No Split-Brain |
 | DC-S04-003: 原子提交全或无（AMEND-003） | `TopologyVersionManager` Atomic Commit 全拓扑 ACK 收敛 | CF1-S04-REQ-003 | §5.4.4 规则 4, 5 | P1 No Split-Brain |
+| DC-S04-004: 单一 Commit Authority（v2 BLOCKER-002，D-TOPO-COORD-001） | `TopologyVersionManager` 单例（FSM Thread 内） | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5 | P1 No Split-Brain |
+| DC-S04-005: 所有 Proposal 经 Coordinator（v2 BLOCKER-002，D-TOPO-COORD-002） | `TopologyVersionManager.proposeChange()` 入口校验 + 转发 | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5 | P1 No Split-Brain |
+| DC-S04-006: 并发 Proposal deterministic reject/serialize（v2 BLOCKER-002，D-TOPO-COORD-003） | Coordinator `in_flight_proposal` 单槽 | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5 | P1 No Split-Brain |
+| DC-S04-007: Coordinator 故障 → ABORT/ROLLBACK → 旧版本保持 Active（v2 BLOCKER-002，D-TOPO-COORD-004） | Coordinator 故障检测 + 超时回滚 | CF1-S04-REQ-003（隐含） | §5.4.4 规则 5, 6 | P1 No Split-Brain, P3 Recoverable |
 
 ### 2.11.5 S05 Session Epoch & Reconnection Design Contract 回映
 
@@ -2261,6 +2414,7 @@ CF1 并发模型与 CF0 完全对齐（执行纪律 7）：
 | DC-S05-001: 低 Epoch 消息拒绝（EPOCH-002） | `SessionFence.checkEpoch()` | CF1-S05-REQ-001 | §5.5.4 规则 2 | P1 No Split-Brain |
 | DC-S05-002: 旧 Session 不修改关键状态（EPOCH-005） | `SessionFence` + 状态守卫 | CF1-S05-REQ-002 | §5.5.4 规则 5 | P1 No Split-Brain, P2 No Void-Owner |
 | DC-S05-003: 重连不破坏 CF0 Safety Invariant | `IdentityRecoveryManager` + 恢复期间 Handoff 暂停 | CF1-S05-REQ-003 | §5.5.1 规则 6, §7.5 | P1 ∧ P2 ∧ P3 |
+| DC-S05-004: Bootstrap / Established Session 两级 Message Admission（v2 BLOCKER-001） | `BootstrapAdmission.check()` + `SessionFence.checkIncoming()` 两级分流 | CF1-S05-REQ-001（隐含） | §5.5.4 规则 2（Established Session 通道） | P1 No Split-Brain |
 
 ### 2.11.6 EPOCH-001～006 六条测试契约回映
 
@@ -2279,10 +2433,57 @@ CF1 并发模型与 CF0 完全对齐（执行纪律 7）：
 |-----------|---------------------|-----------------------------|---------|
 | AMEND-001 PublicKey Lifecycle | 3（DC-S01-003 + PublicKey 字段位 + 生命周期解耦） | CF1-S01-REQ-003 | 执行纪律 3 |
 | AMEND-002 Pairing/Registration State Machine | 3（DC-S03-003 + 7 状态 FSM + 五层分层） | CF1-S03-REQ-003 | 执行纪律 3, 6 |
-| AMEND-003 TopologyVersion Atomic Commit | 2（DC-S04-002 + DC-S04-003） | CF1-S04-REQ-002, CF1-S04-REQ-003 | 执行纪律 3, 5 |
-| AMEND-004 Session Fencing | 3（DC-S05-001 + DC-S05-002 + EPOCH-001～006） | CF1-S05-REQ-001, CF1-S05-REQ-002, CF1-S05-REQ-003 | 执行纪律 3, 4 |
+| AMEND-003 TopologyVersion Atomic Commit | 6（DC-S04-002 + DC-S04-003 + DC-S04-004～007，v2 BLOCKER-002 Topology Commit Authority 4 条契约） | CF1-S04-REQ-002, CF1-S04-REQ-003 | 执行纪律 3, 5 |
+| AMEND-004 Session Fencing | 4（DC-S05-001 + DC-S05-002 + DC-S05-004 + EPOCH-001～006，v2 BLOCKER-001 Bootstrap Admission） | CF1-S05-REQ-001, CF1-S05-REQ-002, CF1-S05-REQ-003 | 执行纪律 3, 4 |
 
-**执行纪律 8 验证**：全部 4 个 Amendment 已转为 Design Contract 并回映到 CF1 spec.md §9 Verification Matrix 的 Requirement ID，确保可追溯性。
+**执行纪律 8 验证**：全部 4 个 Amendment 已转为 Design Contract 并回映到 CF1 spec.md §9 Verification Matrix 的 Requirement ID，确保可追溯性。v2 新增 5 条 Design Contract（DC-S04-004～007 Topology Commit Authority + DC-S05-004 Bootstrap Admission）回映至 CF1-S04-REQ-003 / CF1-S05-REQ-001（隐含），覆盖两个 Design Blocker 修复。
+
+### 2.11.8 v2 Blocker 修复 Observable Evidence & Acceptance Test
+
+本小节为 v2 Design Amendment 的两个 Design Blocker 各提供 Observable Evidence（可观测证据）与 Acceptance Test（验收测试），确保修复可验证、可追溯。
+
+#### 2.11.8.1 BLOCKER-001：Bootstrap / Session Fence 准入边界
+
+**Observable Evidence**：
+
+| 证据 ID | 证据陈述 | 观测点 | 观测方式 |
+|---------|---------|--------|---------|
+| EV-BLOCKER-001-1 | 首次 PairingRequest 在对端 NodeID 未注册时被 ACCEPT（非 REJECT） | 对端 `BootstrapAdmission.check()` 入口日志 | 日志含 `(msg_type=PairingRequest, sender_node_id=<未知>, admission=bootstrap, verdict=ACCEPT)`；无 `CFX-W-SESSION-UNKNOWN-NODE` 告警 |
+| EV-BLOCKER-001-2 | Bootstrap 类消息不经过 `SessionFence.checkIncoming()` 的 NodeID Check | `SessionFence.checkIncoming()` 调用日志 | Bootstrap 类消息处理日志中无 `SessionFence.checkIncoming()` 调用记录；仅 Established Session 类消息有该调用 |
+| EV-BLOCKER-001-3 | Established Session 类消息（如 MembershipChangeNotification）来自未知 NodeID 时被 REJECT | `SessionFence.checkIncoming()` NodeID Check 日志 | 日志含 `(msg_type=MembershipChangeNotification, sender_node_id=<未知>, admission=established_session, verdict=REJECT, reason=CFX-W-SESSION-UNKNOWN-NODE)` |
+| EV-BLOCKER-001-4 | 配对成功后对端 NodeID 写入 Trusted List，后续 Established Session 类消息进入三元 Fence | Trusted List 写入日志 + `SessionFence.checkIncoming()` 调用日志 | 配对成功日志含 `(peer_node_id, trusted_list=added)`；后续 Established Session 消息日志含 `(admission=established_session, fence_check=invoked)` |
+
+**Acceptance Test**：
+
+| 测试 ID | 测试场景 | 前置条件 | 执行步骤 | 期望结果 |
+|---------|---------|---------|---------|---------|
+| AT-BLOCKER-001-1 | 首次配对不锁死 | 端点 A、B 均未配对，互不在 Trusted List | A 向 B 发送 PairingRequest（携带正确配对码） | B 经 Bootstrap 通道 ACCEPT，不触发 `CFX-W-SESSION-UNKNOWN-NODE`；配对成功后 B 的 Trusted List 含 A 的 NodeID |
+| AT-BLOCKER-001-2 | Bootstrap 消息不经过三元 Fence NodeID Check | 端点 A、B 未配对 | A 向 B 发送 DiscoveryAnnouncement + PairingRequest；检查 B 的 `SessionFence.checkIncoming()` 调用日志 | DiscoveryAnnouncement / PairingRequest 处理日志中无 `SessionFence.checkIncoming()` 调用；消息经 `BootstrapAdmission.check()` 处理 |
+| AT-BLOCKER-001-3 | Established Session 消息强制三元 Fence | 端点 A、B 已配对，A 已注册 | 未知端点 C（不在 B 的 Trusted List）向 B 发送 MembershipChangeNotification | B 经 Established Session 通道 REJECT，记录 `CFX-W-SESSION-UNKNOWN-NODE`；Topology/Trust/Ownership/EndpointAddress/HandoffState 不变 |
+| AT-BLOCKER-001-4 | 配对成功后切换至 Established Session 通道 | 端点 A、B 已配对成功 | A 向 B 发送 RegistrationRequest（Established Session 类） | B 经 `SessionFence.checkIncoming()` 执行三元 Fence（NodeID 已注册 → ACCEPT）；日志含 `(admission=established_session, fence_check=invoked, verdict=ACCEPT)` |
+
+#### 2.11.8.2 BLOCKER-002：Topology Atomic Commit Authority
+
+**Observable Evidence**：
+
+| 证据 ID | 证据陈述 | 观测点 | 观测方式 |
+|---------|---------|--------|---------|
+| EV-BLOCKER-002-1 | 任一时刻一个 Topology Commit Authority（D-TOPO-COORD-001） | 启动日志 + Coordinator 实例计数 | 启动日志含 `(coordinator_node_id, topology_id, role=coordinator)`；运行期 `coordinator_count == 1` |
+| EV-BLOCKER-002-2 | 所有 Proposal 经 Coordinator（D-TOPO-COORD-002） | `TopologyVersionManager.proposeChange()` 入口日志 | Proposal 日志含 `(proposer_node_id, coordinator_node_id, proposal_id, forwarded/direct)`；无 Proposal 绕过 Coordinator 的日志 |
+| EV-BLOCKER-002-3 | 并发 Proposal deterministic reject 或 serialize（D-TOPO-COORD-003） | Coordinator `in_flight_proposal` 单槽日志 | 并发 Proposal 日志含 `(proposal_id_1, proposal_id_2, action=reject/serialize, winner)`；任一时刻 `in_flight_proposal_count <= 1` |
+| EV-BLOCKER-002-4 | Coordinator 故障 → ABORT/ROLLBACK → 旧版本保持 Active（D-TOPO-COORD-004） | Coordinator 故障 + 全拓扑端点本地超时回滚日志 | 故障回滚日志含 `(coordinator_node_id, commit_state=COMMITTING, timeout=1s, action=ABORT/ROLLBACK, active_version=N)`；回滚后全拓扑 `current_version == N`，无 N+1 半提交态 |
+| EV-BLOCKER-002-5 | 不引入 Raft/Paxos/Consensus | 代码依赖审计 | 代码库无 Raft/Paxos/Consensus 库依赖；`TopologyVersionManager` 实现无多数派投票逻辑 |
+
+**Acceptance Test**：
+
+| 测试 ID | 测试场景 | 前置条件 | 执行步骤 | 期望结果 |
+|---------|---------|---------|---------|---------|
+| AT-BLOCKER-002-1 | 单一 Coordinator | 拓扑 3 节点（A/B/C），配置指定 A 为 Coordinator | 启动全部节点；查询各节点 Coordinator 实例 | 仅 A 节点日志含 `role=coordinator`；B/C 日志含 `role=follower`；`coordinator_count == 1` |
+| AT-BLOCKER-002-2 | Proposal 经 Coordinator | 拓扑 3 节点，A 为 Coordinator | B 发起拓扑变更 Proposal | Proposal 转发至 A（日志含 `forwarded`）；A 作为 Coordinator 处理；B 不直接向全拓扑分发 Commit |
+| AT-BLOCKER-002-3 | 并发 Proposal 串行化 | 拓扑 3 节点，A 为 Coordinator，当前有进行中 Proposal P1 | B 发起 Proposal P2（P1 未完成） | A 对 P2 deterministic reject 或 serialize（日志含 `action=reject/serialize`）；`in_flight_proposal_count == 1`；P1 完成后 P2 才处理 |
+| AT-BLOCKER-002-4 | Coordinator 故障回滚 | 拓扑 3 节点，A 为 Coordinator，A 正在 COMMITTING（Version N→N+1） | 终止 A 进程（模拟 Coordinator 故障） | B/C 本地 ACK 超时（1s）→ ABORT/ROLLBACK → `current_version == N`；无 N+1 半提交态；旧版本保持 Active |
+| AT-BLOCKER-002-5 | Coordinator 恢复后继续 | AT-BLOCKER-002-4 之后 | 重启 A 进程（或重新选举 B 为 Coordinator） | 新 Coordinator 从旧版本 N 继续；后续 Proposal 可正常提交至 N+1；P3 Recoverable 保障 |
+| AT-BLOCKER-002-6 | 不引入共识算法 | 代码库审计 | 静态依赖分析 | 无 Raft/Paxos/Consensus 库依赖；`TopologyVersionManager` 无多数派投票逻辑；DEGRADED Node Count=1/2 时 Coordinator 仍可运行（不依赖多数派） |
 
 ## 2.12 与后续阶段的接口契约
 
@@ -2355,6 +2556,12 @@ CF1 为 CF2～CF11 工程实现阶段提供以下身份与发现基础：
 > - **并发与线程安全**：CF1 复用 CF0 8 线程模型（不引入新线程）+ 无锁策略 + 与 CF0 并发模型对齐；
 > - **Design Contract 回映 Verification Matrix**：全部 4 个 Amendment 已转为 Design Contract 并回映到 CF1 spec.md §9 Verification Matrix 的 Requirement ID（CF1-S01-REQ-001～003 / CF1-S02-REQ-001～003 / CF1-S03-REQ-001～003 / CF1-S04-REQ-001～003 / CF1-S05-REQ-001～003）；
 > - **与后续阶段的接口契约**：CF1 与 CF2～CF11 边界明确，不扩张到 CF2～CF8 职责。
-> **保持不变**：CF0 Frozen Architecture（不修改 CF0 接口签名、领域对象定义、FSM 状态机、线程模型、双平面隔离架构）、Handoff 六态 FSM（不重新设计）、Input Plane / Control Plane 隔离（CF1 报文全部归属 Control Plane）、CF0 Safety Invariant P1/P2/P3（CF1 失败/恢复不得破坏）。
+> **v2 Design Amendment（轻量修订，非架构返工，修复 2 个 Design Blocker + 1 个非 Blocker 关系统一）**：
+> - **BLOCKER-001 修复**（§2.1.3.4 / §2.7.2 / §2.8.2）：Bootstrap / Session Fence 两级 Message Admission 边界——Bootstrap 类消息（DiscoveryAnnouncement / PairingRequest / PairingResponse）允许未知 NodeID，走独立 Trust Gate；Established Session 类消息才执行 NodeID→Epoch→InstanceID 三元 Fence。禁止 SessionFence 将首次 Pairing 锁死。新增 DC-S05-004 + EV-BLOCKER-001-1～4 + AT-BLOCKER-001-1～4。
+> - **BLOCKER-002 修复**（§2.1.3.3 / §2.6.3 / §2.6.6）：Topology Atomic Commit Authority 单协调者模型——定义 D-TOPO-COORD-001～004 四条契约（单一 Authority / 所有 Proposal 经 Coordinator / 并发 Proposal deterministic reject 或 serialize / Coordinator 故障 → ABORT/ROLLBACK → 旧版本保持 Active）。**不引入 Raft/Paxos/Consensus**。新增 DC-S04-004～007 + EV-BLOCKER-002-1～5 + AT-BLOCKER-002-1～6。
+> - **非 Blocker 关系统一**（§1.2.2 / §2.3.2 / §2.6.4）：`TopologyView.version` 保持 u64（不污染 CF0 Frozen 的 `ITopologyManager.currentView()`）；`TopologyVersion`（含 value:u64 + topologyId + lastCommitAt + commitState）由 `ITopologyVersionManager` 单独管理。
+> - **Verification Matrix 更新**（§2.11.4 / §2.11.5 / §2.11.7 / §2.11.8）：新增 5 条 Design Contract + 9 条 Observable Evidence + 10 条 Acceptance Test，覆盖两个 Blocker 修复。
+> **保持不变**：CF1 Design v1 主体结构（不重写 2360 行）、CF0 Frozen Architecture（不修改 CF0 接口签名、领域对象定义、FSM 状态机、线程模型、双平面隔离架构）、Handoff 六态 FSM（不重新设计）、Input Plane / Control Plane 隔离（CF1 报文全部归属 Control Plane）、CF0 Safety Invariant P1/P2/P3（CF1 失败/恢复不得破坏）、现有 TopologyVersion API 总体方向。
 > **执行纪律遵循**：严格遵守大G项目经理 10 条执行纪律（①不修改 CF0 Frozen / ②不重新设计 Handoff FSM / ③4 Amendment 转 Design Contract / ④三元 Fence / ⑤TopologyVersion 原子提交 / ⑥Pairing 状态机实现边界 / ⑦Input/Control 双平面隔离 / ⑧Design Contract 回映 Verification Matrix / ⑨Design 完成后 Gate Review / ⑩Design 通过后授权 spec-task-agent）。
-> 待用户审查确认后，本文档状态由 DRAFT v1 转为 FROZEN，进行 CF1 Gate Review 裁决，交付 spec-task-agent 进行任务分解。
+> **v2 Amendment 约束遵循**：保留现有 CF1 Design 主体结构（不重写）/ 不修改 CF0 Frozen Architecture / 不重新设计 Handoff FSM / 更新对应 Design Contract / 更新 Verification Matrix 映射 / 为两个 Blocker 各增加 Observable Evidence / 为两个 Blocker 各增加 Acceptance Test / 更新文档版本与 Amendment Record / 不引入 Raft/Paxos/Consensus / 不进入 spec-task-agent / 完成后等待 PM Gate Review。
+> 待 PM Gate Review 裁决通过后，本文档状态由 DRAFT v2 转为 FROZEN，授权 spec-task-agent 进行任务分解。
