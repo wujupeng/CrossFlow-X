@@ -1,20 +1,23 @@
-# CrossFlow-X · CF1 Implementation Evidence Report (v2 — R8 Repair)
+# CrossFlow-X · CF1 Implementation Evidence Report (v3 — R8.1 Audit)
 
 > **阶段标记**：CF1 — Endpoint Identity & Discovery
-> **报告类型**：G10 Evidence / Freeze 交付物（v2，经 R8 Evidence Repair 修正）
+> **报告类型**：G10 Evidence / Freeze 交付物（v3，经 R8.1 Audit 修正）
 > **生成时间**：2026-09-09
 > **对应任务规划**：`tasks.md`（50 任务/10 组，CF1-TASK-001~050）
 > **对应实现方案**：`design.md`（v4，FROZEN）
 > **对应需求规格**：`spec.md`（v2，FROZEN）
-> **Git 基线**：commit `d19b925`（v1 Evidence Report）→ 本 v2 为 R8 Repair 修正版
-> **裁决请求**：提交大G项目经理进行 CF1 最终 Gate Review（第二次）
-> **修正依据**：大G项目经理 R8 CONDITIONAL PASS 裁决（R8-E01~E04）
+> **Git provenance**：
+> - **本报告 commit**：`fead4b7`（v2 Evidence Report）→ 本 v3 为 R8.1 Audit 修正版
+> - **Parent evidence baseline**：`d19b925`（v1 Evidence Report）
+> - **Implementation baseline**：`39d4633`（代码实现最终 commit，不含文档）
+> **裁决请求**：提交大G项目经理进行 CF1 Gate Review（第三次）
+> **修正依据**：大G项目经理第二次 Gate Review 裁决（R8.1 Audit 授权）
 
 ---
 
 ## 0. R8 Repair 说明
 
-本报告为 v1 Evidence Report 的修正版，按大G项目经理 R8 裁决要求做以下修正：
+本报告为 v1 Evidence Report 的修正版，经 R8 Repair + R8.1 Audit 两轮修正：
 
 | 修复项 | 描述 | 状态 |
 |--------|------|------|
@@ -22,6 +25,9 @@
 | R8-E02 | mDNS 明确分层：区分 UDP Broadcast fallback 与 Native mDNS transport | ✅ |
 | R8-E03 | R5 Recovery Evidence 降级：区分 NodeID/Epoch recovery 与完整 corruption recovery | ✅ |
 | R8-E04 | 增加 Evidence Scope：明确 CF1 evidence 证明了什么、不证明什么 | ✅ |
+| R8.1-A01 | TASK-015 降级：Manual Config fallback 未实现（仅 UDP Broadcast 已实现） | ✅ |
+| R8.1-A02 | Provenance 修正：明确 fead4b7 / d19b925 / 39d4633 三者关系 | ✅ |
+| R8.1-A03 | 计数更新：46/50 → 45/50 FULLY EVIDENCED | ✅ |
 | R3 保留 | Registration Atomicity = domain-level rollback evidence（非 distributed atomic） | ✅ |
 | Negative Test | 措辞修正为 Scenario Coverage，非 physical/network-level validation | ✅ |
 
@@ -32,8 +38,8 @@
 CF1（端点身份与发现）实现历经 5 轮提交（`12a4a24` → `851a1f8` → `31a8399` → `0f518a1` → `39d4633`），完成 50 个编码任务中的 49 个（CF1-TASK-050 架构冻结审查为本 Gate Review 本身）。
 
 **实现闭合度（修正后）**：
-- **46/50 任务 FULLY EVIDENCED**（IMPLEMENTED + TESTED + EVIDENCED 三项均满足）
-- **3/50 任务 PARTIALLY EVIDENCED**（TASK-011/013/014 — 见 §3 详述）
+- **45/50 任务 FULLY EVIDENCED**（IMPLEMENTED + TESTED + EVIDENCED 三项均满足）
+- **4/50 任务 PARTIALLY EVIDENCED**（TASK-011/013/014/015 — 见 §3 详述）
 - **1/50 任务待 Gate Review**（TASK-050 — 本报告即为该任务交付物）
 
 **测试结果**：9/9 test suites PASS（100%），含 6 个 CF0 测试 + 16 个 CF1 单元测试 + 6 个 CF1 集成测试 + 14 个 CF1 Design Contract 测试
@@ -105,10 +111,16 @@ $ git status --porcelain
 [空输出 — working tree clean]
 
 $ git log -1 --oneline
-39d4633 chore: remove test artifacts from git, update .gitignore
+fead4b7 docs(cf1): R8 evidence repair - fix overclaims in task matrix
 ```
 
 **结果**：CLEAN，无未提交变更，无测试临时文件残留
+
+> **Provenance 说明**：
+> - `39d4633` — Implementation baseline（代码实现最终 commit，不含文档）
+> - `d19b925` — v1 Evidence Report commit
+> - `fead4b7` — v2 Evidence Report commit（R8 Repair）
+> - 本 v3 报告基于 `fead4b7` 做 R8.1 Audit 修正，commit 待提交
 
 ---
 
@@ -171,7 +183,7 @@ Structured recovery log               ❌ 未实现
 | CF1-TASK-012 | IDiscoveryService 接口定义 | `core/s07_discovery/i_discovery_service.hpp` | `testDiscoveryService` | ✅ | ✅ | ✅ |
 | **CF1-TASK-013** | **MdnsAnnouncer mDNS 声明发布** | `core/s07_discovery/mdns.hpp/cpp`（**仅接口 + UDP fallback**） | `testDiscoveryService` | **🟡** | **🟡** | **🟡** |
 | **CF1-TASK-014** | **MdnsListener + DiscoveryTable** | `discovery_table.hpp/cpp` + `discovery_service.hpp/cpp` | `testDiscoveryTable` + `testDiscoveryService` | **🟡** | **🟡** | **🟡** |
-| CF1-TASK-015 | LAN Broadcast fallback | `core/s07_discovery/udp_broadcast.hpp/cpp` | `testDiscoveryService` | ✅ | ✅ | ✅ |
+| **CF1-TASK-015** | **LAN Broadcast / Manual Config fallback** | `core/s07_discovery/udp_broadcast.hpp/cpp`（**仅 UDP Broadcast**） | `testDiscoveryService` | **🟡** | **✅** | **🟡** |
 | CF1-TASK-016 | Discovery Digest TXT 记录 | `DiscoveryDigest::toTxtRecord()` | `testDiscoveryDigest` | ✅ | ✅ | ✅ |
 | CF1-TASK-017 | 动态加入/离开 + 冲突检测 | `DiscoveryTable::detectConflicts()` | `testDiscoveryConflict` | ✅ | ✅ | ✅ |
 
@@ -212,6 +224,21 @@ std::optional<ErrorCode> DiscoveryService::startListening() noexcept {
 `startListening()` 仅设置 flag，**无真实 mDNS listener**。`handleDiscoveryAnnouncement()` 处理已进入程序的 `DiscoveryAnnouncement` 并写入 `DiscoveryTable`，这是 **domain-level processing**，不是 **物理 mDNS 监听**。
 
 **结论**：TASK-014 的物理 mDNS listener **未实现**，仅 DiscoveryTable domain-level 功能已实现。
+
+#### CF1-TASK-015 降级说明（R8.1-A01）
+
+任务原始 Acceptance Criteria 要求：
+1. mDNS 不可用时降级 LAN Broadcast，告警 `CFX-W-DISC-MDNS-UNAVAILABLE` 🟡（UDP Broadcast 已实现，但无 mDNS 可用性检测 + 降级触发逻辑）
+2. mDNS + 广播均不可用时降级 Manual Config，告警 `CFX-W-DISC-MANUAL-FALLBACK` ❌ 未实现
+3. 跨子网端点不可见告警 `CFX-W-DISC-CROSS-SUBNET` ❌ 未实现
+4. fallback 不影响已建立连接 🟡（无连接管理集成）
+
+**实际实现**：
+- `core/s07_discovery/udp_broadcast.hpp/cpp` — **UDP Broadcast 已实现**（跨平台 socket + send/receive）
+- `LanBroadcastFallback`（`mdns.cpp`）— UDP Broadcast 封装已实现
+- `ManualConfigFallback` / `manual_config_fallback.hpp/cpp` — **完全未实现**（代码中无任何 ManualConfig/manual_config/StaticEndpoint 引用）
+
+**结论**：TASK-015 的 **LAN Broadcast fallback 部分已实现**，但 **Manual Config fallback 部分未实现**。
 
 ### 3.4 Group 4 — Pairing/Registration（CF1-TASK-018~024）
 
@@ -299,26 +326,37 @@ Discovery 实现分层
 ├── DiscoveryTable (NodeID 索引)           🟢 完整实现 + 测试
 ├── DiscoveryService domain processing     🟢 完整实现 + 测试
 ├── UDP Broadcast fallback                 🟢 完整实现 + 测试 (R1)
-├── Manual/static fallback                 ❌ 未实现
+├── Manual/static fallback                 🔴 未实现（R8.1 确认）
 └── Native mDNS transport                  🔴 未实现 (仅纯虚接口)
     ├── macOS Bonjour API                 ❌
     └── Windows mDNS API                  ❌
 ```
 
-**结论**：CF1 Discovery 层实现了 **domain-level 发现语义 + UDP Broadcast fallback**，但 **Native mDNS transport 未实现**。`mdns.hpp` 中的 `IMdnsAnnouncer` / `IMdnsListener` 为纯虚接口，`mdns.cpp` 仅包含 `LanBroadcastFallback`（UDP）实现。
+**结论**：CF1 Discovery 层实现了 **domain-level 发现语义 + UDP Broadcast fallback**，但 **Native mDNS transport 和 Manual Config fallback 均未实现**。`mdns.hpp` 中的 `IMdnsAnnouncer` / `IMdnsListener` 为纯虚接口，`mdns.cpp` 仅包含 `LanBroadcastFallback`（UDP）实现。代码中无任何 `ManualConfig` / `manual_config` / `StaticEndpoint` 引用（R8.1 grep 确认）。
 
 ### 3.12 矩阵汇总（修正后）
 
 | 维度 | 数量 | 状态 |
 |------|------|------|
 | 总任务数 | 50 | — |
-| FULLY EVIDENCED（✅✅✅） | 46 | ✅ |
-| PARTIALLY EVIDENCED（含 🟡） | 3（TASK-011/013/014） | 🟡 |
+| FULLY EVIDENCED（✅✅✅） | 45 | ✅ |
+| PARTIALLY EVIDENCED（含 🟡） | 4（TASK-011/013/014/015） | 🟡 |
 | 待 Gate Review | 1（TASK-050） | ⏳ |
 | 单元测试 | 16 | ALL PASS |
 | 集成测试 | 6 | ALL PASS |
 | Design Contract 测试 | 14 | ALL PASS |
 | 总测试用例 | 36（CF1）+ 6（CF0）= 42 | ALL PASS |
+
+### P0 任务缺口汇总
+
+| 任务 ID | 优先级 | 缺口 | 影响 |
+|---------|--------|------|------|
+| TASK-013 | **P0** | Native mDNS transport 未实现 | CF1 P0 核心链缺口 |
+| TASK-014 | **P0** | Physical mDNS listener 未实现 | CF1 P0 核心链缺口 |
+| TASK-011 | P1 | Full corruption recovery 未实现 | 非阻塞 Freeze 的 P1 缺口 |
+| TASK-015 | P1 | Manual Config fallback 未实现 | 非阻塞 Freeze 的 P1 缺口 |
+
+**关键判断**：TASK-013/014 为 **P0** 缺口，是 CF1 Freeze BLOCKED 的根本原因。TASK-011/015 为 P1 缺口，不单独阻塞 Freeze 但必须如实标注。
 
 ---
 
@@ -587,7 +625,7 @@ Discovery 实现分层
 | Native mDNS transport (macOS Bonjour) | TASK-013 | 🔴 未实现 | 仅纯虚接口 |
 | Native mDNS transport (Windows mDNS API) | TASK-013 | 🔴 未实现 | 仅纯虚接口 |
 | Physical mDNS listener | TASK-014 | 🔴 未实现 | `startListening()` 仅设 flag |
-| Manual/static config fallback | TASK-015 | ❌ 未实现 | 仅 UDP Broadcast fallback |
+| Manual/static config fallback | TASK-015 | 🔴 未实现 | R8.1 grep 确认：代码中无 ManualConfig/manual_config/StaticEndpoint 引用 |
 | Trusted List corruption recovery | TASK-011 | ❌ 未实现 | 仅 NodeID/Epoch persist |
 | Topology Membership corruption recovery | TASK-011 | ❌ 未实现 | 同上 |
 | Full corruption recovery | TASK-011 | ❌ 未实现 | 同上 |
@@ -600,8 +638,8 @@ Discovery 实现分层
 本 Evidence Report v2 为 CF1-TASK-050 的交付物，经 R8 Evidence Repair 修正后提交大G项目经理进行最终 Gate Review（第二次）。
 
 **交付内容（修正后）**：
-1. ✅ 46/50 任务 FULLY EVIDENCED
-2. 🟡 3/50 任务 PARTIALLY EVIDENCED（TASK-011/013/014 — 明确降级标注）
+1. ✅ 45/50 任务 FULLY EVIDENCED
+2. 🟡 4/50 任务 PARTIALLY EVIDENCED（TASK-011/013/014/015 — 明确降级标注）
 3. ✅ 9/9 test suites PASS（42 测试用例）
 4. ✅ 7/7 Blocker CLOSED（R3/R5 带 Evidence Qualification）
 5. ✅ 3/3 Safety Invariant HELD（domain-level，P3 Qualified）
@@ -612,15 +650,28 @@ Discovery 实现分层
 10. ✅ Git working tree clean
 11. ✅ Evidence Scope 明确标注（§10）
 12. ✅ 未实现项明确清单（§10.3）
+13. ✅ P0 任务缺口汇总（§3.12）
+14. ✅ Provenance 三层 commit 关系明确（fead4b7 / d19b925 / 39d4633）
 
-**R8 Repair 完成确认**：
+**R8 Repair + R8.1 Audit 完成确认**：
 - R8-E01 ✅ Task Matrix 三维度拆开（TASK-011/013/014 降级）
 - R8-E02 ✅ mDNS 明确分层（§3.11）
 - R8-E03 ✅ R5 Recovery Evidence 降级（§3.2 + §5.3）
 - R8-E04 ✅ Evidence Scope 增加（§10）
+- R8.1-A01 ✅ TASK-015 降级（Manual Config fallback 未实现，R8.1 grep 确认）
+- R8.1-A02 ✅ Provenance 修正（fead4b7 / d19b925 / 39d4633）
+- R8.1-A03 ✅ 计数更新（46/50 → 45/50）
 
-**请求裁决**：请大G项目经理审查本 Evidence Report v2，裁决 CF1 阶段是否 PASS / CONDITIONAL PASS / FAIL，以及是否授权 CF1 FROZEN / CLOSED。
+**已知 P0 缺口**（不掩盖、不包装）：
+- TASK-013（P0）：Native mDNS transport 未实现
+- TASK-014（P0）：Physical mDNS listener 未实现
+
+**请求裁决**：请大G项目经理审查本 Evidence Report v3，裁决：
+1. R8.1 Audit 是否 PASS / ACCEPTED
+2. CF1 Implementation 最终状态（CONDITIONAL PASS 维持 / 其他）
+3. 是否授权进入 CF1 Gap Closure（TASK-013/014/011/015 编码）
+4. CF1 FROZEN / CLOSED 授权时机
 
 ---
 
-*End of CF1 Implementation Evidence Report v2 (R8 Repair)*
+*End of CF1 Implementation Evidence Report v3 (R8.1 Audit)*
