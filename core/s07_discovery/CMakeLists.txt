@@ -9,6 +9,10 @@ add_library(cfx_s07_discovery STATIC
     udp_broadcast.cpp
     mdns.hpp
     mdns.cpp
+    mdns_announcer.hpp
+    mdns_announcer.cpp
+    mdns_listener.hpp
+    mdns_listener.cpp
 )
 
 target_include_directories(cfx_s07_discovery PUBLIC
@@ -16,5 +20,8 @@ target_include_directories(cfx_s07_discovery PUBLIC
 )
 
 if(CFX_PLATFORM_WIN)
-    target_link_libraries(cfx_s07_discovery PUBLIC ws2_32)
+    target_link_libraries(cfx_s07_discovery PUBLIC ws2_32 dnsapi)
+elseif(CFX_PLATFORM_MAC)
+    find_library(DNSSD_LIBRARY dns_sd)
+    target_link_libraries(cfx_s07_discovery PUBLIC ${DNSSD_LIBRARY})
 endif()

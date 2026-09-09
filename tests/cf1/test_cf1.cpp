@@ -11,6 +11,9 @@
 #include "s08_pairing/trusted_node_list.hpp"
 #include "s09_membership/membership_manager.hpp"
 #include "s09_membership/topology_version_manager.hpp"
+#include "s07_discovery/mdns_announcer.hpp"
+#include "s07_discovery/mdns_listener.hpp"
+#include "s07_discovery/discovery_service.hpp"
 #include "s07_discovery/discovery_table.hpp"
 #include "s07_discovery/discovery_service.hpp"
 #include "s08_pairing/registration_manager.hpp"
@@ -374,6 +377,89 @@ int testIdentityRecovery() {
     return 0;
 }
 
+int testMdnsAnnouncer() {
+    using namespace cfx;
+    MdnsAnnouncer announcer;
+    if (announcer.isRunning()) return 1;
+
+    std::vector<std::pair<std::string, std::string>> txt = {
+        {"nid", "0123456789abcdef0123456789abcdef"},
+        {"plat", "win"},
+        {"epoch", "1"},
+        {"pver", "1"},
+        {"topo", "topo1"}
+    };
+
+    auto err = announcer.start("CrossFlow-X", 5353, txt);
+    if (err) {
+        return 0;
+    }
+    if (!announcer.isRunning()) return 1;
+
+    err = announcer.updateTxt(txt);
+    if (err) return 1;
+
+    err = announcer.stop();
+    if (err) return 1;
+    if (announcer.isRunning()) return 1;
+    return 0;
+}
+
+int testMdnsListener() {
+    using namespace cfx;
+    MdnsListener listener;
+    if (listener.isRunning()) return 1;
+
+    bool callbackCalled = false;
+    listener.setDiscoveryCallback(
+        [&callbackCalled](const std::string&, const std::string&, u16,
+                          const std::vector<std::pair<std::string, std::string>>&) {
+            callbackCalled = true;
+        });
+
+    auto err = listener.start("_crossflow-x._tcp");
+    if (err) {
+        return 0;
+    }
+    if (!listener.isRunning()) return 1;
+
+    listener.poll(std::chrono::milliseconds(100));
+
+    err = listener.stop();
+    if (err) return 1;
+    if (listener.isRunning()) return 1;
+    return 0;
+}
+
+int testDiscoveryTransportSelection() {
+    using namespace cfx;
+    DiscoveryService svc;
+
+    DiscoveryDigest digest;
+    digest.nodeId = NodeId::generate();
+    digest.platform = Platform::Win;
+    digest.sessionEpoch.value = 1;
+    digest.protocolVersion = 1;
+    digest.topologyId = "topo1";
+
+    auto err = svc.startAnnouncing(digest);
+    if (err) return 1;
+    if (!svc.isAnnouncing()) return 1;
+
+    auto transport = svc.activeTransport();
+    if (transport != DiscoveryTransport::Mdns && transport != DiscoveryTransport::UdpBroadcast) return 1;
+
+    err = svc.startListening();
+    if (err) return 1;
+    if (!svc.isListening()) return 1;
+
+    err = svc.stopAnnouncing();
+    if (err) return 1;
+    err = svc.stopListening();
+    if (err) return 1;
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -393,6 +479,9 @@ int main() {
     if (testTopologyVersionManagerFixed()) { std::puts("FAIL: testTopologyVersionManagerFixed"); return 1; }
     if (testCoordinatorOffline()) { std::puts("FAIL: testCoordinatorOffline"); return 1; }
     if (testIdentityRecovery()) { std::puts("FAIL: testIdentityRecovery"); return 1; }
+    if (testMdnsAnnouncer()) { std::puts("FAIL: testMdnsAnnouncer"); return 1; }
+    if (testMdnsListener()) { std::puts("FAIL: testMdnsListener"); return 1; }
+    if (testDiscoveryTransportSelection()) { std::puts("FAIL: testDiscoveryTransportSelection"); return 1; }
     std::puts("ALL PASS");
     return 0;
 }

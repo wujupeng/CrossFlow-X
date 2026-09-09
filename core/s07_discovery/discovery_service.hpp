@@ -9,8 +9,18 @@
 #include "common/messages.hpp"
 #include "s07_discovery/i_discovery_service.hpp"
 #include "s07_discovery/discovery_table.hpp"
+#include "s07_discovery/mdns_announcer.hpp"
+#include "s07_discovery/mdns_listener.hpp"
+#include "s07_discovery/mdns.hpp"
 
 namespace cfx {
+
+enum class DiscoveryTransport {
+    None,
+    Mdns,
+    UdpBroadcast,
+    ManualConfig
+};
 
 class DiscoveryService : public IDiscoveryService {
 public:
@@ -34,11 +44,21 @@ public:
     std::vector<NodeId> detectConflicts() const noexcept;
     void pruneStale(std::chrono::milliseconds maxAge) noexcept;
 
+    DiscoveryTransport activeTransport() const noexcept { return transport_; }
+
 private:
     DiscoveryTable table_;
     std::optional<DiscoveryDigest> currentDigest_;
     bool announcing_{false};
     bool listening_{false};
+
+    MdnsAnnouncer mdnsAnnouncer_;
+    MdnsListener mdnsListener_;
+    LanBroadcastFallback udpFallback_;
+    DiscoveryTransport transport_{DiscoveryTransport::None};
+
+    std::optional<ErrorCode> tryMdnsAnnounce(const DiscoveryDigest& digest) noexcept;
+    std::optional<ErrorCode> tryUdpFallback(const DiscoveryDigest& digest) noexcept;
 };
 
 }  // namespace cfx
