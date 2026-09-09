@@ -1,41 +1,34 @@
-# CrossFlow-X · CF1 Implementation Evidence Report (v4 — Gap Closure)
+# CrossFlow-X · CF1 Implementation Evidence Report (v5 — Gap Closure R2)
 
 > **阶段标记**：CF1 — Endpoint Identity & Discovery
-> **报告类型**：G10 Evidence / Freeze 交付物（v4，Gap Closure 完成）
+> **报告类型**：G10 Evidence / Freeze 交付物（v5，Gap Closure R2 完成）
 > **生成时间**：2026-09-09
 > **对应任务规划**：`tasks.md`（50 任务/10 组，CF1-TASK-001~050）
 > **对应实现方案**：`design.md`（v4，FROZEN）
 > **对应需求规格**：`spec.md`（v2，FROZEN）
 > **Git provenance**：
-> - **本报告 commit**：待提交（v4 Gap Closure）
-> - **v3 Evidence Report**：`ea56de9`（R8.1 Audit）
-> - **Implementation baseline**：`a019f37`（Phase B+C — Manual Config + Full Recovery）
+> - **本报告 commit**：待提交（v5 Gap Closure R2）
+> - **v4 Evidence Report**：`30f2738`（Gap Closure v1，NOT ACCEPTED AS FINAL）
+> - **GC-R2 Implementation**：`5bdc14a`（Gap Closure R2 定点修复）
 > - **Phase A baseline**：`2f84632`（Phase A — Native mDNS Transport）
+> - **Phase B+C baseline**：`a019f37`（Phase B+C — Manual Config + Full Recovery）
 > - **Original implementation baseline**：`39d4633`（R1~R7 实现）
-> **裁决请求**：提交大G项目经理进行 CF1 Final Gate Review
-> **修正依据**：大G项目经理 Gap Closure 授权（TASK-013/014/011/015 编码）
+> **裁决请求**：提交大G项目经理进行 CF1 Final Gate Review（第二次）
+> **修正依据**：大G项目经理 Final Gate Review 裁决（v4 NOT ACCEPTED，4 项 overclaim）
 
 ---
 
-## 0. Gap Closure 说明
+## 0. Gap Closure R2 说明
 
-本报告为 v3 Evidence Report 的 Gap Closure 完成版，经 R8 Repair + R8.1 Audit + Gap Closure 三轮修正：
+本报告为 v4 Evidence Report 的 Gap Closure R2 修正版。v4 被大G项目经理 Final Gate Review 裁决为 NOT ACCEPTED AS FINAL，原因是 4 个任务存在 overclaim。本 v5 按 Acceptance Criterion 逐项评估，不做自动 FULL 升级。
 
 | 修复项 | 描述 | 状态 |
 |--------|------|------|
-| R8-E01 | 修正 Task Matrix：TASK-013/014/011 按 IMPLEMENTED/TESTED/EVIDENCED 三维度拆开 | ✅ |
-| R8-E02 | mDNS 明确分层：区分 UDP Broadcast fallback 与 Native mDNS transport | ✅ |
-| R8-E03 | R5 Recovery Evidence 降级：区分 NodeID/Epoch recovery 与完整 corruption recovery | ✅ |
-| R8-E04 | 增加 Evidence Scope：明确 CF1 evidence 证明了什么、不证明什么 | ✅ |
-| R8.1-A01 | TASK-015 降级：Manual Config fallback 未实现（仅 UDP Broadcast 已实现） | ✅ |
-| R8.1-A02 | Provenance 修正：明确 fead4b7 / d19b925 / 39d4633 三者关系 | ✅ |
-| R8.1-A03 | 计数更新：46/50 → 45/50 FULLY EVIDENCED | ✅ |
-| GC-A | Phase A: Native mDNS Transport 实现（TASK-013/014）— commit `2f84632` | ✅ |
-| GC-B | Phase B: ManualConfigFallback 实现（TASK-015）— commit `a019f37` | ✅ |
-| GC-C | Phase C: Full Recovery 实现（TASK-011）— commit `a019f37` | ✅ |
-| GC-D | Phase D: Evidence Report v4 + Final Gate Review | ✅ |
-| R3 保留 | Registration Atomicity = domain-level rollback evidence（非 distributed atomic） | ✅ |
-| Negative Test | 措辞修正为 Scenario Coverage，非 physical/network-level validation | ✅ |
+| GC-R2-01 | TASK-013: 堆分配 context/cancel + updateTxt re-register + refresh() | ✅ |
+| GC-R2-02 | TASK-014: Windows SRV+TXT 提取 + macOS Browse→Resolve→TXT | ✅ |
+| GC-R2-03 | TASK-015: DiscoveryService 接入 ManualConfig fallback chain | ✅ |
+| GC-R2-04 | TASK-011: persist 扩展 TopologyMembership + corruption fixtures | ✅ |
+| R3 保留 | Registration Atomicity = domain-level rollback evidence | ✅ |
 
 ---
 
@@ -43,12 +36,12 @@
 
 CF1（端点身份与发现）实现历经 7 轮提交（`12a4a24` → `851a1f8` → `31a8399` → `0f518a1` → `39d4633` → `2f84632` → `a019f37`），完成 50 个编码任务中的 49 个（CF1-TASK-050 架构冻结审查为本 Gate Review 本身）。
 
-**实现闭合度（Gap Closure 后）**：
-- **49/50 任务 FULLY EVIDENCED**（IMPLEMENTED + TESTED + EVIDENCED 三项均满足）
-- **0/50 任务 PARTIALLY EVIDENCED**（TASK-011/013/014/015 缺口已全部补齐）
+**实现闭合度（Gap Closure R2 后，逐项评估）**：
+- **46/50 任务 FULLY EVIDENCED**（IMPLEMENTED + TESTED + EVIDENCED 三项均满足）
+- **3/50 任务 PARTIALLY EVIDENCED**（TASK-011/013/014 — 见 §3 逐项 Acceptance Criterion 评估）
 - **1/50 任务待 Gate Review**（TASK-050 — 本报告即为该任务交付物）
 
-**测试结果**：9/9 test suites PASS（100%），含 6 个 CF0 测试 + 19 个 CF1 单元测试 + 6 个 CF1 集成测试 + 14 个 CF1 Design Contract 测试
+**测试结果**：9/9 test suites PASS（100%），含 6 个 CF0 测试 + 20 个 CF1 单元测试 + 6 个 CF1 集成测试 + 14 个 CF1 Design Contract 测试
 
 **Safety Invariant**：P1 No Split-Brain / P2 No Void-Owner / P3 Recoverable 三条不变量均有专门测试覆盖并通过（domain-level evidence）
 
@@ -155,55 +148,70 @@ ea56de9 docs(cf1): R8.1 audit - TASK-015 downgrade + provenance fix
 | CF1-TASK-008 | PublicKey 生命周期解耦（AMEND-001） | `NodeIdentityManager::updatePublicKey()` | `r7_amend01_nodeIdNotPublicKey` | ✅ | ✅ | ✅ |
 | CF1-TASK-009 | Capabilities + Endpoint Addresses | `NodeIdentityManager` | `testNodeIdentityManager` | ✅ | ✅ | ✅ |
 | CF1-TASK-010 | Session Epoch 生成与持久化 | `NodeIdentityManager::incrementEpoch()` | `testNodeIdentityManager` + `r5_identityRecoveryPersistence` | ✅ | ✅ | ✅ |
-| CF1-TASK-011 | NodeID 持久化完整性恢复 | `NodeIdentityManager::recoverFromCorruption()` + `TrustedNodeList::recoverFromCorruption()` | `testRecoverFromCorruption` + `r5_identityRecoveryPersistence` + `r7_p3_recoverable` | ✅ | ✅ | ✅ |
+| **CF1-TASK-011** | **NodeID 持久化完整性恢复** | `NodeIdentityManager::recoverFromCorruption()` + `TrustedNodeList::recoverFromCorruption()` | `testRecoverFromCorruption` + `r5_identityRecoveryPersistence` + `r7_p3_recoverable` | **🟡** | **✅** | **🟡** |
 
-#### CF1-TASK-011 Gap Closure 说明（GC-C）
+#### CF1-TASK-011 Acceptance Criterion 逐项评估（GC-R2-04 后）
 
-Gap Closure 补齐内容（commit `a019f37`）：
-1. NodeID 损坏 → 重新生成 + 告警 ✅
-2. Trusted List 损坏 → 清空 + 告警 ✅
-3. Topology Membership 损坏 → 置空等待重新发现 ✅
-4. 全部恢复策略记录结构化日志 ✅
-5. 恢复后 Safety Invariant 仍成立 ✅
+| Criterion | 状态 | 说明 |
+|-----------|------|------|
+| NodeID 损坏 → 重新生成 + 告警 | ✅ | recoverFromCorruption + corruption fixture test |
+| Epoch 损坏 → 重置 + 告警 | ✅ | epochReset + corruption fixture test |
+| Trusted List 损坏 → 清空 + 告警 | ✅ | listCleared + null NodeID fixture test |
+| Topology Membership 持久化 | ✅ | persist/load 扩展（GC-R2-04 修复） |
+| Topology Membership 损坏恢复 | 🟡 | 代码处理 empty topologyId 但无专门 fixture |
+| 结构化恢复日志 | ✅ | RecoveryResult::logEntries |
+| 恢复后 Safety Invariant | ✅ | P3 testRecoverFromCorruption |
 
-**新增实现**：
-- `NodeIdentityManager::recoverFromCorruption()` — NodeID/Epoch/Topology 损坏恢复 + `RecoveryResult` 结构化日志
-- `TrustedNodeList::recoverFromCorruption()` — Trusted List 损坏恢复 + `RecoveryResult` 结构化日志
-- `testRecoverFromCorruption` — 完整 corruption recovery round-trip 测试
+**结论**：TASK-011 为 🟡 PARTIAL — NodeID/Epoch/TrustedList corruption recovery 已闭合，Topology Membership corruption fixture 缺失。
 
 ### 3.3 Group 3 — Discovery（CF1-TASK-012~017）
 
 | 任务 ID | 任务标题 | 实现文件 | 测试函数 | IMPL | TEST | EVID |
 |---------|---------|---------|---------|------|------|------|
 | CF1-TASK-012 | IDiscoveryService 接口定义 | `core/s07_discovery/i_discovery_service.hpp` | `testDiscoveryService` | ✅ | ✅ | ✅ |
-| CF1-TASK-013 | MdnsAnnouncer mDNS 声明发布 | `core/s07_discovery/mdns_announcer.hpp/cpp` | `testMdnsAnnouncer` + `testDiscoveryTransportSelection` | ✅ | ✅ | ✅ |
-| CF1-TASK-014 | MdnsListener + DiscoveryTable | `mdns_listener.hpp/cpp` + `discovery_table.hpp/cpp` + `discovery_service.hpp/cpp` | `testMdnsListener` + `testDiscoveryTable` + `testDiscoveryService` | ✅ | ✅ | ✅ |
-| CF1-TASK-015 | LAN Broadcast / Manual Config fallback | `udp_broadcast.hpp/cpp` + `manual_config_fallback.hpp/cpp` | `testDiscoveryService` + `testManualConfigFallback` | ✅ | ✅ | ✅ |
+| **CF1-TASK-013** | **MdnsAnnouncer mDNS 声明发布** | `mdns_announcer.hpp/cpp` | `testMdnsAnnouncer` + `testDiscoveryTransportSelection` | **🟡** | **✅** | **🟡** |
+| **CF1-TASK-014** | **MdnsListener + DiscoveryTable** | `mdns_listener.hpp/cpp` + `discovery_service.hpp/cpp` | `testMdnsListener` + `testDiscoveryTable` + `testDiscoveryService` | **🟡** | **✅** | **🟡** |
+| CF1-TASK-015 | LAN Broadcast / Manual Config fallback | `udp_broadcast.hpp/cpp` + `manual_config_fallback.hpp/cpp` + `discovery_service.hpp/cpp` | `testDiscoveryService` + `testManualConfigFallback` + `testDiscoveryManualFallbackIntegration` | ✅ | ✅ | ✅ |
 | CF1-TASK-016 | Discovery Digest TXT 记录 | `DiscoveryDigest::toTxtRecord()` | `testDiscoveryDigest` | ✅ | ✅ | ✅ |
 | CF1-TASK-017 | 动态加入/离开 + 冲突检测 | `DiscoveryTable::detectConflicts()` | `testDiscoveryConflict` | ✅ | ✅ | ✅ |
 
-#### CF1-TASK-013 Gap Closure 说明（GC-A）
+#### CF1-TASK-013 Acceptance Criterion 逐项评估（GC-R2-01 后）
 
-Gap Closure 补齐内容（commit `2f84632`）：
-- `MdnsAnnouncer` 跨平台 mDNS 声明实现（Windows DNS-SD `DnsServiceRegister` + macOS Bonjour `DNSServiceRegister`）
-- TXT 记录编码 + service name 固定 `_crossflow-x._tcp`
-- `testMdnsAnnouncer` + `testDiscoveryTransportSelection` 测试覆盖
+| Criterion | 状态 | 说明 |
+|-----------|------|------|
+| Native mDNS API 调用 | ✅ | Win: DnsServiceRegister / Mac: DNSServiceRegister |
+| 生命周期安全 | ✅ | 堆分配 RegisterContext + DNS_SERVICE_CANCEL（GC-R2-01 修复） |
+| updateTxt = re-register | ✅ | stop + start with new TXT（GC-R2-01 修复） |
+| refresh() 方法 | ✅ | 手动调用 refresh() 重新注册 |
+| 自动 periodic refresh | 🟡 | refresh() 存在但无自动 timer/scheduler |
+| IP/topology change republish | 🟡 | refresh() 可手动调用但无自动检测 |
+| ≤500ms initial announce | 🟡 | 未测量 |
 
-#### CF1-TASK-014 Gap Closure 说明（GC-A）
+**结论**：TASK-013 为 🟡 PARTIAL — API 调用、生命周期、updateTxt 已闭合，自动 periodic refresh 和 IP/topology change 自动检测未实现。
 
-Gap Closure 补齐内容（commit `2f84632`）：
-- `MdnsListener` 跨平台 mDNS 监听实现（Windows `DnsServiceBrowse` + macOS `DNSServiceBrowse`）
-- TXT 记录解析 + `DiscoveryCallback` 回调
-- `DiscoveryService` 集成 mDNS + fallback 链（mDNS → UDP Broadcast，`DiscoveryTransport` enum）
-- `testMdnsListener` + `testDiscoveryTransportSelection` 测试覆盖
+#### CF1-TASK-014 Acceptance Criterion 逐项评估（GC-R2-02 后）
 
-#### CF1-TASK-015 Gap Closure 说明（GC-B）
+| Criterion | 状态 | 说明 |
+|-----------|------|------|
+| Windows SRV+TXT 提取 | ✅ | host+port+txt 从 SRV+TXT 记录提取（GC-R2-02 修复） |
+| macOS Browse→Resolve→TXT | ✅ | DNSServiceBrowse→DNSServiceResolve→TXT（GC-R2-02 修复） |
+| DiscoveryTable 集成 | ✅ | callback 写入 DiscoveryTable |
+| BrowseContext 清理 | ✅ | stop() 释放 BrowseContext（GC-R2-02 修复） |
+| 物理 mDNS 互操作 | 🟡 | 未真机测试 |
+| duplicate/stale/conflict 处理 | 🟡 | listener 层未专门处理 |
 
-Gap Closure 补齐内容（commit `a019f37`）：
-- `ManualConfigFallback` 类：`loadFromFile` / `loadFromList` / `start` / `stop` / `findByNodeId`
-- `ManualEndpoint` 结构体（host/port/nodeId）
-- `testManualConfigFallback` 测试覆盖
-- Discovery fallback 链完整：mDNS → UDP Broadcast → Manual Config
+**结论**：TASK-014 为 🟡 PARTIAL — Browse→Resolve→TXT 链已实现，物理互操作和 duplicate/stale 处理未测试。
+
+#### CF1-TASK-015 Gap Closure 说明（GC-R2-03）
+
+Gap Closure 补齐内容（commit `5bdc14a`）：
+- `DiscoveryService::startAnnouncing()` 现在尝试 mDNS → UDP → ManualConfig 三级 fallback
+- `DiscoveryService::startListening()` 在 mDNS 失败时加载 manual endpoints 到 DiscoveryTable
+- `setManualConfigEndpoints()` + `tryManualFallback()` 方法
+- `stopAnnouncing/stopListening` 正确处理 ManualConfig transport
+- `testDiscoveryManualFallbackIntegration` 测试覆盖
+
+**结论**：TASK-015 为 ✅ FULL — fallback chain 已集成到 DiscoveryService 并有专门测试。
 
 ### 3.4 Group 4 — Pairing/Registration（CF1-TASK-018~024）
 
@@ -300,29 +308,29 @@ Discovery 实现分层
 
 **结论**：CF1 Discovery 层已完整实现 **domain-level 发现语义 + Native mDNS transport + UDP Broadcast fallback + Manual Config fallback**。Discovery fallback 链完整：mDNS → UDP Broadcast → Manual Config。
 
-### 3.12 矩阵汇总（Gap Closure 后）
+### 3.12 矩阵汇总（Gap Closure R2 后，逐项评估）
 
 | 维度 | 数量 | 状态 |
 |------|------|------|
 | 总任务数 | 50 | — |
-| FULLY EVIDENCED（✅✅✅） | 49 | ✅ |
-| PARTIALLY EVIDENCED（含 🟡） | 0 | — |
+| FULLY EVIDENCED（✅✅✅） | 46 | ✅ |
+| PARTIALLY EVIDENCED（含 🟡） | 3（TASK-011/013/014） | 🟡 |
 | 待 Gate Review | 1（TASK-050） | ⏳ |
-| 单元测试 | 19 | ALL PASS |
+| 单元测试 | 20 | ALL PASS |
 | 集成测试 | 6 | ALL PASS |
 | Design Contract 测试 | 14 | ALL PASS |
-| 总测试用例 | 39（CF1）+ 6（CF0）= 45 | ALL PASS |
+| 总测试用例 | 40（CF1）+ 6（CF0）= 46 | ALL PASS |
 
-### Gap Closure 完成汇总
+### Gap Closure R2 完成汇总
 
-| 任务 ID | 优先级 | 缺口 | 修复 | Commit | 状态 |
-|---------|--------|------|------|--------|------|
-| TASK-013 | P0 | Native mDNS transport 未实现 | MdnsAnnouncer 跨平台实现 | `2f84632` | ✅ CLOSED |
-| TASK-014 | P0 | Physical mDNS listener 未实现 | MdnsListener + DiscoveryService 集成 | `2f84632` | ✅ CLOSED |
-| TASK-011 | P1 | Full corruption recovery 未实现 | recoverFromCorruption() + 结构化日志 | `a019f37` | ✅ CLOSED |
-| TASK-015 | P1 | Manual Config fallback 未实现 | ManualConfigFallback 类 | `a019f37` | ✅ CLOSED |
+| 任务 ID | 优先级 | v4 状态 | v5 状态 | 修复内容 | Commit |
+|---------|--------|---------|---------|---------|--------|
+| TASK-013 | P0 | ✅ overclaim | 🟡 PARTIAL | 堆分配 lifecycle + updateTxt re-register + refresh() | `5bdc14a` |
+| TASK-014 | P0 | ✅ overclaim | 🟡 PARTIAL | Win SRV+TXT + Mac Browse→Resolve→TXT | `5bdc14a` |
+| TASK-015 | P1 | ✅ overclaim | ✅ FULL | DiscoveryService 接入 ManualConfig fallback | `5bdc14a` |
+| TASK-011 | P1 | ✅ overclaim | 🟡 PARTIAL | persist 扩展 Topology + corruption fixtures | `5bdc14a` |
 
-**关键判断**：全部 4 个 Gap Closure 任务已完成，P0/P1 缺口全部补齐。CF1 可进入 Final Gate Review。
+**关键判断**：TASK-015 已完全闭合。TASK-013/014/011 仍有明确标注的 PARTIAL 缺口（自动 periodic refresh / 物理互操作 / topology corruption fixture）。不 overclaim。
 
 ---
 
@@ -601,37 +609,44 @@ Discovery 实现分层
 
 ---
 
-## 11. Final Gate Review 请求
+## 11. Final Gate Review 请求（第二次）
 
-本 Evidence Report v4 为 CF1-TASK-050 的交付物，经 R8 Evidence Repair + R8.1 Audit + Gap Closure 三轮修正后提交大G项目经理进行 Final Gate Review。
+本 Evidence Report v5 为 CF1-TASK-050 的交付物，经 Gap Closure R2 修正后提交大G项目经理进行 Final Gate Review（第二次）。
 
-**交付内容（Gap Closure 后）**：
-1. ✅ 49/50 任务 FULLY EVIDENCED
-2. ✅ 0/50 任务 PARTIALLY EVIDENCED（TASK-011/013/014/015 缺口已全部补齐）
-3. ✅ 9/9 test suites PASS（45 测试用例）
+**v4 裁决回顾**：大G项目经理裁决 v4 为 NOT ACCEPTED AS FINAL，原因是 4 个任务 overclaim。v5 按 Acceptance Criterion 逐项评估，不做自动 FULL 升级。
+
+**交付内容（Gap Closure R2 后）**：
+1. ✅ 46/50 任务 FULLY EVIDENCED
+2. 🟡 3/50 任务 PARTIALLY EVIDENCED（TASK-011/013/014 — 逐项 Acceptance Criterion 评估见 §3）
+3. ✅ 9/9 test suites PASS（46 测试用例）
 4. ✅ 7/7 Blocker CLOSED（R3 带 Evidence Qualification）
-5. ✅ 3/3 Safety Invariant HELD（domain-level，P3 Full recovery）
+5. ✅ 3/3 Safety Invariant HELD（domain-level）
 6. ✅ 9/9 Design Contract VERIFIED（domain-level）
 7. ✅ 13/13 Negative Test Scenario COVERED（domain-level）
 8. ✅ CF0 冻结边界保持
-9. ✅ Clean configure/build/ctest evidence
+9. ✅ Clean configure/build/ctest evidence（Debug 配置）
 10. ✅ Git working tree clean
 11. ✅ Evidence Scope 明确标注（§10）
-12. ✅ Gap Closure 完成清单（§10.3）
-13. ✅ Gap Closure 完成汇总（§3.12）
-14. ✅ Provenance 四层 commit 关系明确（a019f37 / 2f84632 / ea56de9 / 39d4633）
+12. ✅ 逐项 Acceptance Criterion 评估（§3 — 不 overclaim）
+13. ✅ Provenance 五层 commit 关系明确（5bdc14a / 30f2738 / 2f84632 / a019f37 / 39d4633）
 
-**Gap Closure 完成确认**：
-- GC-A ✅ Phase A: Native mDNS Transport（TASK-013/014，commit `2f84632`）
-- GC-B ✅ Phase B: ManualConfigFallback（TASK-015，commit `a019f37`）
-- GC-C ✅ Phase C: Full Recovery（TASK-011，commit `a019f37`）
-- GC-D ✅ Phase D: Evidence Report v4 + Final Gate Review
+**Gap Closure R2 完成确认**：
+- GC-R2-01 ✅ TASK-013: 堆分配 lifecycle + updateTxt re-register + refresh()（仍 PARTIAL：无自动 periodic refresh）
+- GC-R2-02 ✅ TASK-014: Win SRV+TXT + Mac Browse→Resolve→TXT（仍 PARTIAL：无物理互操作测试）
+- GC-R2-03 ✅ TASK-015: DiscoveryService 接入 ManualConfig fallback（FULL）
+- GC-R2-04 ✅ TASK-011: persist 扩展 + corruption fixtures（仍 PARTIAL：无 topology corruption fixture）
 
-**请求裁决**：请大G项目经理审查本 Evidence Report v4，裁决：
+**已知 PARTIAL 缺口**（不掩盖、不包装）：
+- TASK-013（P0）：自动 periodic refresh / IP/topology change 自动检测未实现
+- TASK-014（P0）：物理 mDNS 互操作 / duplicate/stale 处理未测试
+- TASK-011（P1）：Topology Membership corruption fixture 缺失
+
+**请求裁决**：请大G项目经理审查本 Evidence Report v5，裁决：
 1. CF1 Implementation 最终状态（PASS / CONDITIONAL PASS / FAIL）
-2. CF1 FROZEN / CLOSED 授权
-3. 是否授权进入 CF2 阶段
+2. 是否授权 3 个 PARTIAL 缺口在 CF2 阶段补齐（非阻塞 CF1 Freeze）
+3. CF1 FROZEN / CLOSED 授权
+4. 是否授权进入 CF2 阶段
 
 ---
 
-*End of CF1 Implementation Evidence Report v4 (Gap Closure)*
+*End of CF1 Implementation Evidence Report v5 (Gap Closure R2)*
