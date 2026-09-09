@@ -1,9 +1,11 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "common/domain.hpp"
@@ -28,7 +30,12 @@ public:
     bool isRunning() const noexcept override;
 
     std::optional<ErrorCode> refresh() noexcept;
+    std::optional<ErrorCode> republish() noexcept;
     std::chrono::steady_clock::time_point lastRefreshTime() const noexcept { return lastRefreshTime_; }
+    std::chrono::milliseconds lastAnnounceDuration() const noexcept { return lastAnnounceDuration_; }
+
+    void startAutoRefresh(std::chrono::seconds interval = std::chrono::seconds(30)) noexcept;
+    void stopAutoRefresh() noexcept;
 
     static constexpr const char* kServiceType = "_crossflow-x._tcp";
 
@@ -38,6 +45,10 @@ private:
     u16 port_{0};
     std::vector<std::pair<std::string, std::string>> currentTxt_;
     std::chrono::steady_clock::time_point lastRefreshTime_{};
+    std::chrono::milliseconds lastAnnounceDuration_{0};
+
+    std::thread refreshThread_;
+    std::atomic<bool> refreshEnabled_{false};
 
 #ifdef _WIN32
     void* registerCancel_{nullptr};

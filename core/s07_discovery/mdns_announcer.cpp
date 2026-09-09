@@ -40,6 +40,8 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
 
     if (running_) return std::nullopt;
 
+    auto announceStart = std::chrono::steady_clock::now();
+
     serviceName_ = serviceName;
     port_ = port;
     currentTxt_ = txtRecord;
@@ -119,11 +121,15 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
     txtRecordData_ = instance;
     running_ = true;
     lastRefreshTime_ = std::chrono::steady_clock::now();
+    lastAnnounceDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - announceStart);
     return std::nullopt;
 }
 
 std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
     if (!running_) return std::nullopt;
+
+    stopAutoRefresh();
 
     if (registerCancel_) {
         DnsServiceRegisterCancel(static_cast<PDNS_SERVICE_CANCEL>(registerCancel_));
@@ -189,6 +195,30 @@ std::vector<u8> MdnsAnnouncer::encodeTxt(
     return data;
 }
 
+std::optional<ErrorCode> MdnsAnnouncer::republish() noexcept {
+    return refresh();
+}
+
+void MdnsAnnouncer::startAutoRefresh(std::chrono::seconds interval) noexcept {
+    refreshEnabled_ = true;
+    refreshThread_ = std::thread([this, interval]() {
+        while (refreshEnabled_.load(std::memory_order_relaxed)) {
+            for (int i = 0; i < 10 && refreshEnabled_.load(std::memory_order_relaxed); ++i) {
+                std::this_thread::sleep_for(interval / 10);
+            }
+            if (!refreshEnabled_.load(std::memory_order_relaxed)) break;
+            refresh();
+        }
+    });
+}
+
+void MdnsAnnouncer::stopAutoRefresh() noexcept {
+    refreshEnabled_ = false;
+    if (refreshThread_.joinable()) {
+        refreshThread_.join();
+    }
+}
+
 }
 
 #elif defined(__APPLE__)
@@ -209,6 +239,8 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
     const std::vector<std::pair<std::string, std::string>>& txtRecord) noexcept {
 
     if (running_) return std::nullopt;
+
+    auto announceStart = std::chrono::steady_clock::now();
 
     serviceName_ = serviceName;
     port_ = port;
@@ -238,11 +270,15 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
     serviceRef_ = ref;
     running_ = true;
     lastRefreshTime_ = std::chrono::steady_clock::now();
+    lastAnnounceDuration_ = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - announceStart);
     return std::nullopt;
 }
 
 std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
     if (!running_) return std::nullopt;
+
+    stopAutoRefresh();
 
     if (serviceRef_) {
         DNSServiceRefDeallocate(static_cast<DNSServiceRef>(serviceRef_));
@@ -292,6 +328,30 @@ std::vector<u8> MdnsAnnouncer::encodeTxt(
     return data;
 }
 
+std::optional<ErrorCode> MdnsAnnouncer::republish() noexcept {
+    return refresh();
+}
+
+void MdnsAnnouncer::startAutoRefresh(std::chrono::seconds interval) noexcept {
+    refreshEnabled_ = true;
+    refreshThread_ = std::thread([this, interval]() {
+        while (refreshEnabled_.load(std::memory_order_relaxed)) {
+            for (int i = 0; i < 10 && refreshEnabled_.load(std::memory_order_relaxed); ++i) {
+                std::this_thread::sleep_for(interval / 10);
+            }
+            if (!refreshEnabled_.load(std::memory_order_relaxed)) break;
+            refresh();
+        }
+    });
+}
+
+void MdnsAnnouncer::stopAutoRefresh() noexcept {
+    refreshEnabled_ = false;
+    if (refreshThread_.joinable()) {
+        refreshThread_.join();
+    }
+}
+
 }
 
 #else
@@ -330,6 +390,14 @@ std::vector<u8> MdnsAnnouncer::encodeTxt(
     const std::vector<std::pair<std::string, std::string>>& txt) const noexcept {
     return {};
 }
+
+std::optional<ErrorCode> MdnsAnnouncer::republish() noexcept {
+    return ErrorCode::DiscMdnsUnavailable;
+}
+
+void MdnsAnnouncer::startAutoRefresh(std::chrono::seconds) noexcept {}
+
+void MdnsAnnouncer::stopAutoRefresh() noexcept {}
 
 }
 

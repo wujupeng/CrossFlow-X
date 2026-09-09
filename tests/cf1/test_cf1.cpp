@@ -398,8 +398,17 @@ int testMdnsAnnouncer() {
     }
     if (!announcer.isRunning()) return 1;
 
+    auto announceDuration = announcer.lastAnnounceDuration();
+    if (announceDuration.count() < 0) return 1;
+
     err = announcer.updateTxt(txt);
     if (err) return 1;
+
+    err = announcer.republish();
+    if (err) return 1;
+
+    announcer.startAutoRefresh(std::chrono::seconds(30));
+    announcer.stopAutoRefresh();
 
     err = announcer.stop();
     if (err) return 1;
@@ -430,6 +439,56 @@ int testMdnsListener() {
     err = listener.stop();
     if (err) return 1;
     if (listener.isRunning()) return 1;
+    return 0;
+}
+
+int testMdnsRoundTripDiscovery() {
+    using namespace cfx;
+    MdnsAnnouncer announcer;
+
+    std::vector<std::pair<std::string, std::string>> txt = {
+        {"nid", "fedcba9876543210fedcba9876543210"},
+        {"plat", "win"},
+        {"epoch", "1"},
+        {"pver", "1"},
+        {"topo", "roundtrip"}
+    };
+
+    auto announceErr = announcer.start("CrossFlow-X-RT", 5353, txt);
+    if (announceErr) return 0;
+
+    auto announceDuration = announcer.lastAnnounceDuration();
+
+    MdnsListener listener;
+    bool discovered = false;
+    std::string discoveredService;
+    listener.setDiscoveryCallback(
+        [&discovered, &discoveredService](const std::string& serviceName,
+                   const std::string&, u16,
+                   const std::vector<std::pair<std::string, std::string>>&) {
+            discovered = true;
+            discoveredService = serviceName;
+        });
+
+    auto listenErr = listener.start("_crossflow-x._tcp");
+    if (listenErr) {
+        announcer.stop();
+        return 0;
+    }
+
+    auto discoveryStart = std::chrono::steady_clock::now();
+    for (int i = 0; i < 10 && !discovered; ++i) {
+        listener.poll(std::chrono::milliseconds(100));
+    }
+    auto discoveryDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - discoveryStart);
+
+    listener.stop();
+    announcer.stop();
+
+    if (announceDuration.count() > 500) return 1;
+    if (discovered && discoveryDuration.count() > 1000) return 1;
+
     return 0;
 }
 
@@ -515,6 +574,8 @@ int testRecoverFromCorruption() {
     std::remove("test_corrupt_nodeid.bin");
     std::remove("test_corrupt_epoch.bin");
     std::remove("test_corrupt_trusted.bin");
+    std::remove("test_corrupt_topology.bin");
+    std::remove("test_topology_roundtrip.bin");
 
     NodeIdentityManager mgr("test_recovery_corruption.bin");
     NodeIdentity id{};
@@ -592,6 +653,46 @@ int testRecoverFromCorruption() {
     if (!corruptTrusted.lastRecoveryResult().listCleared) return 1;
     if (!corruptTrusted.all().empty()) return 1;
 
+    std::remove("test_corrupt_topology.bin");
+    std::remove("test_topology_roundtrip.bin");
+
+    {
+        std::ofstream ofs("test_corrupt_topology.bin", std::ios::trunc);
+        auto nid = NodeId::generate();
+        ofs << nid.high << ' ' << nid.low << "\n1\n1\n";
+    }
+    NodeIdentityManager corruptTopology("test_corrupt_topology.bin");
+    err = corruptTopology.recoverFromCorruption();
+    if (err) return 1;
+    if (!corruptTopology.lastRecoveryResult().topologyCleared) return 1;
+
+    {
+        NodeIdentityManager topoMgr("test_topology_roundtrip.bin");
+        NodeIdentity topoId{};
+        topoId.nodeId = NodeId::generate();
+        topoId.platform = Platform::Win;
+        topoId.capabilities.protocolVersion = 1;
+        topoId.capabilities.screenBoundary = {1920, 1080, 0, 0};
+        topoMgr.initialize(topoId);
+        topoMgr.incrementEpoch();
+        TopologyMembership tm;
+        tm.topologyId = "topo_test";
+        tm.segmentIndex = 2;
+        topoMgr.joinTopology(tm);
+        topoMgr.persist();
+    }
+    {
+        NodeIdentityManager restoredTopo("test_topology_roundtrip.bin");
+        err = restoredTopo.recoverFromCorruption();
+        if (err) return 1;
+        auto identity = restoredTopo.getIdentity();
+        if (!identity) return 1;
+        if (!identity->topologyMembership.has_value()) return 1;
+        if (identity->topologyMembership->topologyId != "topo_test") return 1;
+        if (identity->topologyMembership->segmentIndex != 2) return 1;
+        if (restoredTopo.lastRecoveryResult().topologyCleared) return 1;
+    }
+
     return 0;
 }
 
@@ -656,6 +757,7 @@ int main() {
     if (testIdentityRecovery()) { std::puts("FAIL: testIdentityRecovery"); return 1; }
     if (testMdnsAnnouncer()) { std::puts("FAIL: testMdnsAnnouncer"); return 1; }
     if (testMdnsListener()) { std::puts("FAIL: testMdnsListener"); return 1; }
+    if (testMdnsRoundTripDiscovery()) { std::puts("FAIL: testMdnsRoundTripDiscovery"); return 1; }
     if (testDiscoveryTransportSelection()) { std::puts("FAIL: testDiscoveryTransportSelection"); return 1; }
     if (testManualConfigFallback()) { std::puts("FAIL: testManualConfigFallback"); return 1; }
     if (testRecoverFromCorruption()) { std::puts("FAIL: testRecoverFromCorruption"); return 1; }
