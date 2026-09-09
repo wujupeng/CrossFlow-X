@@ -5,6 +5,8 @@ add_library(cfx_s07_discovery STATIC
     discovery_table.cpp
     discovery_service.hpp
     discovery_service.cpp
+    udp_broadcast.hpp
+    udp_broadcast.cpp
     mdns.hpp
     mdns.cpp
 )
@@ -12,3 +14,7 @@ add_library(cfx_s07_discovery STATIC
 target_include_directories(cfx_s07_discovery PUBLIC
     ${CMAKE_SOURCE_DIR}/core
 )
+
+if(CFX_PLATFORM_WIN)
+    target_link_libraries(cfx_s07_discovery PUBLIC ws2_32)
+endif()

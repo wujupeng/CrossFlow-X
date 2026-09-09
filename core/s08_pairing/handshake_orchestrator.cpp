@@ -67,7 +67,9 @@ std::optional<ErrorCode> HandshakeOrchestrator::completeHandshake(const NodeId& 
     if (!hs) return ErrorCode::PairUnpaired;
     if (!hs->pairingDone) return ErrorCode::PairUnpaired;
     if (!hs->registrationDone) return ErrorCode::RegUndiscovered;
-    auto err = pairingMgr_.forceTransition(peerNodeId, PairingState::Registered);
+    auto err = pairingMgr_.forceTransition(peerNodeId, PairingState::Registering);
+    if (err) return err;
+    err = pairingMgr_.forceTransition(peerNodeId, PairingState::Registered);
     if (err) return err;
     err = pairingMgr_.forceTransition(peerNodeId, PairingState::Member);
     if (err) return err;
