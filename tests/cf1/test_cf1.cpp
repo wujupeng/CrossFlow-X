@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -448,7 +449,7 @@ int testDiscoveryTransportSelection() {
     if (!svc.isAnnouncing()) return 1;
 
     auto transport = svc.activeTransport();
-    if (transport != DiscoveryTransport::Mdns && transport != DiscoveryTransport::UdpBroadcast) return 1;
+    if (transport != DiscoveryTransport::Mdns && transport != DiscoveryTransport::UdpBroadcast && transport != DiscoveryTransport::ManualConfig) return 1;
 
     err = svc.startListening();
     if (err) return 1;
@@ -511,6 +512,9 @@ int testRecoverFromCorruption() {
     std::remove("test_trusted_recovery.bin");
     std::remove("nonexistent_file.bin");
     std::remove("nonexistent_trusted.bin");
+    std::remove("test_corrupt_nodeid.bin");
+    std::remove("test_corrupt_epoch.bin");
+    std::remove("test_corrupt_trusted.bin");
 
     NodeIdentityManager mgr("test_recovery_corruption.bin");
     NodeIdentity id{};
@@ -538,6 +542,37 @@ int testRecoverFromCorruption() {
     if (!corrupt.lastRecoveryResult().nodeIdRegenerated) return 1;
     if (corrupt.getNodeId().isNull()) return 1;
 
+    {
+        std::ofstream ofs("test_corrupt_nodeid.bin", std::ios::trunc);
+        ofs << "0 0\n1\n0\n";
+    }
+    NodeIdentityManager corruptNid("test_corrupt_nodeid.bin");
+    err = corruptNid.recoverFromCorruption();
+    if (err) return 1;
+    if (!corruptNid.lastRecoveryResult().nodeIdRegenerated) return 1;
+    if (corruptNid.getNodeId().isNull()) return 1;
+
+    {
+        std::ofstream ofs("test_corrupt_epoch.bin", std::ios::trunc);
+        auto nid = NodeId::generate();
+        ofs << nid.high << ' ' << nid.low << "\n0\n0\n";
+    }
+    NodeIdentityManager corruptEpoch("test_corrupt_epoch.bin");
+    err = corruptEpoch.recoverFromCorruption();
+    if (err) return 1;
+    if (!corruptEpoch.lastRecoveryResult().epochReset) return 1;
+    if (corruptEpoch.currentEpoch().value != 1) return 1;
+
+    {
+        std::ofstream ofs("test_corrupt_trusted.bin", std::ios::trunc);
+        ofs << "0 0 1000 1\n";
+    }
+    TrustedNodeList corruptTrustedFile("test_corrupt_trusted.bin");
+    err = corruptTrustedFile.recoverFromCorruption();
+    if (err) return 1;
+    if (!corruptTrustedFile.lastRecoveryResult().listCleared) return 1;
+    if (!corruptTrustedFile.all().empty()) return 1;
+
     TrustedNodeList trusted("test_trusted_recovery.bin");
     TrustedNodeEntry entry;
     entry.nodeId = NodeId::generate();
@@ -557,6 +592,46 @@ int testRecoverFromCorruption() {
     if (!corruptTrusted.lastRecoveryResult().listCleared) return 1;
     if (!corruptTrusted.all().empty()) return 1;
 
+    return 0;
+}
+
+int testDiscoveryManualFallbackIntegration() {
+    using namespace cfx;
+    DiscoveryService svc;
+
+    std::vector<ManualEndpoint> endpoints;
+    ManualEndpoint ep;
+    ep.host = "192.168.1.200";
+    ep.port = 5353;
+    ep.nodeId = NodeId::generate();
+    endpoints.push_back(ep);
+
+    svc.setManualConfigEndpoints(endpoints);
+
+    DiscoveryDigest digest;
+    digest.nodeId = NodeId::generate();
+    digest.platform = Platform::Win;
+    digest.sessionEpoch.value = 1;
+    digest.protocolVersion = 1;
+    digest.topologyId = "topo1";
+
+    auto err = svc.startAnnouncing(digest);
+    if (err) return 1;
+    if (!svc.isAnnouncing()) return 1;
+
+    auto transport = svc.activeTransport();
+    if (transport != DiscoveryTransport::Mdns &&
+        transport != DiscoveryTransport::UdpBroadcast &&
+        transport != DiscoveryTransport::ManualConfig) return 1;
+
+    err = svc.startListening();
+    if (err) return 1;
+    if (!svc.isListening()) return 1;
+
+    err = svc.stopListening();
+    if (err) return 1;
+    err = svc.stopAnnouncing();
+    if (err) return 1;
     return 0;
 }
 
@@ -584,6 +659,7 @@ int main() {
     if (testDiscoveryTransportSelection()) { std::puts("FAIL: testDiscoveryTransportSelection"); return 1; }
     if (testManualConfigFallback()) { std::puts("FAIL: testManualConfigFallback"); return 1; }
     if (testRecoverFromCorruption()) { std::puts("FAIL: testRecoverFromCorruption"); return 1; }
+    if (testDiscoveryManualFallbackIntegration()) { std::puts("FAIL: testDiscoveryManualFallbackIntegration"); return 1; }
     std::puts("ALL PASS");
     return 0;
 }

@@ -41,9 +41,11 @@ private:
 
 #ifdef _WIN32
     void* browseCancel_{nullptr};
+    void* browseContext_{nullptr};
     void* doneEvent_{nullptr};
 #elif defined(__APPLE__)
     void* serviceRef_{nullptr};
+    void* browseContext_{nullptr};
 #endif
 
     static std::vector<std::pair<std::string, std::string>> parseTxt(const u8* data, u16 length) noexcept;

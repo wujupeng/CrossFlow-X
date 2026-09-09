@@ -44,10 +44,14 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
     port_ = port;
     currentTxt_ = txtRecord;
 
-    RegisterContext ctx;
-    ctx.doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    if (!ctx.doneEvent) return ErrorCode::DiscMdnsUnavailable;
-    doneEvent_ = ctx.doneEvent;
+    auto* ctx = new RegisterContext{};
+    ctx->doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ctx->doneEvent) {
+        delete ctx;
+        return ErrorCode::DiscMdnsUnavailable;
+    }
+    doneEvent_ = ctx->doneEvent;
+    registerContext_ = ctx;
 
     std::vector<std::wstring> wKeys, wValues;
     std::vector<PCWSTR> keyPtrs, valPtrs;
@@ -71,7 +75,9 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
         keyPtrs.data(), valPtrs.data());
 
     if (!instance) {
-        CloseHandle(ctx.doneEvent);
+        CloseHandle(ctx->doneEvent);
+        delete ctx;
+        registerContext_ = nullptr;
         doneEvent_ = nullptr;
         return ErrorCode::DiscMdnsUnavailable;
     }
@@ -81,32 +87,38 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
     request.InterfaceIndex = 0;
     request.pServiceInstance = instance;
     request.pRegisterCompletionCallback = registerCompleteCallback;
-    request.pQueryContext = &ctx;
+    request.pQueryContext = ctx;
     request.hCredentials = nullptr;
     request.unicastEnabled = FALSE;
 
-    DNS_SERVICE_CANCEL cancel{};
-    PDNS_SERVICE_CANCEL pCancel = &cancel;
-    DWORD result = DnsServiceRegister(&request, pCancel);
+    auto* cancel = new DNS_SERVICE_CANCEL{};
+    DWORD result = DnsServiceRegister(&request, cancel);
     if (result != ERROR_SUCCESS && result != DNS_REQUEST_PENDING) {
         DnsServiceFreeInstance(instance);
-        CloseHandle(ctx.doneEvent);
+        CloseHandle(ctx->doneEvent);
+        delete ctx;
+        delete cancel;
+        registerContext_ = nullptr;
         doneEvent_ = nullptr;
         return ErrorCode::DiscMdnsUnavailable;
     }
 
-    DWORD waitResult = WaitForSingleObject(ctx.doneEvent, 5000);
-    if (waitResult != WAIT_OBJECT_0 || ctx.status != ERROR_SUCCESS) {
-        DnsServiceRegisterCancel(pCancel);
+    DWORD waitResult = WaitForSingleObject(ctx->doneEvent, 5000);
+    if (waitResult != WAIT_OBJECT_0 || ctx->status != ERROR_SUCCESS) {
+        DnsServiceRegisterCancel(cancel);
         DnsServiceFreeInstance(instance);
-        CloseHandle(ctx.doneEvent);
+        CloseHandle(ctx->doneEvent);
+        delete ctx;
+        delete cancel;
+        registerContext_ = nullptr;
         doneEvent_ = nullptr;
         return ErrorCode::DiscMdnsUnavailable;
     }
 
-    registerCancel_ = pCancel;
+    registerCancel_ = cancel;
     txtRecordData_ = instance;
     running_ = true;
+    lastRefreshTime_ = std::chrono::steady_clock::now();
     return std::nullopt;
 }
 
@@ -115,6 +127,7 @@ std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
 
     if (registerCancel_) {
         DnsServiceRegisterCancel(static_cast<PDNS_SERVICE_CANCEL>(registerCancel_));
+        delete static_cast<PDNS_SERVICE_CANCEL>(registerCancel_);
         registerCancel_ = nullptr;
     }
 
@@ -128,6 +141,11 @@ std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
         doneEvent_ = nullptr;
     }
 
+    if (registerContext_) {
+        delete static_cast<RegisterContext*>(registerContext_);
+        registerContext_ = nullptr;
+    }
+
     running_ = false;
     return std::nullopt;
 }
@@ -135,8 +153,23 @@ std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
 std::optional<ErrorCode> MdnsAnnouncer::updateTxt(
     const std::vector<std::pair<std::string, std::string>>& txtRecord) noexcept {
     if (!running_) return ErrorCode::DiscAnnounceLost;
-    currentTxt_ = txtRecord;
-    return stop();
+    auto savedService = serviceName_;
+    auto savedPort = port_;
+    stop();
+    return start(savedService, savedPort, txtRecord);
+}
+
+std::optional<ErrorCode> MdnsAnnouncer::refresh() noexcept {
+    if (!running_) return std::nullopt;
+    auto savedService = serviceName_;
+    auto savedPort = port_;
+    auto savedTxt = currentTxt_;
+    stop();
+    auto err = start(savedService, savedPort, savedTxt);
+    if (!err) {
+        lastRefreshTime_ = std::chrono::steady_clock::now();
+    }
+    return err;
 }
 
 bool MdnsAnnouncer::isRunning() const noexcept {
@@ -204,6 +237,7 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
 
     serviceRef_ = ref;
     running_ = true;
+    lastRefreshTime_ = std::chrono::steady_clock::now();
     return std::nullopt;
 }
 
@@ -222,8 +256,23 @@ std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
 std::optional<ErrorCode> MdnsAnnouncer::updateTxt(
     const std::vector<std::pair<std::string, std::string>>& txtRecord) noexcept {
     if (!running_) return ErrorCode::DiscAnnounceLost;
-    currentTxt_ = txtRecord;
-    return stop();
+    auto savedService = serviceName_;
+    auto savedPort = port_;
+    stop();
+    return start(savedService, savedPort, txtRecord);
+}
+
+std::optional<ErrorCode> MdnsAnnouncer::refresh() noexcept {
+    if (!running_) return std::nullopt;
+    auto savedService = serviceName_;
+    auto savedPort = port_;
+    auto savedTxt = currentTxt_;
+    stop();
+    auto err = start(savedService, savedPort, savedTxt);
+    if (!err) {
+        lastRefreshTime_ = std::chrono::steady_clock::now();
+    }
+    return err;
 }
 
 bool MdnsAnnouncer::isRunning() const noexcept {
@@ -266,6 +315,10 @@ std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
 
 std::optional<ErrorCode> MdnsAnnouncer::updateTxt(
     const std::vector<std::pair<std::string, std::string>>&) noexcept {
+    return ErrorCode::DiscMdnsUnavailable;
+}
+
+std::optional<ErrorCode> MdnsAnnouncer::refresh() noexcept {
     return ErrorCode::DiscMdnsUnavailable;
 }
 

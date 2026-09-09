@@ -19,6 +19,18 @@ std::optional<ErrorCode> DiscoveryService::tryUdpFallback(const DiscoveryDigest&
     return std::nullopt;
 }
 
+std::optional<ErrorCode> DiscoveryService::tryManualFallback() noexcept {
+    if (manualFallback_.configuredEndpoints().empty()) return ErrorCode::DiscMdnsUnavailable;
+    auto err = manualFallback_.start();
+    if (err) return err;
+    transport_ = DiscoveryTransport::ManualConfig;
+    return std::nullopt;
+}
+
+void DiscoveryService::setManualConfigEndpoints(const std::vector<ManualEndpoint>& endpoints) noexcept {
+    manualFallback_.loadFromList(endpoints);
+}
+
 std::optional<ErrorCode> DiscoveryService::startAnnouncing(const DiscoveryDigest& digest) noexcept {
     if (digest.nodeId.isNull()) return ErrorCode::SessNodeidForge;
     currentDigest_ = digest;
@@ -35,6 +47,12 @@ std::optional<ErrorCode> DiscoveryService::startAnnouncing(const DiscoveryDigest
         return std::nullopt;
     }
 
+    auto manualErr = tryManualFallback();
+    if (!manualErr) {
+        announcing_ = true;
+        return std::nullopt;
+    }
+
     return ErrorCode::DiscMdnsUnavailable;
 }
 
@@ -43,6 +61,8 @@ std::optional<ErrorCode> DiscoveryService::stopAnnouncing() noexcept {
         mdnsAnnouncer_.stop();
     } else if (transport_ == DiscoveryTransport::UdpBroadcast) {
         udpFallback_.stop();
+    } else if (transport_ == DiscoveryTransport::ManualConfig) {
+        manualFallback_.stop();
     }
     announcing_ = false;
     currentDigest_.reset();
@@ -89,12 +109,30 @@ std::optional<ErrorCode> DiscoveryService::startListening() noexcept {
         return std::nullopt;
     }
 
+    if (!manualFallback_.configuredEndpoints().empty()) {
+        manualFallback_.start();
+        for (const auto& ep : manualFallback_.configuredEndpoints()) {
+            DiscoveryRecord record;
+            record.nodeId = ep.nodeId;
+            record.lastSeenAt = static_cast<u64>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count());
+            if (!record.nodeId.isNull()) {
+                table_.upsert(record);
+            }
+        }
+        transport_ = DiscoveryTransport::ManualConfig;
+    }
+
     listening_ = true;
     return std::nullopt;
 }
 
 std::optional<ErrorCode> DiscoveryService::stopListening() noexcept {
     mdnsListener_.stop();
+    if (transport_ == DiscoveryTransport::ManualConfig) {
+        manualFallback_.stop();
+    }
     listening_ = false;
     return std::nullopt;
 }

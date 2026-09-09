@@ -12,6 +12,7 @@
 #include "s07_discovery/mdns_announcer.hpp"
 #include "s07_discovery/mdns_listener.hpp"
 #include "s07_discovery/mdns.hpp"
+#include "s07_discovery/manual_config_fallback.hpp"
 
 namespace cfx {
 
@@ -46,6 +47,8 @@ public:
 
     DiscoveryTransport activeTransport() const noexcept { return transport_; }
 
+    void setManualConfigEndpoints(const std::vector<ManualEndpoint>& endpoints) noexcept;
+
 private:
     DiscoveryTable table_;
     std::optional<DiscoveryDigest> currentDigest_;
@@ -55,10 +58,12 @@ private:
     MdnsAnnouncer mdnsAnnouncer_;
     MdnsListener mdnsListener_;
     LanBroadcastFallback udpFallback_;
+    ManualConfigFallback manualFallback_;
     DiscoveryTransport transport_{DiscoveryTransport::None};
 
     std::optional<ErrorCode> tryMdnsAnnounce(const DiscoveryDigest& digest) noexcept;
     std::optional<ErrorCode> tryUdpFallback(const DiscoveryDigest& digest) noexcept;
+    std::optional<ErrorCode> tryManualFallback() noexcept;
 };
 
 }  // namespace cfx

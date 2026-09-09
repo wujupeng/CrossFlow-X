@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -26,6 +27,9 @@ public:
     std::optional<ErrorCode> updateTxt(const std::vector<std::pair<std::string, std::string>>& txtRecord) noexcept override;
     bool isRunning() const noexcept override;
 
+    std::optional<ErrorCode> refresh() noexcept;
+    std::chrono::steady_clock::time_point lastRefreshTime() const noexcept { return lastRefreshTime_; }
+
     static constexpr const char* kServiceType = "_crossflow-x._tcp";
 
 private:
@@ -33,9 +37,11 @@ private:
     std::string serviceName_;
     u16 port_{0};
     std::vector<std::pair<std::string, std::string>> currentTxt_;
+    std::chrono::steady_clock::time_point lastRefreshTime_{};
 
 #ifdef _WIN32
     void* registerCancel_{nullptr};
+    void* registerContext_{nullptr};
     void* doneEvent_{nullptr};
     void* txtRecordData_{nullptr};
 #elif defined(__APPLE__)

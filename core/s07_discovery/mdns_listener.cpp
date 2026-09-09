@@ -22,27 +22,31 @@ void WINAPI browseCompleteCallback(DWORD status, PVOID pContext, PDNS_RECORD pRe
     auto* ctx = static_cast<BrowseContext*>(pContext);
     if (!ctx || status != ERROR_SUCCESS) return;
 
+    std::string serviceName;
+    std::string host;
+    u16 port = 0;
+    std::vector<std::pair<std::string, std::string>> txt;
+
     for (PDNS_RECORDA rec = reinterpret_cast<PDNS_RECORDA>(pRecord); rec; rec = rec->pNext) {
-        if (rec->wType != DNS_TYPE_TEXT) continue;
-
-        std::string serviceName;
-        if (rec->pName) {
-            serviceName = rec->pName;
-        }
-
-        std::vector<std::pair<std::string, std::string>> txt;
-        auto& txtData = rec->Data.TXT;
-        for (DWORD i = 0; i < txtData.dwStringCount; ++i) {
-            std::string entry = txtData.pStringArray[i];
-            auto eq = entry.find('=');
-            if (eq != std::string::npos) {
-                txt.emplace_back(entry.substr(0, eq), entry.substr(eq + 1));
+        if (rec->wType == DNS_TYPE_SRV) {
+            if (rec->pName) serviceName = rec->pName;
+            if (rec->Data.SRV.pNameTarget) host = rec->Data.SRV.pNameTarget;
+            port = rec->Data.SRV.wPort;
+        } else if (rec->wType == DNS_TYPE_TEXT) {
+            if (rec->pName && serviceName.empty()) serviceName = rec->pName;
+            auto& txtData = rec->Data.TXT;
+            for (DWORD i = 0; i < txtData.dwStringCount; ++i) {
+                std::string entry = txtData.pStringArray[i];
+                auto eq = entry.find('=');
+                if (eq != std::string::npos) {
+                    txt.emplace_back(entry.substr(0, eq), entry.substr(eq + 1));
+                }
             }
         }
+    }
 
-        if (ctx->callback) {
-            ctx->callback(serviceName, "", 0, txt);
-        }
+    if (ctx->callback) {
+        ctx->callback(serviceName, host, port, txt);
     }
 }
 
@@ -60,6 +64,7 @@ std::optional<ErrorCode> MdnsListener::start(const std::string& serviceType) noe
 
     auto* ctx = new BrowseContext{};
     ctx->callback = callback_;
+    browseContext_ = ctx;
 
     DNS_SERVICE_BROWSE_REQUEST request{};
     request.Version = DNS_QUERY_REQUEST_VERSION1;
@@ -68,15 +73,16 @@ std::optional<ErrorCode> MdnsListener::start(const std::string& serviceType) noe
     request.pBrowseCallback = browseCompleteCallback;
     request.pQueryContext = ctx;
 
-    DNS_SERVICE_CANCEL cancel{};
-    PDNS_SERVICE_CANCEL pCancel = &cancel;
-    DWORD result = DnsServiceBrowse(&request, pCancel);
+    auto* cancel = new DNS_SERVICE_CANCEL{};
+    DWORD result = DnsServiceBrowse(&request, cancel);
     if (result != ERROR_SUCCESS && result != DNS_REQUEST_PENDING) {
         delete ctx;
+        delete cancel;
+        browseContext_ = nullptr;
         return ErrorCode::DiscMdnsUnavailable;
     }
 
-    browseCancel_ = pCancel;
+    browseCancel_ = cancel;
     running_ = true;
     return std::nullopt;
 }
@@ -86,7 +92,13 @@ std::optional<ErrorCode> MdnsListener::stop() noexcept {
 
     if (browseCancel_) {
         DnsServiceBrowseCancel(static_cast<PDNS_SERVICE_CANCEL>(browseCancel_));
+        delete static_cast<PDNS_SERVICE_CANCEL>(browseCancel_);
         browseCancel_ = nullptr;
+    }
+
+    if (browseContext_) {
+        delete static_cast<BrowseContext*>(browseContext_);
+        browseContext_ = nullptr;
     }
 
     running_ = false;
@@ -133,12 +145,42 @@ struct BrowseContext {
     MdnsListener::DiscoveryCallback callback;
 };
 
-void DNSSD_API browseCallback(DNSServiceRef, DNSServiceFlags, uint32_t, DNSServiceErrorType,
+struct ResolveContext {
+    MdnsListener::DiscoveryCallback callback;
+    std::string serviceName;
+};
+
+void DNSSD_API resolveCallback(DNSServiceRef, DNSServiceFlags, uint32_t, DNSServiceErrorType errorCode,
+                                const char*, const char* hosttarget, uint16_t port,
+                                uint16_t txtLen, const unsigned char* txtRecord, void* context) {
+    auto* ctx = static_cast<ResolveContext*>(context);
+    if (!ctx || !ctx->callback || errorCode != kDNSServiceErr_NoError) return;
+
+    auto txt = MdnsListener::parseTxt(txtRecord, txtLen);
+    u16 networkPort = ntohs(port);
+    ctx->callback(ctx->serviceName, hosttarget ? hosttarget : "", networkPort, txt);
+}
+
+void DNSSD_API browseCallback(DNSServiceRef, DNSServiceFlags, uint32_t interfaceIndex, DNSServiceErrorType errorCode,
                               const char* serviceName, const char* regtype,
                               const char* domain, void* context) {
     auto* ctx = static_cast<BrowseContext*>(context);
-    if (!ctx || !ctx->callback) return;
-    ctx->callback(serviceName ? serviceName : "", domain ? domain : "", 0, {});
+    if (!ctx || !ctx->callback || errorCode != kDNSServiceErr_NoError || !serviceName) return;
+
+    auto* resolveCtx = new ResolveContext{};
+    resolveCtx->callback = ctx->callback;
+    resolveCtx->serviceName = serviceName;
+
+    DNSServiceRef resolveRef = nullptr;
+    DNSServiceErrorType err = DNSServiceResolve(
+        &resolveRef, 0, interfaceIndex, serviceName, regtype, domain,
+        resolveCallback, resolveCtx);
+
+    if (err == kDNSServiceErr_NoError) {
+        DNSServiceProcessResult(resolveRef);
+        DNSServiceRefDeallocate(resolveRef);
+    }
+    delete resolveCtx;
 }
 
 }
@@ -155,6 +197,7 @@ std::optional<ErrorCode> MdnsListener::start(const std::string& serviceType) noe
 
     auto* ctx = new BrowseContext{};
     ctx->callback = callback_;
+    browseContext_ = ctx;
 
     DNSServiceRef ref = nullptr;
     DNSServiceErrorType err = DNSServiceBrowse(
@@ -163,6 +206,7 @@ std::optional<ErrorCode> MdnsListener::start(const std::string& serviceType) noe
 
     if (err != kDNSServiceErr_NoError) {
         delete ctx;
+        browseContext_ = nullptr;
         return ErrorCode::DiscMdnsUnavailable;
     }
 
@@ -177,6 +221,11 @@ std::optional<ErrorCode> MdnsListener::stop() noexcept {
     if (serviceRef_) {
         DNSServiceRefDeallocate(static_cast<DNSServiceRef>(serviceRef_));
         serviceRef_ = nullptr;
+    }
+
+    if (browseContext_) {
+        delete static_cast<BrowseContext*>(browseContext_);
+        browseContext_ = nullptr;
     }
 
     running_ = false;

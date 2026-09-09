@@ -85,6 +85,12 @@ std::optional<ErrorCode> NodeIdentityManager::persist() const noexcept {
     if (!ofs) return ErrorCode::SessPersistCorrupt;
     ofs << identity_->nodeId.high << ' ' << identity_->nodeId.low << '\n';
     ofs << identity_->sessionEpoch.value << '\n';
+    if (identity_->topologyMembership.has_value()) {
+        const auto& tm = identity_->topologyMembership.value();
+        ofs << 1 << ' ' << tm.topologyId << ' ' << tm.segmentIndex << '\n';
+    } else {
+        ofs << 0 << '\n';
+    }
     return std::nullopt;
 }
 
@@ -96,6 +102,8 @@ std::optional<ErrorCode> NodeIdentityManager::load() noexcept {
     if (!(ifs >> nid.high >> nid.low)) return ErrorCode::SessPersistCorrupt;
     u64 epochVal{};
     if (!(ifs >> epochVal)) return ErrorCode::SessPersistCorrupt;
+    int hasTopology = 0;
+    if (!(ifs >> hasTopology)) return ErrorCode::SessPersistCorrupt;
     if (nid.isNull()) return ErrorCode::SessNodeidForge;
     if (!identity_) {
         identity_.emplace();
@@ -104,6 +112,17 @@ std::optional<ErrorCode> NodeIdentityManager::load() noexcept {
         identity_->nodeId = nid;
     }
     identity_->sessionEpoch.value = epochVal;
+    if (hasTopology == 1) {
+        std::string topologyId;
+        u32 segmentIndex = 0;
+        if (!(ifs >> topologyId >> segmentIndex)) return ErrorCode::SessPersistCorrupt;
+        TopologyMembership tm;
+        tm.topologyId = topologyId;
+        tm.segmentIndex = segmentIndex;
+        identity_->topologyMembership = tm;
+    } else {
+        identity_->topologyMembership.reset();
+    }
     return std::nullopt;
 }
 
