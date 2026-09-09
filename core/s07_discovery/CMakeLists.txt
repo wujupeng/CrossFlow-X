@@ -13,6 +13,8 @@ add_library(cfx_s07_discovery STATIC
     mdns_announcer.cpp
     mdns_listener.hpp
     mdns_listener.cpp
+    manual_config_fallback.hpp
+    manual_config_fallback.cpp
 )
 
 target_include_directories(cfx_s07_discovery PUBLIC

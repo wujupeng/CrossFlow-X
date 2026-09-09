@@ -31,10 +31,20 @@ public:
     std::optional<ErrorCode> persist() const noexcept override;
     std::optional<ErrorCode> load() noexcept override;
     std::optional<ErrorCode> recoverNodeId() noexcept override;
+    std::optional<ErrorCode> recoverFromCorruption() noexcept;
+
+    struct RecoveryResult {
+        bool nodeIdRegenerated{false};
+        bool epochReset{false};
+        bool topologyCleared{false};
+        std::vector<std::string> logEntries;
+    };
+    const RecoveryResult& lastRecoveryResult() const noexcept { return lastRecovery_; }
 
 private:
     std::optional<NodeIdentity> identity_;
     std::string persistPath_;
+    RecoveryResult lastRecovery_;
 };
 
 }  // namespace cfx

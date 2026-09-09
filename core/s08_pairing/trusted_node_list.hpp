@@ -21,10 +21,18 @@ public:
     std::vector<TrustedNodeEntry> all() const noexcept override;
     std::optional<ErrorCode> persist() const noexcept override;
     std::optional<ErrorCode> load() noexcept override;
+    std::optional<ErrorCode> recoverFromCorruption() noexcept;
+
+    struct RecoveryResult {
+        bool listCleared{false};
+        std::vector<std::string> logEntries;
+    };
+    const RecoveryResult& lastRecoveryResult() const noexcept { return lastRecovery_; }
 
 private:
     std::vector<TrustedNodeEntry> entries_;
     std::string persistPath_;
+    RecoveryResult lastRecovery_;
 };
 
 }  // namespace cfx

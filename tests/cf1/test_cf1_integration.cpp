@@ -33,8 +33,7 @@ struct TestContext {
     TestContext() : fence(NodeId{0,0}) {}
 };
 
-TestContext setupContext() {
-    TestContext ctx;
+void setupContext(TestContext& ctx) {
     NodeIdentity idA{};
     idA.nodeId = NodeId::generate();
     idA.platform = Platform::Mac;
@@ -50,11 +49,10 @@ TestContext setupContext() {
     ctx.identityB.initialize(idB);
 
     ctx.fence = SessionFenceImpl(idA.nodeId);
-    return ctx;
 }
 
 int testEndToEndIdentityEstablishment() {
-    auto ctx = setupContext();
+    TestContext ctx; setupContext(ctx);
     auto idA = ctx.identityA.getIdentity();
     if (!idA) return 1;
 
@@ -86,7 +84,7 @@ int testEndToEndIdentityEstablishment() {
 }
 
 int testTopologyAtomicCommit() {
-    auto ctx = setupContext();
+    TestContext ctx; setupContext(ctx);
     auto idA = ctx.identityA.getIdentity();
     ctx.topology.setLocalNodeId(idA->nodeId);
     auto err = ctx.topology.setTopologyAuthority(idA->nodeId);
@@ -115,7 +113,7 @@ int testTopologyAtomicCommit() {
 }
 
 int testSessionFencing() {
-    auto ctx = setupContext();
+    TestContext ctx; setupContext(ctx);
     auto idA = ctx.identityA.getIdentity();
     auto verdict = ctx.fence.checkIncoming(idA->nodeId, SessionEpoch{1}, ctx.fence.currentInstance());
     if (verdict != SessionFenceVerdict::Accept) return 1;
@@ -128,7 +126,7 @@ int testSessionFencing() {
 }
 
 int testIdentityRecoveryFlow() {
-    auto ctx = setupContext();
+    TestContext ctx; setupContext(ctx);
     auto idA = ctx.identityA.getIdentity();
     auto idB = ctx.identityB.getIdentity();
 
@@ -157,7 +155,7 @@ int testIdentityRecoveryFlow() {
 }
 
 int testCoordinatorOfflineLocks() {
-    auto ctx = setupContext();
+    TestContext ctx; setupContext(ctx);
     auto idA = ctx.identityA.getIdentity();
     ctx.topology.setLocalNodeId(idA->nodeId);
     ctx.topology.setTopologyAuthority(idA->nodeId);
@@ -179,7 +177,7 @@ int testCoordinatorOfflineLocks() {
 }
 
 int testNoSplitBrain() {
-    auto ctx = setupContext();
+    TestContext ctx; setupContext(ctx);
     auto idA = ctx.identityA.getIdentity();
     auto idB = ctx.identityB.getIdentity();
 

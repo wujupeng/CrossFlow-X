@@ -114,4 +114,63 @@ std::optional<ErrorCode> NodeIdentityManager::recoverNodeId() noexcept {
     return std::nullopt;
 }
 
+std::optional<ErrorCode> NodeIdentityManager::recoverFromCorruption() noexcept {
+    lastRecovery_ = {};
+
+    auto loadErr = load();
+    if (loadErr) {
+        lastRecovery_.nodeIdRegenerated = true;
+        lastRecovery_.logEntries.push_back("CFX-W-SESS-PERSIST-CORRUPT: NodeID persistence corrupted, regenerating");
+
+        if (!identity_) {
+            identity_.emplace();
+        }
+        identity_->nodeId = NodeId::generate();
+        identity_->sessionEpoch = SessionEpoch{1};
+        lastRecovery_.epochReset = true;
+        lastRecovery_.logEntries.push_back("CFX-W-SESS-PERSIST-CORRUPT: Session Epoch reset to 1");
+
+        identity_->topologyMembership.reset();
+        lastRecovery_.topologyCleared = true;
+        lastRecovery_.logEntries.push_back("CFX-W-SESS-PERSIST-CORRUPT: Topology Membership cleared");
+
+        auto persistErr = persist();
+        if (persistErr) {
+            lastRecovery_.logEntries.push_back("CFX-E-SESS-UUID-GEN-FAIL: Failed to persist recovered identity");
+        }
+        return std::nullopt;
+    }
+
+    if (!identity_ || identity_->nodeId.isNull()) {
+        lastRecovery_.nodeIdRegenerated = true;
+        lastRecovery_.logEntries.push_back("CFX-W-SESS-PERSIST-CORRUPT: NodeID is null, regenerating");
+
+        if (!identity_) {
+            identity_.emplace();
+        }
+        identity_->nodeId = NodeId::generate();
+    }
+
+    if (identity_->sessionEpoch.value == 0) {
+        lastRecovery_.epochReset = true;
+        identity_->sessionEpoch = SessionEpoch{1};
+        lastRecovery_.logEntries.push_back("CFX-W-SESS-PERSIST-CORRUPT: Session Epoch was 0, reset to 1");
+    }
+
+    if (identity_->topologyMembership.has_value()) {
+        const auto& tm = identity_->topologyMembership.value();
+        if (tm.topologyId.empty()) {
+            lastRecovery_.topologyCleared = true;
+            identity_->topologyMembership.reset();
+            lastRecovery_.logEntries.push_back("CFX-W-SESS-PERSIST-CORRUPT: Topology Membership corrupted (empty topologyId), cleared");
+        }
+    }
+
+    if (lastRecovery_.nodeIdRegenerated || lastRecovery_.epochReset || lastRecovery_.topologyCleared) {
+        persist();
+    }
+
+    return std::nullopt;
+}
+
 }  // namespace cfx

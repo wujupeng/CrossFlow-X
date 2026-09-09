@@ -62,4 +62,34 @@ std::optional<ErrorCode> TrustedNodeList::load() noexcept {
     return std::nullopt;
 }
 
+std::optional<ErrorCode> TrustedNodeList::recoverFromCorruption() noexcept {
+    lastRecovery_ = {};
+
+    auto loadErr = load();
+    if (loadErr) {
+        lastRecovery_.listCleared = true;
+        entries_.clear();
+        lastRecovery_.logEntries.push_back("CFX-W-PAIR-TRUST-CORRUPT: Trusted List persistence corrupted, cleared all entries");
+        return std::nullopt;
+    }
+
+    bool hasCorrupt = false;
+    for (auto it = entries_.begin(); it != entries_.end();) {
+        if (it->nodeId.isNull() || it->pairedAt == 0) {
+            hasCorrupt = true;
+            lastRecovery_.logEntries.push_back("CFX-W-PAIR-TRUST-CORRUPT: Removing corrupt trusted entry (null NodeID or invalid pairedAt)");
+            it = entries_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    if (hasCorrupt) {
+        lastRecovery_.listCleared = true;
+        persist();
+    }
+
+    return std::nullopt;
+}
+
 }  // namespace cfx

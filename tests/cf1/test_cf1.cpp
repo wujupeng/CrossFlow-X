@@ -13,6 +13,7 @@
 #include "s09_membership/topology_version_manager.hpp"
 #include "s07_discovery/mdns_announcer.hpp"
 #include "s07_discovery/mdns_listener.hpp"
+#include "s07_discovery/manual_config_fallback.hpp"
 #include "s07_discovery/discovery_service.hpp"
 #include "s07_discovery/discovery_table.hpp"
 #include "s07_discovery/discovery_service.hpp"
@@ -460,6 +461,105 @@ int testDiscoveryTransportSelection() {
     return 0;
 }
 
+int testManualConfigFallback() {
+    using namespace cfx;
+    ManualConfigFallback fallback;
+    if (fallback.isRunning()) return 1;
+
+    std::vector<ManualEndpoint> endpoints;
+    ManualEndpoint ep1;
+    ep1.host = "192.168.1.100";
+    ep1.port = 5353;
+    ep1.nodeId = NodeId::generate();
+    endpoints.push_back(ep1);
+
+    ManualEndpoint ep2;
+    ep2.host = "192.168.1.101";
+    ep2.port = 5353;
+    ep2.nodeId = NodeId::generate();
+    endpoints.push_back(ep2);
+
+    auto err = fallback.loadFromList(endpoints);
+    if (err) return 1;
+    if (fallback.configuredEndpoints().size() != 2) return 1;
+
+    err = fallback.start();
+    if (err) return 1;
+    if (!fallback.isRunning()) return 1;
+
+    auto found = fallback.findByNodeId(ep1.nodeId);
+    if (!found) return 1;
+    if (found->host != "192.168.1.100") return 1;
+
+    auto notFound = fallback.findByNodeId(NodeId::generate());
+    if (notFound) return 1;
+
+    err = fallback.stop();
+    if (err) return 1;
+    if (fallback.isRunning()) return 1;
+
+    ManualConfigFallback empty;
+    err = empty.start();
+    if (!err) return 1;
+    return 0;
+}
+
+int testRecoverFromCorruption() {
+    using namespace cfx;
+
+    std::remove("test_recovery_corruption.bin");
+    std::remove("test_trusted_recovery.bin");
+    std::remove("nonexistent_file.bin");
+    std::remove("nonexistent_trusted.bin");
+
+    NodeIdentityManager mgr("test_recovery_corruption.bin");
+    NodeIdentity id{};
+    id.nodeId = NodeId::generate();
+    id.platform = Platform::Win;
+    id.capabilities.protocolVersion = 1;
+    id.capabilities.screenBoundary = {1920, 1080, 0, 0};
+    mgr.initialize(id);
+    mgr.incrementEpoch();
+    mgr.persist();
+
+    NodeIdentityManager restored("test_recovery_corruption.bin");
+    auto err = restored.recoverFromCorruption();
+    if (err) return 1;
+    if (restored.getNodeId() != id.nodeId) return 1;
+    if (restored.currentEpoch().value != 1) return 1;
+
+    const auto& result = restored.lastRecoveryResult();
+    if (result.nodeIdRegenerated) return 1;
+    if (result.epochReset) return 1;
+
+    NodeIdentityManager corrupt("nonexistent_file.bin");
+    err = corrupt.recoverFromCorruption();
+    if (err) return 1;
+    if (!corrupt.lastRecoveryResult().nodeIdRegenerated) return 1;
+    if (corrupt.getNodeId().isNull()) return 1;
+
+    TrustedNodeList trusted("test_trusted_recovery.bin");
+    TrustedNodeEntry entry;
+    entry.nodeId = NodeId::generate();
+    entry.pairedAt = 1000;
+    entry.lastSeenEpoch = SessionEpoch{1};
+    trusted.add(entry);
+    trusted.persist();
+
+    TrustedNodeList restoredTrusted("test_trusted_recovery.bin");
+    err = restoredTrusted.recoverFromCorruption();
+    if (err) return 1;
+    if (!restoredTrusted.isTrusted(entry.nodeId)) return 1;
+
+    TrustedNodeList corruptTrusted("nonexistent_trusted.bin");
+    err = corruptTrusted.recoverFromCorruption();
+    if (err) return 1;
+    if (!corruptTrusted.lastRecoveryResult().listCleared) return 1;
+    if (!corruptTrusted.all().empty()) return 1;
+
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -482,6 +582,8 @@ int main() {
     if (testMdnsAnnouncer()) { std::puts("FAIL: testMdnsAnnouncer"); return 1; }
     if (testMdnsListener()) { std::puts("FAIL: testMdnsListener"); return 1; }
     if (testDiscoveryTransportSelection()) { std::puts("FAIL: testDiscoveryTransportSelection"); return 1; }
+    if (testManualConfigFallback()) { std::puts("FAIL: testManualConfigFallback"); return 1; }
+    if (testRecoverFromCorruption()) { std::puts("FAIL: testRecoverFromCorruption"); return 1; }
     std::puts("ALL PASS");
     return 0;
 }
