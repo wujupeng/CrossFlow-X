@@ -6,6 +6,7 @@ add_library(cfx_s09_membership STATIC
     membership_manager.cpp
     topology_version_manager.hpp
     topology_version_manager.cpp
+    topology_change_event_source.hpp
 )
 
 target_include_directories(cfx_s09_membership PUBLIC

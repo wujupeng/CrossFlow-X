@@ -68,8 +68,10 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
     DWORD hostLen = 256;
     GetComputerNameW(hostName, &hostLen);
 
+    std::wstring wServiceName(serviceName.begin(), serviceName.end());
+
     PDNS_SERVICE_INSTANCE instance = DnsServiceConstructInstance(
-        L"CrossFlow-X",
+        wServiceName.c_str(),
         hostName,
         nullptr, nullptr,
         port, 0, 0,
@@ -130,6 +132,8 @@ std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
     if (!running_) return std::nullopt;
 
     stopAutoRefresh();
+    unsubscribeFromNetworkChanges();
+    unsubscribeFromTopologyChanges();
 
     if (registerCancel_) {
         DnsServiceRegisterCancel(static_cast<PDNS_SERVICE_CANCEL>(registerCancel_));
@@ -219,6 +223,48 @@ void MdnsAnnouncer::stopAutoRefresh() noexcept {
     }
 }
 
+void MdnsAnnouncer::subscribeToNetworkChanges(INetworkChangeEventSource& source) noexcept {
+    if (subscribedToNetwork_.load()) return;
+    networkSource_ = &source;
+    source.setCallback([this](const NetworkChangeEvent&) {
+        if (running_ && subscribedToNetwork_.load()) {
+            networkChangeRepublishCount_.fetch_add(1, std::memory_order_relaxed);
+            republish();
+        }
+    });
+    subscribedToNetwork_.store(true);
+}
+
+void MdnsAnnouncer::unsubscribeFromNetworkChanges() noexcept {
+    if (!subscribedToNetwork_.load()) return;
+    if (networkSource_) {
+        networkSource_->setCallback(nullptr);
+        networkSource_ = nullptr;
+    }
+    subscribedToNetwork_.store(false);
+}
+
+void MdnsAnnouncer::subscribeToTopologyChanges(ITopologyChangeEventSource& source) noexcept {
+    if (subscribedToTopology_.load()) return;
+    topologySource_ = &source;
+    source.setCallback([this](const TopologyChangeEvent&) {
+        if (running_ && subscribedToTopology_.load()) {
+            topologyChangeRepublishCount_.fetch_add(1, std::memory_order_relaxed);
+            republish();
+        }
+    });
+    subscribedToTopology_.store(true);
+}
+
+void MdnsAnnouncer::unsubscribeFromTopologyChanges() noexcept {
+    if (!subscribedToTopology_.load()) return;
+    if (topologySource_) {
+        topologySource_->setCallback(nullptr);
+        topologySource_ = nullptr;
+    }
+    subscribedToTopology_.store(false);
+}
+
 }
 
 #elif defined(__APPLE__)
@@ -279,6 +325,8 @@ std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
     if (!running_) return std::nullopt;
 
     stopAutoRefresh();
+    unsubscribeFromNetworkChanges();
+    unsubscribeFromTopologyChanges();
 
     if (serviceRef_) {
         DNSServiceRefDeallocate(static_cast<DNSServiceRef>(serviceRef_));
@@ -352,6 +400,48 @@ void MdnsAnnouncer::stopAutoRefresh() noexcept {
     }
 }
 
+void MdnsAnnouncer::subscribeToNetworkChanges(INetworkChangeEventSource& source) noexcept {
+    if (subscribedToNetwork_.load()) return;
+    networkSource_ = &source;
+    source.setCallback([this](const NetworkChangeEvent&) {
+        if (running_ && subscribedToNetwork_.load()) {
+            networkChangeRepublishCount_.fetch_add(1, std::memory_order_relaxed);
+            republish();
+        }
+    });
+    subscribedToNetwork_.store(true);
+}
+
+void MdnsAnnouncer::unsubscribeFromNetworkChanges() noexcept {
+    if (!subscribedToNetwork_.load()) return;
+    if (networkSource_) {
+        networkSource_->setCallback(nullptr);
+        networkSource_ = nullptr;
+    }
+    subscribedToNetwork_.store(false);
+}
+
+void MdnsAnnouncer::subscribeToTopologyChanges(ITopologyChangeEventSource& source) noexcept {
+    if (subscribedToTopology_.load()) return;
+    topologySource_ = &source;
+    source.setCallback([this](const TopologyChangeEvent&) {
+        if (running_ && subscribedToTopology_.load()) {
+            topologyChangeRepublishCount_.fetch_add(1, std::memory_order_relaxed);
+            republish();
+        }
+    });
+    subscribedToTopology_.store(true);
+}
+
+void MdnsAnnouncer::unsubscribeFromTopologyChanges() noexcept {
+    if (!subscribedToTopology_.load()) return;
+    if (topologySource_) {
+        topologySource_->setCallback(nullptr);
+        topologySource_ = nullptr;
+    }
+    subscribedToTopology_.store(false);
+}
+
 }
 
 #else
@@ -369,6 +459,9 @@ std::optional<ErrorCode> MdnsAnnouncer::start(
 }
 
 std::optional<ErrorCode> MdnsAnnouncer::stop() noexcept {
+    stopAutoRefresh();
+    unsubscribeFromNetworkChanges();
+    unsubscribeFromTopologyChanges();
     running_ = false;
     return std::nullopt;
 }
@@ -398,6 +491,48 @@ std::optional<ErrorCode> MdnsAnnouncer::republish() noexcept {
 void MdnsAnnouncer::startAutoRefresh(std::chrono::seconds) noexcept {}
 
 void MdnsAnnouncer::stopAutoRefresh() noexcept {}
+
+void MdnsAnnouncer::subscribeToNetworkChanges(INetworkChangeEventSource& source) noexcept {
+    if (subscribedToNetwork_.load()) return;
+    networkSource_ = &source;
+    source.setCallback([this](const NetworkChangeEvent&) {
+        if (running_ && subscribedToNetwork_.load()) {
+            networkChangeRepublishCount_.fetch_add(1, std::memory_order_relaxed);
+            republish();
+        }
+    });
+    subscribedToNetwork_.store(true);
+}
+
+void MdnsAnnouncer::unsubscribeFromNetworkChanges() noexcept {
+    if (!subscribedToNetwork_.load()) return;
+    if (networkSource_) {
+        networkSource_->setCallback(nullptr);
+        networkSource_ = nullptr;
+    }
+    subscribedToNetwork_.store(false);
+}
+
+void MdnsAnnouncer::subscribeToTopologyChanges(ITopologyChangeEventSource& source) noexcept {
+    if (subscribedToTopology_.load()) return;
+    topologySource_ = &source;
+    source.setCallback([this](const TopologyChangeEvent&) {
+        if (running_ && subscribedToTopology_.load()) {
+            topologyChangeRepublishCount_.fetch_add(1, std::memory_order_relaxed);
+            republish();
+        }
+    });
+    subscribedToTopology_.store(true);
+}
+
+void MdnsAnnouncer::unsubscribeFromTopologyChanges() noexcept {
+    if (!subscribedToTopology_.load()) return;
+    if (topologySource_) {
+        topologySource_->setCallback(nullptr);
+        topologySource_ = nullptr;
+    }
+    subscribedToTopology_.store(false);
+}
 
 }
 

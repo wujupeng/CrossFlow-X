@@ -18,9 +18,11 @@
 #include "s07_discovery/discovery_service.hpp"
 #include "s07_discovery/discovery_table.hpp"
 #include "s07_discovery/discovery_service.hpp"
+#include "s07_discovery/network_change_event_source.hpp"
 #include "s08_pairing/registration_manager.hpp"
 #include "s08_pairing/handshake_orchestrator.hpp"
 #include "s06_identity/identity_recovery_manager.hpp"
+#include "s09_membership/topology_change_event_source.hpp"
 
 namespace {
 
@@ -736,6 +738,283 @@ int testDiscoveryManualFallbackIntegration() {
     return 0;
 }
 
+int testNetworkChangeEventSource() {
+    using namespace cfx;
+    NetworkChangeEventSource source;
+    auto err = source.start();
+    if (err) return 1;
+    if (!source.isRunning()) return 1;
+
+    bool callbackCalled = false;
+    NetworkChangeEvent receivedEvent{};
+    source.setCallback([&](const NetworkChangeEvent& evt) {
+        callbackCalled = true;
+        receivedEvent = evt;
+    });
+
+    NetworkChangeEvent testEvent{};
+    testEvent.type = NetworkChangeType::IpAddressAdded;
+    testEvent.interfaceName = "eth0";
+    testEvent.ipAddress = "192.168.1.100";
+    source.simulateNetworkChange(testEvent);
+
+    if (!callbackCalled) return 1;
+    if (receivedEvent.type != NetworkChangeType::IpAddressAdded) return 1;
+    if (receivedEvent.interfaceName != "eth0") return 1;
+    if (receivedEvent.ipAddress != "192.168.1.100") return 1;
+
+    err = source.stop();
+    if (err) return 1;
+    if (source.isRunning()) return 1;
+
+    callbackCalled = false;
+    source.simulateNetworkChange(testEvent);
+    if (callbackCalled) return 1;
+
+    return 0;
+}
+
+int testTopologyChangeEventSource() {
+    using namespace cfx;
+    TopologyChangeEventSource source;
+
+    bool callbackCalled = false;
+    TopologyChangeEvent receivedEvent{};
+    source.setCallback([&](const TopologyChangeEvent& evt) {
+        callbackCalled = true;
+        receivedEvent = evt;
+    });
+
+    TopologyVersion oldVer{};
+    oldVer.value = 1;
+    oldVer.topologyId = "topo-v1";
+
+    TopologyVersion newVer{};
+    newVer.value = 2;
+    newVer.topologyId = "topo-v2";
+
+    NodeId changedBy{};
+    changedBy.high = 100;
+    changedBy.low = 200;
+
+    source.notifyTopologyChanged(oldVer, newVer, changedBy);
+
+    if (!callbackCalled) return 1;
+    if (receivedEvent.oldVersion.value != 1) return 1;
+    if (receivedEvent.newVersion.value != 2) return 1;
+    if (receivedEvent.newVersion.topologyId != "topo-v2") return 1;
+    if (receivedEvent.changedBy.high != 100) return 1;
+
+    return 0;
+}
+
+int testAutoRepublishOnNetworkChange() {
+    using namespace cfx;
+    NetworkChangeEventSource netSource;
+
+    auto netErr = netSource.start();
+    if (netErr) return 1;
+
+    u32 callbackCount = 0;
+    netSource.setCallback([&](const NetworkChangeEvent& evt) {
+        if (evt.type == NetworkChangeType::IpAddressAdded) callbackCount++;
+    });
+
+    NetworkChangeEvent ipChange{};
+    ipChange.type = NetworkChangeType::IpAddressAdded;
+    ipChange.interfaceName = "eth0";
+    ipChange.ipAddress = "10.0.0.5";
+    netSource.simulateNetworkChange(ipChange);
+    if (callbackCount != 1) return 1;
+
+    netSource.simulateNetworkChange(ipChange);
+    if (callbackCount != 2) return 1;
+
+    netSource.setCallback(nullptr);
+    netSource.simulateNetworkChange(ipChange);
+    if (callbackCount != 2) return 1;
+
+    MdnsAnnouncer announcer;
+    std::vector<std::pair<std::string, std::string>> txt;
+    txt.push_back({"node", "test-auto-republish"});
+    txt.push_back({"topo", "topo-1"});
+
+    auto err = announcer.start("test-auto-republish", 5353, txt);
+    if (!err) {
+        announcer.subscribeToNetworkChanges(netSource);
+        u32 countBefore = announcer.networkChangeRepublishCount();
+
+        NetworkChangeEvent ipChange2{};
+        ipChange2.type = NetworkChangeType::IpAddressAdded;
+        ipChange2.interfaceName = "eth1";
+        ipChange2.ipAddress = "10.0.0.6";
+        netSource.simulateNetworkChange(ipChange2);
+
+        u32 countAfter = announcer.networkChangeRepublishCount();
+        if (countAfter <= countBefore) return 1;
+
+        announcer.unsubscribeFromNetworkChanges();
+        u32 countAfterUnsub = announcer.networkChangeRepublishCount();
+        netSource.simulateNetworkChange(ipChange2);
+        if (announcer.networkChangeRepublishCount() != countAfterUnsub) return 1;
+
+        announcer.stop();
+    }
+
+    netSource.stop();
+    return 0;
+}
+
+int testAutoRepublishOnTopologyChange() {
+    using namespace cfx;
+    TopologyChangeEventSource topoSource;
+
+    u32 callbackCount = 0;
+    topoSource.setCallback([&](const TopologyChangeEvent& evt) {
+        if (evt.newVersion.value > evt.oldVersion.value) callbackCount++;
+    });
+
+    TopologyVersion oldVer{};
+    oldVer.value = 1;
+    TopologyVersion newVer{};
+    newVer.value = 2;
+    NodeId changedBy{};
+    changedBy.high = 1;
+    changedBy.low = 2;
+
+    topoSource.notifyTopologyChanged(oldVer, newVer, changedBy);
+    if (callbackCount != 1) return 1;
+
+    topoSource.notifyTopologyChanged(oldVer, newVer, changedBy);
+    if (callbackCount != 2) return 1;
+
+    topoSource.setCallback(nullptr);
+    topoSource.notifyTopologyChanged(oldVer, newVer, changedBy);
+    if (callbackCount != 2) return 1;
+
+    MdnsAnnouncer announcer;
+    std::vector<std::pair<std::string, std::string>> txt;
+    txt.push_back({"node", "test-topo-republish"});
+    txt.push_back({"topo", "topo-1"});
+
+    auto err = announcer.start("test-topo-republish", 5353, txt);
+    if (!err) {
+        announcer.subscribeToTopologyChanges(topoSource);
+        u32 countBefore = announcer.topologyChangeRepublishCount();
+
+        topoSource.notifyTopologyChanged(oldVer, newVer, changedBy);
+
+        u32 countAfter = announcer.topologyChangeRepublishCount();
+        if (countAfter <= countBefore) return 1;
+
+        announcer.unsubscribeFromTopologyChanges();
+        u32 countAfterUnsub = announcer.topologyChangeRepublishCount();
+        topoSource.notifyTopologyChanged(oldVer, newVer, changedBy);
+        if (announcer.topologyChangeRepublishCount() != countAfterUnsub) return 1;
+
+        announcer.stop();
+    }
+
+    return 0;
+}
+
+int testLifecycleUnsubscribeNoUseAfterFree() {
+    using namespace cfx;
+    NetworkChangeEventSource netSource;
+    auto netErr = netSource.start();
+    if (netErr) return 1;
+
+    u32 callbackCount = 0;
+
+    {
+        MdnsAnnouncer announcer;
+        std::vector<std::pair<std::string, std::string>> txt;
+        txt.push_back({"node", "test-lifecycle"});
+        auto err = announcer.start("test-lifecycle", 5353, txt);
+        if (!err) {
+            announcer.subscribeToNetworkChanges(netSource);
+            netSource.setCallback([&](const NetworkChangeEvent&) {
+                callbackCount++;
+            });
+            announcer.unsubscribeFromNetworkChanges();
+            announcer.stop();
+        }
+    }
+
+    NetworkChangeEvent ipChange{};
+    ipChange.type = NetworkChangeType::IpAddressAdded;
+    ipChange.interfaceName = "eth0";
+    ipChange.ipAddress = "10.0.0.99";
+    netSource.simulateNetworkChange(ipChange);
+
+    netSource.stop();
+    return 0;
+}
+
+int testDiscoveryTableDuplicateStaleConflict() {
+    using namespace cfx;
+    DiscoveryTable table;
+
+    DiscoveryRecord record1{};
+    record1.nodeId.high = 1;
+    record1.nodeId.low = 100;
+    record1.platform = Platform::Win;
+    record1.sessionEpoch.value = 5;
+    record1.protocolVersion = 1;
+    record1.topologyId = "topo-A";
+
+    auto [err1, result1] = table.upsertWithResult(record1);
+    if (err1) return 1;
+    if (result1 != DiscoveryUpdateResult::Inserted) return 1;
+
+    auto [err2, result2] = table.upsertWithResult(record1);
+    if (err2) return 1;
+    if (result2 != DiscoveryUpdateResult::DuplicateIgnored) return 1;
+    if (table.duplicateCount() != 1) return 1;
+
+    DiscoveryRecord recordStale{};
+    recordStale.nodeId = record1.nodeId;
+    recordStale.platform = Platform::Win;
+    recordStale.sessionEpoch.value = 3;
+    recordStale.protocolVersion = 1;
+    recordStale.topologyId = "topo-A";
+
+    auto [err3, result3] = table.upsertWithResult(recordStale);
+    if (err3) return 1;
+    if (result3 != DiscoveryUpdateResult::StaleIgnored) return 1;
+    if (table.staleCount() != 1) return 1;
+
+    DiscoveryRecord recordNewer{};
+    recordNewer.nodeId = record1.nodeId;
+    recordNewer.platform = Platform::Mac;
+    recordNewer.sessionEpoch.value = 10;
+    recordNewer.protocolVersion = 1;
+    recordNewer.topologyId = "topo-A";
+
+    auto [err4, result4] = table.upsertWithResult(recordNewer);
+    if (err4) return 1;
+    if (result4 != DiscoveryUpdateResult::Updated) return 1;
+
+    auto found = table.find(record1.nodeId);
+    if (!found) return 1;
+    if (found->sessionEpoch.value != 10) return 1;
+    if (found->platform != Platform::Mac) return 1;
+
+    DiscoveryRecord recordConflict{};
+    recordConflict.nodeId.high = 1;
+    recordConflict.nodeId.low = 100;
+    recordConflict.platform = Platform::Win;
+    recordConflict.sessionEpoch.value = 15;
+    recordConflict.protocolVersion = 1;
+    recordConflict.topologyId = "topo-B";
+
+    auto [err5, result5] = table.upsertWithResult(recordConflict);
+    if (result5 != DiscoveryUpdateResult::TopologyConflict) return 1;
+    if (table.conflictCount() != 1) return 1;
+
+    return 0;
+}
+
 }  // namespace
 
 int main() {
@@ -762,6 +1041,12 @@ int main() {
     if (testManualConfigFallback()) { std::puts("FAIL: testManualConfigFallback"); return 1; }
     if (testRecoverFromCorruption()) { std::puts("FAIL: testRecoverFromCorruption"); return 1; }
     if (testDiscoveryManualFallbackIntegration()) { std::puts("FAIL: testDiscoveryManualFallbackIntegration"); return 1; }
+    if (testNetworkChangeEventSource()) { std::puts("FAIL: testNetworkChangeEventSource"); return 1; }
+    if (testTopologyChangeEventSource()) { std::puts("FAIL: testTopologyChangeEventSource"); return 1; }
+    if (testAutoRepublishOnNetworkChange()) { std::puts("FAIL: testAutoRepublishOnNetworkChange"); return 1; }
+    if (testAutoRepublishOnTopologyChange()) { std::puts("FAIL: testAutoRepublishOnTopologyChange"); return 1; }
+    if (testLifecycleUnsubscribeNoUseAfterFree()) { std::puts("FAIL: testLifecycleUnsubscribeNoUseAfterFree"); return 1; }
+    if (testDiscoveryTableDuplicateStaleConflict()) { std::puts("FAIL: testDiscoveryTableDuplicateStaleConflict"); return 1; }
     std::puts("ALL PASS");
     return 0;
 }

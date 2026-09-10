@@ -15,6 +15,8 @@ add_library(cfx_s07_discovery STATIC
     mdns_listener.cpp
     manual_config_fallback.hpp
     manual_config_fallback.cpp
+    network_change_event_source.hpp
+    network_change_event_source.cpp
 )
 
 target_include_directories(cfx_s07_discovery PUBLIC

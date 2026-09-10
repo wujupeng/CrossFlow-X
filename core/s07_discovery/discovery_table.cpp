@@ -3,19 +3,41 @@
 namespace cfx {
 
 std::optional<ErrorCode> DiscoveryTable::upsert(const DiscoveryRecord& record) noexcept {
-    if (record.nodeId.isNull()) return ErrorCode::SessNodeidForge;
+    auto [err, result] = upsertWithResult(record);
+    return err;
+}
+
+std::pair<std::optional<ErrorCode>, DiscoveryUpdateResult> DiscoveryTable::upsertWithResult(const DiscoveryRecord& record) noexcept {
+    if (record.nodeId.isNull()) return {ErrorCode::SessNodeidForge, DiscoveryUpdateResult::ConflictDetected};
     auto key = nodeKey(record.nodeId);
     auto now = std::chrono::steady_clock::now();
     auto it = entries_.find(key);
     if (it != entries_.end()) {
-        if (it->second.record.topologyId != record.topologyId && !record.topologyId.empty())
-            return ErrorCode::TopoMultipath;
+        const auto& existing = it->second.record;
+        if (existing.sessionEpoch.value > record.sessionEpoch.value) {
+            staleCount_++;
+            return {std::nullopt, DiscoveryUpdateResult::StaleIgnored};
+        }
+        if (existing.sessionEpoch.value == record.sessionEpoch.value &&
+            existing.protocolVersion == record.protocolVersion &&
+            existing.topologyId == record.topologyId) {
+            duplicateCount_++;
+            it->second.lastUpdated = now;
+            return {std::nullopt, DiscoveryUpdateResult::DuplicateIgnored};
+        }
+        if (!record.topologyId.empty() && !existing.topologyId.empty() &&
+            existing.topologyId != record.topologyId) {
+            conflictCount_++;
+            it->second.record = record;
+            it->second.lastUpdated = now;
+            return {ErrorCode::TopoMultipath, DiscoveryUpdateResult::TopologyConflict};
+        }
         it->second.record = record;
         it->second.lastUpdated = now;
-        return std::nullopt;
+        return {std::nullopt, DiscoveryUpdateResult::Updated};
     }
     entries_[key] = {record, now, now};
-    return std::nullopt;
+    return {std::nullopt, DiscoveryUpdateResult::Inserted};
 }
 
 std::optional<ErrorCode> DiscoveryTable::remove(const NodeId& nodeId) noexcept {
@@ -50,6 +72,9 @@ std::vector<DiscoveryRecord> DiscoveryTable::findByTopology(const std::string& t
 
 void DiscoveryTable::clear() noexcept {
     entries_.clear();
+    duplicateCount_ = 0;
+    staleCount_ = 0;
+    conflictCount_ = 0;
 }
 
 std::vector<NodeId> DiscoveryTable::detectConflicts() const noexcept {

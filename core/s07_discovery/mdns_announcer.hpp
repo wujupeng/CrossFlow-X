@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -11,6 +12,8 @@
 #include "common/domain.hpp"
 #include "common/error_code.hpp"
 #include "s07_discovery/mdns.hpp"
+#include "s07_discovery/network_change_event_source.hpp"
+#include "s09_membership/topology_change_event_source.hpp"
 
 namespace cfx {
 
@@ -37,6 +40,14 @@ public:
     void startAutoRefresh(std::chrono::seconds interval = std::chrono::seconds(30)) noexcept;
     void stopAutoRefresh() noexcept;
 
+    void subscribeToNetworkChanges(INetworkChangeEventSource& source) noexcept;
+    void unsubscribeFromNetworkChanges() noexcept;
+    void subscribeToTopologyChanges(ITopologyChangeEventSource& source) noexcept;
+    void unsubscribeFromTopologyChanges() noexcept;
+
+    u32 networkChangeRepublishCount() const noexcept { return networkChangeRepublishCount_.load(); }
+    u32 topologyChangeRepublishCount() const noexcept { return topologyChangeRepublishCount_.load(); }
+
     static constexpr const char* kServiceType = "_crossflow-x._tcp";
 
 private:
@@ -49,6 +60,13 @@ private:
 
     std::thread refreshThread_;
     std::atomic<bool> refreshEnabled_{false};
+
+    std::atomic<bool> subscribedToNetwork_{false};
+    std::atomic<bool> subscribedToTopology_{false};
+    std::atomic<u32> networkChangeRepublishCount_{0};
+    std::atomic<u32> topologyChangeRepublishCount_{0};
+    INetworkChangeEventSource* networkSource_{nullptr};
+    ITopologyChangeEventSource* topologySource_{nullptr};
 
 #ifdef _WIN32
     void* registerCancel_{nullptr};
