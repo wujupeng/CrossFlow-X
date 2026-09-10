@@ -1,14 +1,16 @@
-# CrossFlow-X · CF1 Implementation Evidence Report (v7 — Gap Closure R4)
+# CrossFlow-X · CF1 Implementation Evidence Report (v8 — TASK-014-PHY Preparation)
 
 > **阶段标记**：CF1 — Endpoint Identity & Discovery
-> **报告类型**：G10 Evidence / Freeze 交付物（v7，Gap Closure R4 完成）
+> **报告类型**：G10 Evidence / Freeze 交付物（v8，TASK-014-PHY 测试工具准备完成，物理 evidence 待真机执行）
 > **生成时间**：2026-09-10
 > **对应任务规划**：`tasks.md`（50 任务/10 组，CF1-TASK-001~050，双维度状态模型 + R3 Closure Mapping）
 > **对应实现方案**：`design.md`（v4，FROZEN）
 > **对应需求规格**：`spec.md`（v2，FROZEN）
 > **Git provenance**：
-> - **本报告 commit**：待提交（v7 Gap Closure R4）
+> - **本报告 commit**：待提交（v8 TASK-014-PHY 准备）
+> - **TASK-014-PHY 工具**：`e1dedb1`（物理互操作测试工具 + 环境限制说明）
 > - **R4 Closure Implementation**：`64dd77f`（Gap Closure R4 定点修复 — TASK-013/014）
+> - **v7 Evidence Report**：`627c71c`（Gap Closure R4，TASK-014 overclaim — 测试脚本≠物理evidence）
 > - **v6 Evidence Report**：`cc8f6e1`（Gap Closure R3，CONDITIONAL PASS — 2 个 P0 缺口未闭合）
 > - **R3 Closure Implementation**：`1371e03`（Gap Closure R3 定点修复 — TASK-011/013/014）
 > - **v5 Evidence Report**：`46a010f`（Gap Closure R2，tasks.md NOT ACCEPTED — 单维度状态模型）
@@ -17,24 +19,29 @@
 > - **Phase A baseline**：`2f84632`（Phase A — Native mDNS Transport）
 > - **Phase B+C baseline**：`a019f37`（Phase B+C — Manual Config + Full Recovery）
 > - **Original implementation baseline**：`39d4633`（R1~R7 实现）
-> **裁决请求**：提交大G项目经理进行 CF1 Final Gate Review（第四次）
-> **修正依据**：大G项目经理 Final Gate Review 第三次裁决（v6 CONDITIONAL PASS — TASK-013/014 P0 缺口未闭合，授权 R4）
+> **裁决请求**：提交大G项目经理进行 CF1 Final Gate Review（第五次）
+> **修正依据**：大G项目经理 Final Gate Review 第四次裁决（v7 TASK-014 overclaim — 测试脚本存在 ≠ 物理互操作 Acceptance 已证明）
 
 ---
 
-## 0. Gap Closure R4 说明
+## 0. TASK-014-PHY 说明
 
-本报告为 v6 Evidence Report 的 Gap Closure R4 修正版。v6 被大G项目经理第三次 Final Gate Review 裁决为 CONDITIONAL PASS，原因是 TASK-013 和 TASK-014 两个 P0 Acceptance Criterion 未闭合。大G项目经理授权 CF1 Gap Closure R4，范围仅限 TASK-013 + TASK-014。
+本报告为 v7 Evidence Report 的 TASK-014-PHY 修正版。v7 被大G项目经理第四次 Final Gate Review 裁决为 CF1 Implementation PASS，但 TASK-014 仍为 PARTIAL/OPEN，原因是"测试脚本/流程文档存在"不等于"物理互操作 Acceptance 已证明"。大G项目经理授权 `CF1-TASK-014-PHY` 真机物理互操作验证。
+
+本 v8 如实反映 TASK-014 状态：
+- **Implementation**: COMPLETE（duplicate/stale/conflict 处理 + local round-trip + ≤1s + ≤500ms 全部实现）
+- **Acceptance**: PARTIAL（物理跨平台 mDNS 互操作未验证）
+- **Physical Evidence**: OPEN（需真机环境执行）
+
+当前开发环境为 Windows 单机，Windows DNS-SD API (`DnsServiceRegister`) 在当前环境调用失败。物理跨平台 mDNS 互操作测试需要 macOS + Windows 机器在同一 LAN。测试工具和脚本已准备完成，物理 evidence 待真机环境执行后补齐。
 
 | 修复项 | 描述 | 状态 |
 |--------|------|------|
-| R4-013 | TASK-013: IP/topology change event source + automatic republish + lifecycle unsubscribe + no use-after-free | ✅ |
-| R4-014 | TASK-014: duplicate/stale/conflict 处理 + 物理跨平台 mDNS 互操作测试准备 | ✅ |
-| R3-011 | TASK-011: Topology Membership corruption fixture + round-trip + safety assertion（v6 已完成） | ✅ |
-| R3-013 | TASK-013: Automatic periodic refresh + republish() + ≤500ms initial announce（v6 已完成） | ✅ |
-| R3-014 | TASK-014: Local mDNS round-trip + ≤1s discovery + ≤500ms announce（v6 已完成） | ✅ |
-| GC-R2-01~04 | v5 Gap Closure R2 修复（v5 已完成） | ✅ |
-| R3 保留 | Registration Atomicity = domain-level rollback evidence | ✅ |
+| TASK-014-PHY 工具 | 物理互操作测试工具（announcer + listener CLI + macOS 脚本） | ✅ 已完成 |
+| TASK-014-PHY 执行 | 物理跨平台 mDNS 互操作测试执行 | ❌ 待真机环境 |
+| TASK-014-PHY Evidence | 物理互操作 evidence 收集 | ❌ 待真机环境 |
+| R4-013 | TASK-013: IP/topology change event source + automatic republish（v7 已完成） | ✅ |
+| R4-014 | TASK-014: duplicate/stale/conflict 处理（v7 已完成） | ✅ |
 
 ---
 
@@ -42,9 +49,9 @@
 
 CF1（端点身份与发现）实现历经 9 轮提交（`12a4a24` → `851a1f8` → `31a8399` → `0f518a1` → `39d4633` → `2f84632` → `a019f37` → `5bdc14a` → `1371e03` → `64dd77f`），完成 50 个编码任务中的 49 个（CF1-TASK-050 架构冻结审查为本 Gate Review 本身）。
 
-**实现闭合度（Gap Closure R4 后，逐项评估）**：
-- **49/50 任务 FULLY EVIDENCED**（IMPLEMENTED + TESTED + EVIDENCED 三项均满足）
-- **0/50 任务 PARTIALLY EVIDENCED**
+**实现闭合度（TASK-014-PHY 准备后，逐项评估）**：
+- **48/50 任务 FULLY EVIDENCED**（IMPLEMENTED + TESTED + EVIDENCED 三项均满足）
+- **1/50 任务 PARTIALLY EVIDENCED**（TASK-014 — Implementation COMPLETE，Physical Evidence OPEN）
 - **1/50 任务待 Gate Review**（TASK-050 — 本报告即为该任务交付物）
 
 **测试结果**：9/9 test suites PASS（100%），含 6 个 CF0 测试 + 25 个 CF1 单元测试 + 6 个 CF1 集成测试 + 14 个 CF1 Design Contract 测试
@@ -182,7 +189,7 @@ cc8f6e1 docs(cf1): Evidence Report v6 - Gap Closure R3 (47/50 FULL + 2/50 PARTIA
 |---------|---------|---------|---------|------|------|------|
 | CF1-TASK-012 | IDiscoveryService 接口定义 | `core/s07_discovery/i_discovery_service.hpp` | `testDiscoveryService` | ✅ | ✅ | ✅ |
 | **CF1-TASK-013** | **MdnsAnnouncer mDNS 声明发布** | `mdns_announcer.hpp/cpp` + `network_change_event_source.hpp/cpp` + `topology_change_event_source.hpp` | `testMdnsAnnouncer` + `testDiscoveryTransportSelection` + `testNetworkChangeEventSource` + `testAutoRepublishOnNetworkChange` + `testAutoRepublishOnTopologyChange` + `testLifecycleUnsubscribeNoUseAfterFree` | **✅** | **✅** | **✅** |
-| **CF1-TASK-014** | **MdnsListener + DiscoveryTable** | `mdns_listener.hpp/cpp` + `discovery_service.hpp/cpp` + `discovery_table.hpp/cpp` | `testMdnsListener` + `testDiscoveryTable` + `testDiscoveryService` + `testMdnsRoundTripDiscovery` + `testDiscoveryTableDuplicateStaleConflict` | **✅** | **✅** | **✅** |
+| **CF1-TASK-014** | **MdnsListener + DiscoveryTable** | `mdns_listener.hpp/cpp` + `discovery_service.hpp/cpp` + `discovery_table.hpp/cpp` | `testMdnsListener` + `testDiscoveryTable` + `testDiscoveryService` + `testMdnsRoundTripDiscovery` + `testDiscoveryTableDuplicateStaleConflict` | **✅** | **✅** | **🟡** |
 | CF1-TASK-015 | LAN Broadcast / Manual Config fallback | `udp_broadcast.hpp/cpp` + `manual_config_fallback.hpp/cpp` + `discovery_service.hpp/cpp` | `testDiscoveryService` + `testManualConfigFallback` + `testDiscoveryManualFallbackIntegration` | ✅ | ✅ | ✅ |
 | CF1-TASK-016 | Discovery Digest TXT 记录 | `DiscoveryDigest::toTxtRecord()` | `testDiscoveryDigest` | ✅ | ✅ | ✅ |
 | CF1-TASK-017 | 动态加入/离开 + 冲突检测 | `DiscoveryTable::detectConflicts()` | `testDiscoveryConflict` | ✅ | ✅ | ✅ |
@@ -207,7 +214,7 @@ cc8f6e1 docs(cf1): Evidence Report v6 - Gap Closure R3 (47/50 FULL + 2/50 PARTIA
 
 **结论**：TASK-013 为 ✅ FULL — API 调用、生命周期、updateTxt、自动 periodic refresh、republish()、≤500ms、IP/topology change 自动事件订阅 + 自动 republish + lifecycle unsubscribe + no use-after-free 全部闭合（R4-013）。
 
-#### CF1-TASK-014 Acceptance Criterion 逐项评估（R4-014 后 — 全部闭合）
+#### CF1-TASK-014 Acceptance Criterion 逐项评估（TASK-014-PHY 准备后）
 
 | Criterion | 状态 | 说明 |
 |-----------|------|------|
@@ -221,9 +228,9 @@ cc8f6e1 docs(cf1): Evidence Report v6 - Gap Closure R3 (47/50 FULL + 2/50 PARTIA
 | duplicate 处理 | ✅ | `DiscoveryTable::upsertWithResult` — DuplicateIgnored（R4-014 修复，commit `64dd77f`） |
 | stale 处理 | ✅ | `DiscoveryTable::upsertWithResult` — StaleIgnored（older Epoch）（R4-014 修复，commit `64dd77f`） |
 | conflict 处理 | ✅ | `DiscoveryTable::upsertWithResult` — TopologyConflict（different TopoId）（R4-014 修复，commit `64dd77f`） |
-| 物理跨平台 mDNS 互操作 | ✅ | 测试脚本 + 流程文档已提供（`tests/cf1/physical_mdns_interop/README.md`），物理 evidence 需真机执行 |
+| 物理跨平台 mDNS 互操作 | �<unk> | 测试工具+脚本已准备（commit `e1dedb1`），物理 evidence 待真机执行 |
 
-**结论**：TASK-014 为 ✅ FULL — Browse→Resolve→TXT 链 + local round-trip + ≤1s discovery + ≤500ms announce + duplicate/stale/conflict 处理全部闭合。物理跨平台 mDNS 互操作测试脚本和流程文档已提供，物理 evidence 需在真机环境（macOS + Windows）执行后补齐（R4-014）。
+**结论**：TASK-014 为 🟡 PARTIAL — Implementation COMPLETE（Browse→Resolve→TXT 链 + local round-trip + ≤1s + ≤500ms + duplicate/stale/conflict 全部实现），但 Physical Evidence OPEN（物理跨平台 mDNS 互操作需真机环境执行）。测试工具已准备：`mdns_announcer_tool` + `mdns_listener_tool` + macOS `dns-sd` 脚本。
 
 #### CF1-TASK-015 Gap Closure 说明（GC-R2-03）
 
@@ -331,13 +338,13 @@ Discovery 实现分层
 
 **结论**：CF1 Discovery 层已完整实现 **domain-level 发现语义 + Native mDNS transport（含 auto refresh + republish + local round-trip）+ UDP Broadcast fallback + Manual Config fallback**。Discovery fallback 链完整：mDNS → UDP Broadcast → Manual Config。
 
-### 3.12 矩阵汇总（Gap Closure R4 后，逐项评估）
+### 3.12 矩阵汇总（TASK-014-PHY 准备后，逐项评估）
 
 | 维度 | 数量 | 状态 |
 |------|------|------|
 | 总任务数 | 50 | — |
-| FULLY EVIDENCED（✅✅✅） | 49 | ✅ |
-| PARTIALLY EVIDENCED（含 🟡） | 0 | — |
+| FULLY EVIDENCED（✅✅✅） | 48 | ✅ |
+| PARTIALLY EVIDENCED（含 🟡） | 1（TASK-014） | 🟡 |
 | 待 Gate Review | 1（TASK-050） | ⏳ |
 | 单元测试 | 25 | ALL PASS |
 | 集成测试 | 6 | ALL PASS |
@@ -649,15 +656,22 @@ Discovery 实现分层
 
 ---
 
-## 11. Final Gate Review 请求（第四次）
+## 11. Final Gate Review 请求（第五次）
 
-本 Evidence Report v7 为 CF1-TASK-050 的交付物，经 Gap Closure R4 修正后提交大G项目经理进行 Final Gate Review（第四次）。
+本 Evidence Report v8 为 CF1-TASK-050 的交付物，经 TASK-014-PHY 测试工具准备后提交大G项目经理进行 Final Gate Review（第五次）。
 
-**v6 裁决回顾**：大G项目经理第三次 Final Gate Review 裁决 v6 为 CONDITIONAL PASS，原因是 TASK-013 和 TASK-014 两个 P0 Acceptance Criterion 未闭合。大G项目经理授权 CF1 Gap Closure R4，范围仅限 TASK-013 + TASK-014。v7 执行 R4 Closure Activities，按 Acceptance Criterion 逐项评估，不做自动 FULL 升级。
+**v7 裁决回顾**：大G项目经理第四次 Final Gate Review 裁决 v7 为 CF1 Implementation PASS，但 TASK-014 仍为 PARTIAL/OPEN，原因是"测试脚本存在 ≠ 物理互操作 Acceptance 已证明"。大G项目经理授权 `CF1-TASK-014-PHY` 真机物理互操作验证。
 
-**交付内容（Gap Closure R4 后）**：
-1. ✅ 49/50 任务 FULLY EVIDENCED
-2. ✅ 0/50 任务 PARTIALLY EVIDENCED
+**v8 如实反映状态**：
+- TASK-014 Implementation: COMPLETE
+- TASK-014 Acceptance: PARTIAL（物理跨平台 mDNS 互操作未验证）
+- TASK-014 Physical Evidence: OPEN
+
+**环境限制**：当前开发环境为 Windows 单机，Windows DNS-SD API (`DnsServiceRegister`) 在当前环境调用失败。物理跨平台 mDNS 互操作测试需要 macOS + Windows 机器在同一 LAN。测试工具和脚本已准备完成（commit `e1dedb1`），物理 evidence 待真机环境执行后补齐。
+
+**交付内容（TASK-014-PHY 准备后）**：
+1. ✅ 48/50 任务 FULLY EVIDENCED
+2. 🟡 1/50 任务 PARTIALLY EVIDENCED（TASK-014 — Implementation COMPLETE，Physical Evidence OPEN）
 3. ✅ 9/9 test suites PASS（51 测试用例）
 4. ✅ 7/7 Blocker CLOSED（R3 带 Evidence Qualification）
 5. ✅ 3/3 Safety Invariant HELD（domain-level）
@@ -668,28 +682,17 @@ Discovery 实现分层
 10. ✅ Git working tree clean
 11. ✅ Evidence Scope 明确标注（§10）
 12. ✅ 逐项 Acceptance Criterion 评估（§3 — 不 overclaim）
-13. ✅ Provenance 七层 commit 关系明确（64dd77f / cc8f6e1 / 1371e03 / 46a010f / 5bdc14a / 30f2738 / 2f84632 / a019f37 / 39d4633）
-14. ✅ tasks.md 双维度状态模型 + R3 Closure Mapping（Status Amendment 后）
+13. ✅ 物理互操作测试工具已准备（`mdns_announcer_tool` + `mdns_listener_tool` + macOS 脚本）
 
-**Gap Closure R4 完成确认**：
-- R4-013 ✅ TASK-013: IP/topology change event source + automatic republish + lifecycle unsubscribe + no use-after-free（**升级为 FULL**）
-- R4-014 ✅ TASK-014: duplicate/stale/conflict 处理 + 物理互操作测试脚本（**升级为 FULL**）
+**已知 PARTIAL 缺口**（不掩盖、不包装）：
+- TASK-014（P0）：物理跨平台 mDNS 互操作 evidence 待真机环境执行
 
-**物理跨平台 mDNS 互操作说明**：
-TASK-014 的物理跨平台 mDNS 互操作测试脚本和流程文档已提供（`tests/cf1/physical_mdns_interop/README.md`），包含：
-- macOS announcer → Windows listener 测试步骤
-- Windows announcer → macOS listener 测试步骤
-- Bidirectional + conflict detection 测试步骤
-- Evidence collection 要求
-
-物理 evidence 需在真机环境（macOS + Windows 同一 LAN）执行后补齐。当前开发环境为 Windows 单机，无法执行物理跨平台互操作测试。
-
-**请求裁决**：请大G项目经理审查本 Evidence Report v7，裁决：
+**请求裁决**：请大G项目经理审查本 Evidence Report v8，裁决：
 1. CF1 Implementation 最终状态（**PASS** / **CONDITIONAL PASS** / **FAIL**）
-2. 是否授权物理跨平台 mDNS 互操作测试在真机环境执行后补齐 evidence（非阻塞 CF1 Freeze）
-3. CF1 **FROZEN / CLOSED** 授权
-4. 是否授权进入 **CF2** 阶段
+2. 是否授权在有 macOS + Windows 真机环境时执行物理互操作测试，执行后补齐 evidence 并升级 TASK-014 为 FULL
+3. 是否授权在物理 evidence 补齐前 **CONDITIONAL FREEZE** CF1（允许进入 CF2 但 TASK-014 physical evidence 作为 CF2 交付条件）
+4. 或要求物理 evidence 必须在 CF1 Freeze 前完成（阻塞 CF1 Freeze）
 
 ---
 
-*End of CF1 Implementation Evidence Report v7 (Gap Closure R4)*
+*End of CF1 Implementation Evidence Report v8 (TASK-014-PHY Preparation)*
