@@ -6,7 +6,7 @@
 > **CF0 冻结基线引用**：本阶段所有需求严格遵循 `.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）冻结的全部架构基线，包括 Driverless User-Mode Architecture、C++20 技术栈、Canonical Input Event 规范化隔离、Handoff 六态 FSM（ARMED/PENDING/ACK/ACTIVE/COOLDOWN/RECOVERY）、防抖/冷却/驻留/熔断、Input/Control 双平面隔离、FSM 单线程所有权、捕获回调轻量化（≤1ms）、7 个核心契约、CF0 Architecture Safety Invariant（P1 No Split-Brain / P2 No Void-Owner / P3 Recoverable）、并发模型（≤8 线程）、用户态约束。
 > **CF1 冻结基线引用**：本阶段复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）、Topology Membership、Session Epoch，作为捕获事件的源端标识与拓扑邻居查询依据；不修改 CF1 身份与发现机制。
 > **CF0 接口契约引用**：CF2 实现 CF0 冻结的 `IInputCapture`、`IInputInjector`、`IMonotonicClock`、`IScreenQuery` 四个平台抽象接口（见 `platform/common/platform_ports.hpp`）的 macOS 适配层，不修改接口签名。
-> **文档状态**：DRAFT v1.2（Amendment）→ 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
+> **文档状态**：DRAFT v1.3（Amendment）→ 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
 
 > **Amendment v1.1 变更记录（受控修订，不删除重写）**
 > **修订背景**：大G 项目经理 Requirements Gate 审查裁决 = CONDITIONAL FAIL / REVISION REQUIRED，发现 7 项问题（5 BLOCKER + 1 BLOCKER + 1 REQUIRED）。本次 Amendment 仅修复下列 7 项，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标，不修改 CF0/CF1 Frozen 文档，不进入 Design，不直接 Coding。所有修订保持 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一验证格式。
@@ -28,6 +28,13 @@
 > - **CF2-REQ-R10 (🟠 REQUIRED)**：Queue-full Drop Policy 仍然不是确定性的（R4 写"丢弃最旧或最新"给 Design 留两个分支）。修正：Requirements 冻结唯一 Drop Policy——MouseMove / Wheel（高频、可重采样、无状态副作用）→ **Drop Oldest**（保最新，复用 CF0 §4.2.3 Input Plane 最新优先语义）；Key/Button Press / Release（状态变更事件，丢一侧会粘键 / 状态不一致）→ **不允许丢**，队列满时执行 backpressure safeguard：callback 仍不阻塞（保 R1/R4），该事件经 fallback atomic counter 标记 "press/release sequence gap"，Capture/Input thread 消费时检测 gap → 触发 PressedStateSnapshot 重同步（强制重新 snapshot + 通知 CF0 FSM 校验按下状态一致性），recovery invariant = 按下状态最终一致。涉及 §5.2.1 规则 11。
 > - **CF2-REQ-R11 (🟠 REQUIRED)**：PressedStateSnapshot 的 atomic bitmap 仍需要明确"原子对象尺寸"+ 当前文本给了"std::atomic<Bitmap> 或 SPSC"两个架构分支。修正：Requirements 冻结**唯一 ownership model = 方案 B**（Capture thread 单线程 owns mutable bitmap → SPSC snapshot publication → FSM/injection thread owns immutable snapshot），删除"std::atomic<Bitmap> 或 SPSC"二选一分支。冻结 bitmap 尺寸：KeyCodeBitmap = 固定 256-bit 位图（位宽 = 256，对应 macOS 虚拟键码 0-255，编译期确定）；MouseButtonBitmap = 固定 8-bit 位图（位宽 = 8，对应 MouseButton 枚举基数 ≤ 8，编译期确定）。方案 B 完全符合 CF0 §4.6.2 FSM 单线程所有权 + §2.7.3 SPSC 队列模式，且不依赖 std::atomic<256-bit> 的平台 lock-free 保证（256-bit atomic 在目标平台不一定 lock-free，强行要求会把架构可行性绑死平台特性）。ModifierState 保持 std::atomic<ModifierState>（小位图，CF0 已冻结 is_lock_free，不变）。涉及 §4.6.4、§5.5.1 规则 5、§6.4。
 > **未变更项（v1.2）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、R1-R7 已修复内容全部保持不变。
+
+> **Amendment v1.3 变更记录（受控修订，不删除重写）**
+> **修订背景**：大G 项目经理对 v1.2 的 Requirements Gate 复审裁决 = CONDITIONAL FAIL / REVISION REQUIRED。v1.2 已正确修复 R8/R9/R11，但 R10（Queue-full Drop Policy 对 Key/Button Press/Release）仍然没有形成可证明的闭环。核心问题：v1.2 的 "backpressure safeguard = gap counter++ + PressedStateSnapshot 重同步" 实际上是 "丢事件 + 记录 gap"，而 R11 冻结了 Capture thread owns mutable bitmap，CGEventTap callback 不能修改 bitmap——如果 KeyDown(A) 发生时 SPSC 已满，事件无法 enqueue，Capture thread 根本没收到 KeyDown(A)，bitmap[A] 不知道 A 已按下，所谓 "重同步" 没有可靠的真实状态来源，直接影响安全路径 disconnect → PressedStateSnapshot → releaseAllPressed（snapshot 不知道 A 被按下则无法释放 A，触碰 P2 No Void-Owner / P3 Recoverable）。本次 Amendment 仅修复 R10 + 文档一致性，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标 / R1-R9/R11 已修复内容，不修改 CF0/CF1 Frozen 文档，不进入 Design，不直接 Coding。所有修订保持 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一验证格式。
+> **修订项**：
+> - **CF2-REQ-R10 (🔴 BLOCKER，v1.2 → v1.3 重新修复)**：Queue-full Drop Policy 对 Key/Button Press/Release 仍然没有形成可证明的闭环。修正：**废弃 v1.2 的单通道 + gap counter 模型，冻结双通道模型（方案 A：为状态变更事件建立保留通道）**——CGEventTap callback 按事件类型分发到两个独立无锁 SPSC 队列：SPSC_DATA（MouseMove/Wheel，Drop Oldest）+ SPSC_STATE（Key/Button Press/Release，reserved capacity，必须可靠进入 STATE lane）。SPSC_STATE 具有预留容量（默认 64，按 "单次用户操作 burst 内状态变更事件数上界 + 余量" 预留，人类输入速率有限，正常设计条件下 callback 无需等待即可提交状态事件）。SPSC_STATE 饱和（异常过载）时执行 **确定性安全降级**（非简单 gap++）：callback 设置 stateChannelSaturated + 告警 CFX-E-CAP-STATE-CHANNEL-SATURATED；Capture thread 检测饱和 → **authoritative resynchronization**（修饰键: CGEventSourceFlagsState ground truth + 按键/按钮: bitmap best-effort + FSM 进 RECOVERY），**不依赖 gap counter 神奇恢复**。**PressedState authoritative source 冻结**：CGEvent callback → SPSC_STATE → Capture thread → mutable bitmap → SPSC snapshot publication → FSM/Injection thread，只有 Capture thread 的 bitmap 是权威状态。涉及 §4.6.4、§5.2.1 规则 11、§9.2。
+> - **文档一致性修复（顺手，非 Blocker）**：§5.1.1 规则 2 仍使用 "将 CGEvent 转换为 RawInputEvent 并异步派发"，与 §5.4/§7.1 已更严格定义不一致。修正：§5.1.1 规则 2、§5.1.2、§5.6.2 的流程文字统一为 "CGEventTap callback → minimal extraction → RawInputEvent enqueue → Capture/Input thread → normalization / edge detection / downstream dispatch"。涉及 §5.1.1 规则 2、§5.1.2、§5.6.2。
+> **未变更项（v1.3）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、R1-R9/R11 已修复内容全部保持不变。
 
 ---
 
@@ -261,6 +268,7 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
    - **ModifierState 保持 std::atomic<ModifierState>（不变）**：ModifierState 为小位图（Shift/Ctrl/Option/Cmd 4 bit），CF0 已冻结 `is_lock_free()` static_assert（复用 CF0 §8.2.8 + design §2.7.3），CF2 不改变；
    - **生成延迟**：≤ 1ms（SPSC snapshot publication：Capture thread 拷贝 256+8 bit bitmap 到 snapshot 对象，无锁竞争）；
    - 复用 CF0 §4.6.5 共享状态无锁优先。键盘是有限键码集合，不需要动态 vector。
+   - **PressedState authoritative source 冻结（CF2-REQ-R10 v1.3 新增）**：PressedState 的权威状态来源链路为 **CGEvent callback → SPSC_STATE（state event reliable lane，reserved capacity，详见 §5.2.1 规则 11）→ Capture thread → mutable KeyCodeBitmap / MouseButtonBitmap → SPSC snapshot publication → FSM / Injection thread**。**只有 Capture thread 的 bitmap 是 PressedState 的权威状态**；SPSC_STATE 是状态事件到达 Capture thread 的可靠通道；gap counter（v1.2 已废弃）不能被当成 state recovery 本身。若 SPSC_STATE 饱和导致状态事件无法到达 Capture thread，Requirements 定义的真实可验证 resynchronization source =（修饰键: `CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState)` ground truth）+（按键/按钮: bitmap best-effort + FSM 进 RECOVERY + 用户自然释放），不依赖被丢弃的单个事件，不依赖 gap counter 神奇恢复（详见 §5.2.1 规则 11 drop policy）。
 5. **禁止阻塞捕获回调**：CGEventTap 回调内禁止执行磁盘 I/O、网络等待、锁竞争、sleep、同步日志写入、跨平面调用；回调仅做轻量采集并异步派发（复用 CF0 §4.6.4）。
 
 ---
@@ -277,7 +285,7 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
    a. 验收条件：[macOS 端启动捕获] → [经 CGEventTap 安装用户态 tap，无 kext/驱动/root 特权]
    b. 验收条件：[审查 platform/mac/ 实现] → [仅使用 CGEventTap 等 Core Graphics 用户态 API，无 IOKit kext]
 
-2. **CGEventTap 回调轻量化规则**：CGEventTap 回调必须仅做轻量采集——将 CGEvent 转换为 RawInputEvent 并异步派发到 CF0 处理线程，禁止在回调内执行锁等待、I/O、内存分配、跨平面调用或同步日志写入；回调返回延迟必须 ≤ 1ms。**回调内禁止直接调用 CF0 Handoff FSM、禁止产生越界事件给 FSM、禁止执行 Edge Detection**（CF2-REQ-R1 修订：Edge Detection 是 Input Plane 的捕获后处理，不是 CGEventTap callback 内的 FSM 调用；流程为 CGEventTap callback → 最小字段提取 + Modifier atomic update + RawInputEvent enqueue → Capture/Input thread → Edge Detection → 越界事件经无锁 SPSC 队列递交 CF0 Handoff FSM，复用 CF0 §4.6.4 回调轻量化 + §4.6.2 FSM 单线程所有权 + 契约⑦ CF0-ARCH-CONCURRENCY-002/003）。
+2. **CGEventTap 回调轻量化规则**：CGEventTap 回调必须仅做轻量采集——**CGEventTap callback → minimal extraction（最小字段提取 + Modifier atomic update）→ RawInputEvent enqueue（到无锁 SPSC 队列，详见 §5.2.1 规则 11 双通道）→ Capture/Input thread → normalization / edge detection / downstream dispatch**，禁止在回调内执行锁等待、I/O、内存分配、跨平面调用或同步日志写入；回调返回延迟必须 ≤ 1ms。**回调内禁止直接调用 CF0 Handoff FSM、禁止产生越界事件给 FSM、禁止执行 Edge Detection**（CF2-REQ-R1 修订：Edge Detection 是 Input Plane 的捕获后处理，不是 CGEventTap callback 内的 FSM 调用；流程为 CGEventTap callback → 最小字段提取 + Modifier atomic update + RawInputEvent enqueue → Capture/Input thread → Edge Detection → 越界事件经无锁 SPSC 队列递交 CF0 Handoff FSM，复用 CF0 §4.6.4 回调轻量化 + §4.6.2 FSM 单线程所有权 + 契约⑦ CF0-ARCH-CONCURRENCY-002/003）。
    a. 验收条件：[测量 CGEventTap 回调耗时] → [≤ 1ms，无锁等待/IO/内存分配]
    b. 验收条件：[回调内派发 RawInputEvent] → [异步派发到独立处理线程，回调不阻塞等待处理完成]
    c. 验收条件：[审查回调代码] → [无 FSM 直接调用、无越界事件产生、无 Edge Detection；越界事件由 Capture/Input thread 后处理经 SPSC 队列递交 FSM]
@@ -315,15 +323,17 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
 actor "桌面用户" as U
 participant "macOS 输入子系统" as MacIO
 participant "CGEventTap 回调\n(CF2 捕获)" as Tap
-participant "异步派发" as Disp
+participant "无锁 SPSC 队列\n(双通道, 固定容量)" as Q
+participant "Capture/Input thread\n(CF2 后处理)" as Cap
 participant "CF0 事件规范化" as Norm
 
 U -> MacIO : 物理键鼠操作
 MacIO -> Tap : CGEvent
-Tap -> Tap : 轻换为 RawInputEvent\n(≤100us, 仅类型映射)
-Tap -> Disp : 异步派发 RawInputEvent\n(≤1ms 返回)
-Disp -> Norm : RawInputEvent\n(独立处理线程)
-note over Tap: 回调内无锁等待/IO/重处理
+Tap -> Tap : minimal extraction\n(最小字段提取 + Modifier atomic update\n+ 构造 RawInputEvent, ≤100us)
+Tap -> Q : RawInputEvent enqueue\n(SPSC_DATA / SPSC_STATE, ≤1ms 返回)
+Q -> Cap : 消费 RawInputEvent
+Cap -> Norm : normalization / edge detection\n/ downstream dispatch\n(独立处理线程)
+note over Tap: 回调内无锁等待/IO/重处理\n无 FSM 调用, 无 Edge Detection
 @enduml
 ```
 
@@ -392,20 +402,40 @@ note over Tap: 回调内无锁等待/IO/重处理
 10. **禁止项：禁止转换丢失语义**：CGEvent → RawInputEvent 转换禁止丢失事件语义（类型、按钮、键码、增量、时间戳）；无法映射的字段必须记录告警，不得静默丢弃。
     a. 验收条件：[审查转换路径] → [全部字段映射或告警，无静默丢弃]
 
-11. **RawInputEvent 传递契约（CF2-REQ-R4 新增，CF2-REQ-R10 冻结 Drop Policy）**：CGEventTap callback → Capture/Input thread 的 RawInputEvent 传递必须满足下列契约，复用 CF0 design §2.7.3 无锁 SPSC 队列：
-    - **队列类型**：无锁 SPSC（单生产者单消费者）队列，callback 为唯一生产者，Capture/Input thread 为唯一消费者；
-    - **队列容量**：固定容量（默认 256，复用 CF0 design §2.7.3），编译期确定，禁止动态扩容；
-    - **队列存储**：队列槽位为预分配的固定大小 RawInputEvent（inline variant），enqueue 为无锁原子写，无堆分配；
-    - **enqueue 行为**：callback 仅做 enqueue，不阻塞等待消费者，不调用消费者逻辑；
-    - **drop policy（队列满，CF2-REQ-R10 冻结，确定性单分支）**：队列满时 callback 按事件类型执行下列**唯一冻结** drop policy，**禁止阻塞 callback、禁止等待消费者、禁止动态扩容队列**：
-      - **MouseMove / Wheel 事件（高频、可重采样、无状态副作用）→ Drop Oldest**（丢弃队列中最旧事件，腾出槽位 enqueue 当前事件；保最新，复用 CF0 §4.2.3 Input Plane 最新优先语义）+ 原子计数器 `droppedOldestCount++` + 异步告警标记 CFX-W-CAP-QUEUE-DROP；
-      - **Key/Button Press / Release 事件（状态变更事件，丢一侧会粘键 / 状态不一致）→ 不允许丢**：队列满时执行 **backpressure safeguard**——callback 仍不阻塞（保 R1/R4），该 Press/Release 事件经 fallback `std::atomic<uint64_t> pressReleaseGapCounter` 标记 "press/release sequence gap"（gapCounter++，事件本身丢弃但 gap 已记录），Capture/Input thread 消费时检测 gapCounter > 0 → 触发 **PressedStateSnapshot 重同步**（强制重新 snapshot + 通知 CF0 FSM 校验按下状态一致性），**recovery invariant = 按下状态最终一致**（FSM 收到 gap 通知后以最新 PressedStateSnapshot 为准，不依赖被丢弃的单个 Press/Release 事件）；
-    - **drop policy 可观测**：`droppedOldestCount`（MouseMove/Wheel drop）与 `pressReleaseGapCount`（Press/Release gap）必须可经运行时指标暴露，供运维监控。
-    a. 验收条件：[审查 callback → Capture/Input thread 传递] → [无锁 SPSC 队列，固定容量，callback 仅 enqueue，无堆分配]
-    b. 验收条件：[队列满 + callback enqueue MouseMove/Wheel] → [Drop Oldest + droppedOldestCount++ + 告警标记，callback 不阻塞，保最新]
-    c. 验收条件：[队列满 + callback enqueue Key/Button Press/Release] → [backpressure safeguard：pressReleaseGapCounter++，callback 不阻塞；Capture/Input thread 检测 gap → 触发 PressedStateSnapshot 重同步 + 通知 FSM 校验按下状态一致性，recovery invariant = 按下状态最终一致]
-    d. 验收条件：[运行时查询 droppedOldestCount / pressReleaseGapCount] → [可观测，供运维监控]
-    e. 验收条件：[审查 drop policy] → [唯一冻结单分支，无"最旧或最新"二选一歧义，无 Press/Release 丢弃导致的不可恢复状态不一致]
+11. **RawInputEvent 传递契约（CF2-REQ-R4 新增，CF2-REQ-R10 v1.2 → v1.3 重新修复，双通道 + authoritative resynchronization）**：CGEventTap callback → Capture/Input thread 的 RawInputEvent 传递必须满足下列契约，复用 CF0 design §2.7.3 无锁 SPSC 队列。**v1.3 废弃 v1.2 的单通道 + gap counter 模型**（v1.2 的 `pressReleaseGapCounter` + "PressedStateSnapshot 重同步" 实际是 "丢事件 + 记录 gap"，而 R11 冻结 Capture thread owns mutable bitmap，callback 不能修改 bitmap，被丢弃的状态事件无法反映到 bitmap，gap counter 不提供 state recovery，所谓 "重同步" 没有可靠的真实状态来源），**冻结双通道模型（方案 A：为状态变更事件建立保留通道）**：
+    - **双通道模型概述**：CGEventTap callback 按事件类型将 RawInputEvent 分发到两个独立的无锁 SPSC 队列——SPSC_DATA（高频事件）与 SPSC_STATE（状态变更事件）。两个队列共享同一对生产者/消费者（callback 为唯一生产者，Capture/Input thread 为唯一消费者），不新增线程（遵守 CF0 契约⑦ ≤8 线程 + R1/R4 回调轻量化 + 无堆分配）。
+    - **SPSC_DATA（高频事件通道）**：
+      - **事件类型**：MouseMove / Wheel（高频、可重采样、无状态副作用）；
+      - **队列类型**：无锁 SPSC（单生产者单消费者），callback 为唯一生产者，Capture/Input thread 为唯一消费者；
+      - **队列容量**：固定（默认 256，复用 CF0 design §2.7.3），编译期确定，禁止动态扩容；
+      - **队列存储**：预分配固定大小 RawInputEvent（inline variant），enqueue 为无锁原子写，无堆分配；
+      - **Drop Policy（队列满）**：**Drop Oldest**（丢弃队列中最旧事件，腾出槽位 enqueue 当前事件；保最新，复用 CF0 §4.2.3 Input Plane 最新优先语义）+ 原子计数器 `droppedOldestCount++` + 异步告警标记 CFX-W-CAP-QUEUE-DROP；
+      - **语义**：高频可重采样事件，允许丢，保最新。
+    - **SPSC_STATE（状态变更事件通道，reserved capacity）**：
+      - **事件类型**：Key/Button Press / Release（KeyDown/KeyUp/ButtonDown/ButtonUp，状态变更事件，丢一侧会粘键 / 状态不一致）；
+      - **队列类型**：无锁 SPSC（单生产者单消费者），callback 为唯一生产者，Capture/Input thread 为唯一消费者；
+      - **队列容量**：固定（默认 64，编译期确定），**具有 reserved capacity / 保留槽位**，禁止动态扩容；
+      - **Reserved Capacity 语义**：状态通道容量按 "单次用户操作 burst 内状态变更事件数上界 + 余量" 预留。人类输入速率有限（单次 burst 内 Key/Button Press/Release 事件数远低于 64），Capture thread 消费速率远高于人类输入速率，**正常设计条件下 callback 无需等待即可提交状态事件，SPSC_STATE 不满**；状态通道满表示系统已严重过载（Capture thread 卡死或极慢，超出设计预留），属异常情况；
+      - **队列存储**：预分配固定大小 RawInputEvent（inline variant），enqueue 为无锁原子写，无堆分配；
+      - **Drop Policy（队列满，异常安全降级，CF2-REQ-R10 v1.3 冻结，确定性机制，非简单 gap++）**：状态通道满时 callback 仍不阻塞（保 R1/R4），该状态事件无法 enqueue → 执行下列 **确定性安全降级**：
+        - (a) callback 设置 `stateChannelSaturated = true`（std::atomic<bool>）+ `stateChannelSaturatedCount++`（std::atomic<uint64_t>）+ 异步告警 CFX-E-CAP-STATE-CHANNEL-SATURATED（错误级，非警告级，表示状态事件丢失）；
+        - (b) **不使用 gap counter 假定 snapshot 可神奇恢复**（v1.2 的 `pressReleaseGapCounter` 模型已废弃：R11 冻结 Capture thread owns mutable bitmap，callback 不能修改 bitmap，被丢弃的状态事件无法反映到 bitmap，gap counter 不提供 state recovery）；
+        - (c) **authoritative resynchronization（真实可验证的 resynchronization source，由 Capture thread 执行）**：Capture thread 检测 `stateChannelSaturated == true` → 触发 authoritative resynchronization：
+          - **修饰键**：从 `CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState)` 查询当前真实修饰键状态（macOS Core Graphics 用户态 API，ground truth，不违反 Driverless User-Mode Architecture），以此重建 ModifierState；
+          - **普通按键 / 鼠标按钮**：macOS 无 "查询当前所有按下键" 的用户态 API → 采用 **bitmap best-effort + RECOVERY 降级**：Capture thread 当前 KeyCodeBitmap / MouseButtonBitmap 是 "饱和前最后一次成功消费的一致状态"（由 R11 SPSC snapshot publication 保证无 data race，可能滞后但一致，非被丢弃的单个事件），以此作为 best-effort 释放依据；同时标记 bitmap 为 `stale`（不可信完整），通知 CF0 FSM 进入 RECOVERY 态；
+          - **recovery invariant**：resynchronization 后 ModifierState = macOS HID 层当前真实状态（ground truth）；KeyCodeBitmap / MouseButtonBitmap = best-effort（饱和前一致状态，可能滞后）；FSM 进入 RECOVERY 态后停止捕获，用户物理松手将自然释放残留按下键（真正按下但 bitmap 未记录的键），系统在有限时间内回到满足 P1 ∧ P2 的状态（**P3 Recoverable 可证**：不依赖 gap counter 神奇恢复，不依赖被丢弃的单个事件，不无限卡死，不产生虚假控制权）；
+          - **FSM 通知**：resynchronization 完成后通知 CF0 FSM 校验按下状态一致性（FSM 以最新 PressedStateSnapshot 为准，snapshot 中 modifiers 为 ground truth、keys/buttons 为 best-effort + stale 标记）；
+          - **降级退出**：`stateChannelSaturated` 清除需 Capture thread 完成 resynchronization + SPSC_STATE 通道排空 + FSM 确认 RECOVERY 完成，避免反复降级。
+    - **PressedState authoritative source 冻结（CF2-REQ-R10 v1.3）**：PressedState 的权威状态来源链路为 **CGEvent callback → SPSC_STATE（state event reliable lane，reserved capacity）→ Capture thread → mutable KeyCodeBitmap / MouseButtonBitmap → SPSC snapshot publication → FSM / Injection thread**。**只有 Capture thread 的 bitmap 是 PressedState 的权威状态**；SPSC_STATE 是状态事件到达 Capture thread 的可靠通道；gap counter（v1.2 已废弃）不能被当成 state recovery 本身。若 SPSC_STATE 饱和导致状态事件无法到达 Capture thread，Requirements 定义的真实可验证 resynchronization source =（修饰键: CGEventSourceFlagsState ground truth）+（按键/按钮: bitmap best-effort + FSM 进 RECOVERY + 用户自然释放），不依赖被丢弃的单个事件（详见 §4.6.4 authoritative source 冻结）。
+    - **enqueue 行为**：callback 仅做 enqueue（SPSC_DATA 或 SPSC_STATE），不阻塞等待消费者，不调用消费者逻辑；
+    - **drop policy 可观测**：`droppedOldestCount`（SPSC_DATA drop）、`stateChannelSaturatedCount`（SPSC_STATE 饱和次数）、`stateChannelSaturated`（当前是否饱和）必须可经运行时指标暴露，供运维监控。
+    a. 验收条件：[审查 callback → Capture/Input thread 传递] → [双通道无锁 SPSC：SPSC_DATA（MouseMove/Wheel）+ SPSC_STATE（Key/Button Press/Release），固定容量，callback 仅 enqueue，无堆分配，不新增线程]
+    b. 验收条件：[队列满 + callback enqueue MouseMove/Wheel 到 SPSC_DATA] → [Drop Oldest + droppedOldestCount++ + 告警标记 CFX-W-CAP-QUEUE-DROP，callback 不阻塞，保最新]
+    c. 验收条件：[正常设计条件 + callback enqueue Key/Button Press/Release 到 SPSC_STATE] → [reserved capacity 保证通道不满，状态事件可靠进入 STATE lane，Capture thread 消费后更新 bitmap，bitmap 为 PressedState 权威状态]
+    d. 验收条件：[异常过载 + SPSC_STATE 队列满 + callback enqueue Key/Button Press/Release] → [确定性安全降级：stateChannelSaturated=true + stateChannelSaturatedCount++ + 告警 CFX-E-CAP-STATE-CHANNEL-SATURATED，callback 不阻塞；Capture thread 检测饱和 → authoritative resynchronization（修饰键: CGEventSourceFlagsState ground truth + 按键/按钮: bitmap best-effort + FSM 进 RECOVERY），不依赖 gap counter 神奇恢复，不依赖被丢弃的单个事件]
+    e. 验收条件：[resynchronization 后] → [ModifierState = macOS HID ground truth；KeyCodeBitmap/MouseButtonBitmap = best-effort + stale；FSM 在 RECOVERY 态停止捕获，用户松手后系统回到 P1 ∧ P2，P3 Recoverable 可证，无无限卡死，无虚假控制权]
+    f. 验收条件：[运行时查询 droppedOldestCount / stateChannelSaturatedCount / stateChannelSaturated] → [可观测，供运维监控]
+    g. 验收条件：[审查 drop policy] → [双通道冻结：SPSC_DATA Drop Oldest + SPSC_STATE reserved capacity + 确定性安全降级，无 v1.2 gap counter 神奇恢复，无 "最旧或最新" 二选一歧义，无 Press/Release 丢弃导致的不可恢复状态不一致，PressedState authoritative source 链路可追溯]
 
 ### **5.2.2 交互流程**
 
@@ -753,15 +783,18 @@ Mod -> Fsm : 返回快照(≤1ms)
 ```plantuml
 @startuml
 participant "CF0 FSM Thread" as Fsm
-participant "捕获线程\n(CF2 复用)" as Cap
-participant "CGEventTap 系统回调" as Tap
+participant "Capture/Input thread\n(CF2 复用)" as Cap
+participant "CGEventTap 系统回调线程" as Tap
+participant "无锁 SPSC 队列\n(双通道, 固定容量)" as Q
 participant "注入线程\n(CF2 复用)" as Inj
 participant "CF0 Logger Thread" as Log
 
 Fsm -> Cap : 启用捕获指令(≤50ms)
 Cap -> Tap : CGEventTap 安装
-Tap -> Cap : CGEvent 回调(≤1ms)
-Cap -> Cap : 轻换 RawInputEvent + 异步派发
+Tap -> Tap : minimal extraction\n+ 构造 RawInputEvent(≤100us)
+Tap -> Q : RawInputEvent enqueue\n(SPSC_DATA / SPSC_STATE, ≤1ms 返回)
+Q -> Cap : 消费 RawInputEvent
+Cap -> Cap : normalization / edge detection\n/ downstream dispatch
 Cap -> Log : 异步日志(不阻塞)
 
 Fsm -> Inj : 被控态注入流
@@ -988,6 +1021,16 @@ CF2 在 CF0/CF1 冻结基线之上，新增六个 macOS 输入捕获地基：
 - **Acceptance Test**：[macOS 产生各类型 CGEvent] → [均产出对应 RawInputEvent，语义不丢失]
 - **对应规则**：§5.2.1 规则 2
 
+### CF2-S02-REQ-003：RawInputEvent 双通道传递 + authoritative resynchronization（CF2-REQ-R10 v1.3）
+- **Contract**：CGEventTap callback → Capture/Input thread 的 RawInputEvent 传递必须采用双通道无锁 SPSC 模型：SPSC_DATA（MouseMove/Wheel，Drop Oldest）+ SPSC_STATE（Key/Button Press/Release，reserved capacity 默认 64）。SPSC_STATE 具有预留容量，正常设计条件下 callback 无需等待即可提交状态事件。SPSC_STATE 饱和（异常过载）时执行确定性安全降级：callback 设置 stateChannelSaturated + 告警 CFX-E-CAP-STATE-CHANNEL-SATURATED；Capture thread 检测饱和 → authoritative resynchronization（修饰键: CGEventSourceFlagsState ground truth + 按键/按钮: bitmap best-effort + FSM 进 RECOVERY），不依赖 gap counter 神奇恢复。PressedState authoritative source = CGEvent callback → SPSC_STATE → Capture thread → mutable bitmap → SPSC snapshot publication → FSM/Injection thread，只有 Capture thread 的 bitmap 是权威状态。
+- **Invariant**：双通道无锁 SPSC（SPSC_DATA + SPSC_STATE），固定容量，callback 仅 enqueue 无堆分配，不新增线程；SPSC_DATA 队列满 → Drop Oldest；SPSC_STATE 正常设计条件下不满（reserved capacity）；SPSC_STATE 饱和 → stateChannelSaturated=true + authoritative resynchronization（修饰键 ground truth + 按键/按钮 best-effort + RECOVERY）；PressedState authoritative source 链路完整可追溯；P3 Recoverable 可证（resynchronization 后系统在有限时间内回到 P1 ∧ P2）。
+- **Violation**：使用 v1.2 单通道 + gap counter 模型（gap counter 不提供 state recovery）；或 SPSC_STATE 无 reserved capacity 导致正常条件下状态事件丢失；或 SPSC_STATE 饱和时仅 gap++ 假定 snapshot 可神奇恢复而无真实 resynchronization source；或 callback 修改 bitmap 违反 R11 Capture thread owns mutable bitmap；或 PressedState authoritative source 链路断裂导致 releaseAllPressed 无法正确释放。
+- **Observable Evidence**：双通道队列实现（SPSC_DATA + SPSC_STATE）；运行时指标 droppedOldestCount / stateChannelSaturatedCount / stateChannelSaturated 可观测；饱和时告警 CFX-E-CAP-STATE-CHANNEL-SATURATED；resynchronization 日志含修饰键 ground truth 来源（CGEventSourceFlagsState）+ bitmap stale 标记 + FSM RECOVERY 通知；PressedState authoritative source 链路审查可追溯。
+- **Acceptance Test**：[正常设计条件 + Key/Button Press/Release] → [SPSC_STATE reserved capacity 保证状态事件可靠进入 STATE lane，Capture thread 消费后更新 bitmap，bitmap 为权威状态]
+- **Acceptance Test**：[异常过载 + SPSC_STATE 队列满] → [stateChannelSaturated=true + 告警 CFX-E-CAP-STATE-CHANNEL-SATURATED；Capture thread authoritative resynchronization：修饰键 = CGEventSourceFlagsState ground truth，按键/按钮 = bitmap best-effort + stale，FSM 进 RECOVERY；用户松手后系统回到 P1 ∧ P2，P3 Recoverable 可证]
+- **Acceptance Test**：[审查 PressedState authoritative source 链路] → [CGEvent callback → SPSC_STATE → Capture thread → mutable bitmap → SPSC snapshot → FSM/Injection thread，只有 Capture thread bitmap 是权威状态，无 gap counter 神奇恢复]
+- **对应规则**：§5.2.1 规则 11, §4.6.4
+
 ## **9.3 S03 macOS 用户态输入注入 验证矩阵**
 
 ### CF2-S03-REQ-001：注入仅接受主控端流
@@ -1078,6 +1121,7 @@ CF2 在 CF0/CF1 冻结基线之上，新增六个 macOS 输入捕获地基：
 | CF2-S05-REQ-002（修饰键显式同步） | P1 No Split-Brain | 显式同步防止修饰键状态分裂 |
 | CF2-S06-REQ-001（不新增线程） | P3 Recoverable | 线程数受控保证可恢复 |
 | CF2-S06-REQ-002（路径隔离） | P1 No Split-Brain | 路径隔离防止捕获/注入相互干扰 |
+| CF2-S02-REQ-003（双通道 + authoritative resynchronization，R10 v1.3） | P2 No Void-Owner / P3 Recoverable | SPSC_STATE reserved capacity 保证状态事件可靠到达 Capture thread；饱和时 authoritative resynchronization（修饰键 ground truth + bitmap best-effort + RECOVERY）保证 releaseAllPressed 可正确释放，用户松手后系统回到 P1 ∧ P2，不依赖 gap counter 神奇恢复 |
 
 ---
 
@@ -1085,4 +1129,4 @@ CF2 在 CF0/CF1 冻结基线之上，新增六个 macOS 输入捕获地基：
 > 本规格定义 CF2-S01 ～ CF2-S06 六个 macOS 输入捕获地基，严格遵循 CF0/CF1 冻结的全部架构基线（C++20、Driverless User-Mode、Handoff 六态 FSM、7 契约、Safety Invariant、并发模型 ≤8 线程、CF1 Node Identity），落地"Driverless User-Mode Architecture —— macOS 输入捕获与注入必须完全在用户态完成"第一原则，为后续 CF3 ～ CF11 工程实现阶段奠定 macOS 输入捕获基础。
 > **本次生成（v1）**：macOS 用户态输入捕获（CGEventTap）；CGEvent 规范化适配（平台逻辑隔离）；macOS 用户态输入注入（CGEventPost）；屏幕边界查询与边缘越界检测；修饰键状态追踪（无锁）；捕获线程与生命周期管理；与 CF0/CF1 接口契约对齐；CF0 Safety Invariant 延续；CF2 Requirement Verification Matrix。
 > **保持不变**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Design；不直接 Coding。
-> 待用户审查确认后，本文档状态由 DRAFT v1 转为 FROZEN 并提交 Gate Review。
+> 待用户审查确认后，本文档状态由 DRAFT v1.3 转为 FROZEN 并提交 Gate Review。
