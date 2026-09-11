@@ -6,7 +6,7 @@
 > **CF0 冻结基线引用**：本阶段所有需求严格遵循 `.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）冻结的全部架构基线，包括 Driverless User-Mode Architecture、C++20 技术栈、Canonical Input Event 规范化隔离、Handoff 六态 FSM（ARMED/PENDING/ACK/ACTIVE/COOLDOWN/RECOVERY）、防抖/冷却/驻留/熔断、Input/Control 双平面隔离、FSM 单线程所有权、捕获回调轻量化（≤1ms）、7 个核心契约、CF0 Architecture Safety Invariant（P1 No Split-Brain / P2 No Void-Owner / P3 Recoverable）、并发模型（≤8 线程）、用户态约束。
 > **CF1 冻结基线引用**：本阶段复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）、Topology Membership、Session Epoch，作为捕获事件的源端标识与拓扑邻居查询依据；不修改 CF1 身份与发现机制。
 > **CF0 接口契约引用**：CF2 实现 CF0 冻结的 `IInputCapture`、`IInputInjector`、`IMonotonicClock`、`IScreenQuery` 四个平台抽象接口（见 `platform/common/platform_ports.hpp`）的 macOS 适配层，不修改接口签名。
-> **文档状态**：DRAFT v1.1（Amendment）→ 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
+> **文档状态**：DRAFT v1.2（Amendment）→ 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
 
 > **Amendment v1.1 变更记录（受控修订，不删除重写）**
 > **修订背景**：大G 项目经理 Requirements Gate 审查裁决 = CONDITIONAL FAIL / REVISION REQUIRED，发现 7 项问题（5 BLOCKER + 1 BLOCKER + 1 REQUIRED）。本次 Amendment 仅修复下列 7 项，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标，不修改 CF0/CF1 Frozen 文档，不进入 Design，不直接 Coding。所有修订保持 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一验证格式。
@@ -18,7 +18,16 @@
 > - **CF2-REQ-R5 (🔴 BLOCKER)**：PressedStateSnapshot 并发 ownership 不完整。修正：定义明确 snapshot ownership model — fixed-size pressed-key bitmap + fixed-size pressed-button bitmap + atomic snapshot / SPSC transfer；键盘是有限键码集合，不使用动态 vector。涉及 §4.6.4、§5.5.1 规则 5、§6.4。
 > - **CF2-REQ-R6 (🔴 BLOCKER)**：ScreenBoundary 与 CF0 Coordinate Space 对齐不明确。修正：CF2 是"CF0 Logical Screen Space 的 macOS 实现"，查询 macOS native screen geometry 并归一化为 CF0 Frozen 的 ScreenBoundary 语义（origin=(0,0) 左上角，CF0 §5.4.1.4 + 契约⑤）；macOS native 坐标系差异（NSScreen 左下角原点 / CGDisplay 左上角原点 / 多显示器排列）在 platform/mac/ 适配层消化，不让 CF2 发明坐标语义。涉及 §5.4.1 规则 2、§6.5。
 > - **CF2-REQ-R7 (🟠 REQUIRED)**：releaseAllPressed failure path 不完整。修正：Disconnect → snapshot → release attempt → success CLOSED / failure retry with bounded completion / local safety degradation；有界重试（≤3 次，每次 ≤30ms），不无限重试；超界仍失败则 local safety degradation（强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY），保证 P3 Recoverable。涉及 §5.3.1 规则 6、§5.3.3 异常 4、§9.3。
-> **未变更项**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径全部保持不变。
+> **未变更项（v1.1）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径全部保持不变。
+
+> **Amendment v1.2 变更记录（受控修订，不删除重写）**
+> **修订背景**：大G 项目经理对 v1.1 的 Requirements Gate 复审裁决 = CONDITIONAL FAIL / REVISION REQUIRED，发现 4 项新的内部 Contract 冲突 / 未闭合点（2 BLOCKER + 2 REQUIRED）。v1.1 已正确修复原 R1-R7 的方向，本次 Amendment 仅修复下列 4 项新问题（R8-R11），不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标 / R1-R7 已修复内容，不修改 CF0/CF1 Frozen 文档，不进入 Design，不直接 Coding。所有修订保持 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一验证格式。
+> **修订项**：
+> - **CF2-REQ-R8 (🔴 BLOCKER)**：Callback Contract 与 §7.1 接口表仍然冲突。问题：§5.4.2 已画成 Tap → SPSC → Capture/Input thread → Edge Detection → SPSC → CF0 FSM，但 §7.1 仍写 "IInputCapture.start(onEvent) → 回调内转换 CGEvent→RawInputEvent 并异步调用 onEvent"，"回调内调用 onEvent" 与 R1 刚冻结的"callback 不调用消费者逻辑"冲突。修正：§7.1 改成与 R1 完全一致——CGEventTap callback 仅做最小字段提取 + Modifier atomic update + RawInputEvent enqueue 到无锁 SPSC 队列（**callback 不调用 onEvent**）；Capture/Input thread 消费队列后才调用 onEvent 进行 downstream dispatch。这是 Requirements Contract，不留给 Design 阶段解释。涉及 §7.1 接口表 IInputCapture.start(onEvent) 行。
+> - **CF2-REQ-R9 (🔴 BLOCKER)**：R7 的 ≤100ms 与"3 次 × ≤30ms"存在数学冲突（最坏 4×30ms=120ms > 100ms）。修正：采用**总预算优先**而非次数优先。releaseAllPressed total deadline ≤ 100ms，所有 snapshot / release attempt / retry / result validation / degradation notification 均计入同一个 ≤ 100ms bounded completion budget；deadline reached → local safety degradation（强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY），保证 P3 Recoverable 可证。retry 在剩余预算内进行，不固定"次数 × 每次时延"乘积。涉及 §4.2.5、§5.3.1 规则 6、§5.3.3 异常 4、§9.3 CF2-S03-REQ-002。
+> - **CF2-REQ-R10 (🟠 REQUIRED)**：Queue-full Drop Policy 仍然不是确定性的（R4 写"丢弃最旧或最新"给 Design 留两个分支）。修正：Requirements 冻结唯一 Drop Policy——MouseMove / Wheel（高频、可重采样、无状态副作用）→ **Drop Oldest**（保最新，复用 CF0 §4.2.3 Input Plane 最新优先语义）；Key/Button Press / Release（状态变更事件，丢一侧会粘键 / 状态不一致）→ **不允许丢**，队列满时执行 backpressure safeguard：callback 仍不阻塞（保 R1/R4），该事件经 fallback atomic counter 标记 "press/release sequence gap"，Capture/Input thread 消费时检测 gap → 触发 PressedStateSnapshot 重同步（强制重新 snapshot + 通知 CF0 FSM 校验按下状态一致性），recovery invariant = 按下状态最终一致。涉及 §5.2.1 规则 11。
+> - **CF2-REQ-R11 (🟠 REQUIRED)**：PressedStateSnapshot 的 atomic bitmap 仍需要明确"原子对象尺寸"+ 当前文本给了"std::atomic<Bitmap> 或 SPSC"两个架构分支。修正：Requirements 冻结**唯一 ownership model = 方案 B**（Capture thread 单线程 owns mutable bitmap → SPSC snapshot publication → FSM/injection thread owns immutable snapshot），删除"std::atomic<Bitmap> 或 SPSC"二选一分支。冻结 bitmap 尺寸：KeyCodeBitmap = 固定 256-bit 位图（位宽 = 256，对应 macOS 虚拟键码 0-255，编译期确定）；MouseButtonBitmap = 固定 8-bit 位图（位宽 = 8，对应 MouseButton 枚举基数 ≤ 8，编译期确定）。方案 B 完全符合 CF0 §4.6.2 FSM 单线程所有权 + §2.7.3 SPSC 队列模式，且不依赖 std::atomic<256-bit> 的平台 lock-free 保证（256-bit atomic 在目标平台不一定 lock-free，强行要求会把架构可行性绑死平台特性）。ModifierState 保持 std::atomic<ModifierState>（小位图，CF0 已冻结 is_lock_free，不变）。涉及 §4.6.4、§5.5.1 规则 5、§6.4。
+> **未变更项（v1.2）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、R1-R7 已修复内容全部保持不变。
 
 ---
 
@@ -211,7 +220,7 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
 2. **辅助功能权限缺失处理**：CGEventTap 需要的 Accessibility / Input Monitoring 权限缺失时，CF2 必须检测权限状态，拒绝启动捕获，记录告警 CFX-W-CAP-A11Y-DENIED，引导用户授权；权限恢复后自动重试启动。
 3. **注入失败重试**：CGEventPost 注入失败时，CF2 必须记录失败计数，单帧失败不中断注入流；连续失败超过阈值（默认 10 帧）时记录告警 CFX-W-INJ-FAIL-STREAK 并通知 CF0 FSM。
 4. **屏幕几何变更适应**：macOS 分辨率变更、显示器连接/断开时，CF2 必须在 ≤ 1s 内重新查询屏幕边界并更新缓存，通知 CF0 Coordinate Engine；进行中的 Handoff 以新边界为准（复用 CF0 §5.4.1.6）。
-5. **断线释放可靠性**：被控态链路断开时，CF2 必须在 ≤ 100ms 内释放所有按下键与鼠标按钮（复用 CF0 §4.2.1）；释放清单经 CGEventPost 发送合成释放事件。
+5. **断线释放可靠性（CF2-REQ-R9 修订，总预算优先）**：被控态链路断开时，CF2 必须在 **total deadline ≤ 100ms** 内释放所有按下键与鼠标按钮（复用 CF0 §4.2.1）；**所有 snapshot、release attempt、retry、result validation、degradation notification 均计入同一个 ≤ 100ms bounded completion budget**（不采用"次数 × 每次时延"乘积模型，避免最坏情况超界）；deadline reached 仍失败 → local safety degradation。释放清单经 CGEventPost 发送合成释放事件。
 6. **捕获不丢失本端控制**：主控态下捕获失败不得导致本端键鼠永久失效；捕获失败时本端物理键鼠仍作用于本机（CF0 P2 No Void-Owner 保持）。
 7. **CF0 Safety Invariant 延续**：CF2 的捕获失败、注入失败、权限缺失、几何变更，都不得导致 CF0 Safety Invariant（P1/P2/P3）被破坏；失败时端点保持当前状态，不产生虚假控制权或控制权丢失。
 
@@ -245,11 +254,12 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
 1. **不新增线程**：CF2 复用 CF0 8 线程模型中的捕获线程与注入线程，不新增线程；CF2 的捕获回调运行在 CGEventTap 系统回调线程（不计入 8 线程预算，但受 ≤1ms 回调约束）。
 2. **捕获与注入路径隔离**：CGEventTap 捕获路径与 CGEventPost 注入路径必须运行在相互独立的线程上，禁止共享可变状态；跨路径数据交换必须经无锁队列或 std::atomic（复用 CF0 §4.6.3）。
 3. **修饰键状态无锁**：ModifierState 必须使用 std::atomic<ModifierState> 无锁存储，捕获回调写入、FSM 线程读取，禁止互斥量（复用 CF0 §4.6.5）。
-4. **按下状态快照无锁优先（CF2-REQ-R5 修订，snapshot ownership model）**：PressedStateSnapshot 生成必须采用无锁 ownership model，**禁止使用 std::vector 等动态容器承载按下集合**（动态 vector 无法保证 snapshot 不与写操作发生 data race）。具体模型：
-   - **fixed-size pressed-key bitmap**：按下普通键集合为固定大小位图 `KeyCodeBitmap`（键码为有限集合，位宽 = KeyCode 枚举基数，编译期确定）；
-   - **fixed-size pressed-button bitmap**：按下鼠标按钮集合为固定大小位图 `MouseButtonBitmap`（MouseButton 枚举基数固定，编译期确定）；
-   - **atomic snapshot / SPSC transfer**：捕获线程写 bitmap 经 `std::atomic<KeyCodeBitmap>` / `std::atomic<MouseButtonBitmap>`（`is_lock_free()` 编译期 static_assert，复用 CF0 §8.2.8）或经无锁 SPSC 队列递交快照请求方；FSM/injection 线程读快照无锁；
-   - **生成延迟**：≤ 1ms（位图原子读 + 拷贝，无锁竞争）；
+4. **按下状态快照无锁优先（CF2-REQ-R5/R11 修订，唯一 ownership model 冻结）**：PressedStateSnapshot 生成必须采用无锁 ownership model，**禁止使用 std::vector 等动态容器承载按下集合**（动态 vector 无法保证 snapshot 不与写操作发生 data race）。**CF2-REQ-R11 冻结唯一 ownership model = 方案 B（SPSC snapshot publication），删除"std::atomic<Bitmap> 或 SPSC"二选一分支**。具体模型：
+   - **fixed-size pressed-key bitmap（尺寸冻结）**：按下普通键集合为固定大小位图 `KeyCodeBitmap`，**位宽 = 256 bit**（对应 macOS 虚拟键码 0-255，编译期确定，预留扩展）；
+   - **fixed-size pressed-button bitmap（尺寸冻结）**：按下鼠标按钮集合为固定大小位图 `MouseButtonBitmap`，**位宽 = 8 bit**（对应 MouseButton 枚举基数 ≤ 8，编译期确定）；
+   - **ownership model = 方案 B（SPSC snapshot publication，唯一冻结）**：**Capture thread 单线程 owns mutable KeyCodeBitmap / MouseButtonBitmap**（单线程写，无竞争）→ snapshot 请求经无锁 SPSC 队列递交 → **Capture thread 发布 immutable snapshot 副本**（拷贝当前 bitmap 到 snapshot 对象）→ **FSM/injection thread owns immutable snapshot**（单线程消费，无竞争）。此模型完全符合 CF0 §4.6.2 FSM 单线程所有权 + CF0 design §2.7.3 SPSC 队列模式，**不依赖 std::atomic<256-bit> 的平台 lock-free 保证**（256-bit atomic 在目标平台不一定 lock-free，强行要求会把架构可行性绑死平台特性）；
+   - **ModifierState 保持 std::atomic<ModifierState>（不变）**：ModifierState 为小位图（Shift/Ctrl/Option/Cmd 4 bit），CF0 已冻结 `is_lock_free()` static_assert（复用 CF0 §8.2.8 + design §2.7.3），CF2 不改变；
+   - **生成延迟**：≤ 1ms（SPSC snapshot publication：Capture thread 拷贝 256+8 bit bitmap 到 snapshot 对象，无锁竞争）；
    - 复用 CF0 §4.6.5 共享状态无锁优先。键盘是有限键码集合，不需要动态 vector。
 5. **禁止阻塞捕获回调**：CGEventTap 回调内禁止执行磁盘 I/O、网络等待、锁竞争、sleep、同步日志写入、跨平面调用；回调仅做轻量采集并异步派发（复用 CF0 §4.6.4）。
 
@@ -382,16 +392,20 @@ note over Tap: 回调内无锁等待/IO/重处理
 10. **禁止项：禁止转换丢失语义**：CGEvent → RawInputEvent 转换禁止丢失事件语义（类型、按钮、键码、增量、时间戳）；无法映射的字段必须记录告警，不得静默丢弃。
     a. 验收条件：[审查转换路径] → [全部字段映射或告警，无静默丢弃]
 
-11. **RawInputEvent 传递契约（CF2-REQ-R4 新增）**：CGEventTap callback → Capture/Input thread 的 RawInputEvent 传递必须满足下列契约，复用 CF0 design §2.7.3 无锁 SPSC 队列：
+11. **RawInputEvent 传递契约（CF2-REQ-R4 新增，CF2-REQ-R10 冻结 Drop Policy）**：CGEventTap callback → Capture/Input thread 的 RawInputEvent 传递必须满足下列契约，复用 CF0 design §2.7.3 无锁 SPSC 队列：
     - **队列类型**：无锁 SPSC（单生产者单消费者）队列，callback 为唯一生产者，Capture/Input thread 为唯一消费者；
     - **队列容量**：固定容量（默认 256，复用 CF0 design §2.7.3），编译期确定，禁止动态扩容；
     - **队列存储**：队列槽位为预分配的固定大小 RawInputEvent（inline variant），enqueue 为无锁原子写，无堆分配；
     - **enqueue 行为**：callback 仅做 enqueue，不阻塞等待消费者，不调用消费者逻辑；
-    - **drop policy（队列满）**：队列满时 callback 执行明确 drop policy——丢弃最旧或最新事件 + 原子计数器递增 + 异步告警标记（CFX-W-CAP-QUEUE-DROP），**禁止阻塞 callback、禁止等待消费者、禁止动态扩容队列**；
-    - **drop policy 可观测**：丢弃计数必须可经运行时指标暴露，供运维监控。
+    - **drop policy（队列满，CF2-REQ-R10 冻结，确定性单分支）**：队列满时 callback 按事件类型执行下列**唯一冻结** drop policy，**禁止阻塞 callback、禁止等待消费者、禁止动态扩容队列**：
+      - **MouseMove / Wheel 事件（高频、可重采样、无状态副作用）→ Drop Oldest**（丢弃队列中最旧事件，腾出槽位 enqueue 当前事件；保最新，复用 CF0 §4.2.3 Input Plane 最新优先语义）+ 原子计数器 `droppedOldestCount++` + 异步告警标记 CFX-W-CAP-QUEUE-DROP；
+      - **Key/Button Press / Release 事件（状态变更事件，丢一侧会粘键 / 状态不一致）→ 不允许丢**：队列满时执行 **backpressure safeguard**——callback 仍不阻塞（保 R1/R4），该 Press/Release 事件经 fallback `std::atomic<uint64_t> pressReleaseGapCounter` 标记 "press/release sequence gap"（gapCounter++，事件本身丢弃但 gap 已记录），Capture/Input thread 消费时检测 gapCounter > 0 → 触发 **PressedStateSnapshot 重同步**（强制重新 snapshot + 通知 CF0 FSM 校验按下状态一致性），**recovery invariant = 按下状态最终一致**（FSM 收到 gap 通知后以最新 PressedStateSnapshot 为准，不依赖被丢弃的单个 Press/Release 事件）；
+    - **drop policy 可观测**：`droppedOldestCount`（MouseMove/Wheel drop）与 `pressReleaseGapCount`（Press/Release gap）必须可经运行时指标暴露，供运维监控。
     a. 验收条件：[审查 callback → Capture/Input thread 传递] → [无锁 SPSC 队列，固定容量，callback 仅 enqueue，无堆分配]
-    b. 验收条件：[队列满 + callback enqueue] → [执行 drop policy（丢弃+计数+告警标记），callback 不阻塞，不等待消费者，不扩容]
-    c. 验收条件：[运行时查询丢弃计数] → [可观测，供运维监控]
+    b. 验收条件：[队列满 + callback enqueue MouseMove/Wheel] → [Drop Oldest + droppedOldestCount++ + 告警标记，callback 不阻塞，保最新]
+    c. 验收条件：[队列满 + callback enqueue Key/Button Press/Release] → [backpressure safeguard：pressReleaseGapCounter++，callback 不阻塞；Capture/Input thread 检测 gap → 触发 PressedStateSnapshot 重同步 + 通知 FSM 校验按下状态一致性，recovery invariant = 按下状态最终一致]
+    d. 验收条件：[运行时查询 droppedOldestCount / pressReleaseGapCount] → [可观测，供运维监控]
+    e. 验收条件：[审查 drop policy] → [唯一冻结单分支，无"最旧或最新"二选一歧义，无 Press/Release 丢弃导致的不可恢复状态不一致]
 
 ### **5.2.2 交互流程**
 
@@ -459,16 +473,16 @@ Raw -> Tap : 返回(≤100us)
 5. **修饰键显式同步规则**：Handoff 完成后目标端进入被控态时，CF2 必须根据源端修饰键状态快照显式构造并注入修饰键按下/释放事件，对齐本端修饰键状态；禁止依赖隐式状态（复用 CF0 §5.1.1.6 修饰键独立追踪）。
    a. 验收条件：[Handoff 完成 + 源端 Shift 按下] → [目标端显式注入 Shift 按下，本端 ModifierState 对齐]
 
-6. **断线强制释放规则（CF2-REQ-R7 修订，bounded completion）**：被控态链路断开时，CF2 必须按下列有限步骤释放本端键鼠状态（复用 CF0 §4.2.1 ≤100ms 释放目标）：
-   - **Step 1（snapshot）**：经 §4.6.4 ownership model 无锁生成 PressedStateSnapshot（≤1ms）；
-   - **Step 2（release attempt）**：根据 snapshot 构造合成释放事件，经 CGEventPost 注入；**"调用 releaseAllPressed" ≠ "物理键已经释放"**，必须验证注入结果；
-   - **Step 3（success CLOSED）**：若全部合成释放事件注入成功且本端无残留按下状态 → 释放完成，状态 CLOSED；
-   - **Step 4（failure retry with bounded completion）**：若 CGEventPost 失败或释放后仍有残留 → **有界重试 ≤ 3 次，每次 ≤ 30ms**（含重新 snapshot + 重新注入），**禁止无限重试**（否则影响 P3 Recoverable）；
-   - **Step 5（local safety degradation）**：有界重试仍失败 → 强制清空内部按下状态记录（local safety degradation，本端不再认为有键按下）+ 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进入 RECOVERY 态，保证 P3 Recoverable（系统在有限时间内回到满足 P1 ∧ P2 的状态）。
-   a. 验收条件：[被控态链路断开 + 存在按下键 A、B + 按下鼠标左键 + 注入全部成功] → [≤ 100ms 内注入 A 释放、B 释放、左键释放，本端无残留，状态 CLOSED]
-   b. 验收条件：[CGEventPost 失败或释放后仍有残留] → [有界重试 ≤ 3 次，每次 ≤ 30ms，不无限重试]
-   c. 验收条件：[有界重试仍失败] → [强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY，P3 Recoverable 保持]
-   d. 验收条件：[审查释放路径] → [无无限重试循环，bounded completion 可验证]
+6. **断线强制释放规则（CF2-REQ-R7/R9 修订，total deadline bounded completion）**：被控态链路断开时，CF2 必须按下列有限步骤释放本端键鼠状态，**全部步骤计入同一个 total deadline ≤ 100ms bounded completion budget**（复用 CF0 §4.2.1 ≤100ms 释放目标；**不采用"次数 × 每次时延"乘积模型**，因最坏 4×30ms=120ms > 100ms 会破坏 P3 可证性）：
+   - **Step 1（snapshot，计入预算）**：经 §4.6.4 ownership model 无锁生成 PressedStateSnapshot（≤1ms，计入 total budget）；
+   - **Step 2（release attempt，计入预算）**：根据 snapshot 构造合成释放事件，经 CGEventPost 注入；**"调用 releaseAllPressed" ≠ "物理键已经释放"**，必须验证注入结果（result validation 计入 total budget）；
+   - **Step 3（success CLOSED）**：若全部合成释放事件注入成功且本端无残留按下状态 → 释放完成，状态 CLOSED（total elapsed ≤ 100ms）；
+   - **Step 4（failure retry within remaining budget）**：若 CGEventPost 失败或释放后仍有残留 → **在剩余 total budget 内有界重试**（每次 retry 含重新 snapshot + 重新注入 + result validation，均计入同一 total budget；retry 次数与每次时延不固定，由剩余预算决定），**禁止无限重试、禁止超出 100ms total deadline**（否则影响 P3 Recoverable 可证性）；
+   - **Step 5（deadline reached → local safety degradation）**：total deadline ≤ 100ms reached 仍失败 → 强制清空内部按下状态记录（local safety degradation，本端不再认为有键按下）+ 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进入 RECOVERY 态，保证 P3 Recoverable（系统在 ≤100ms + ε 有限时间内回到满足 P1 ∧ P2 的状态）。
+   a. 验收条件：[被控态链路断开 + 存在按下键 A、B + 按下鼠标左键 + 注入全部成功] → [≤ 100ms total budget 内注入 A 释放、B 释放、左键释放，本端无残留，状态 CLOSED]
+   b. 验收条件：[CGEventPost 失败或释放后仍有残留] → [在剩余 total budget 内有界重试，不无限重试，不超出 100ms total deadline]
+   c. 验收条件：[100ms total deadline reached 仍失败] → [强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY，P3 Recoverable 保持]
+   d. 验收条件：[审查释放路径] → [无无限重试循环，total deadline ≤ 100ms bounded completion 可验证，无"次数 × 每次时延"乘积超界风险]
 
 7. **注入失败处理规则**：CGEventPost 注入失败时，CF2 必须记录失败计数（InjectResult.failedCount），单帧失败不中断注入流；连续失败超过阈值（默认 10 帧）时记录告警 CFX-W-INJ-FAIL-STREAK 并通知 CF0 FSM。
    a. 验收条件：[单次注入失败] → [failedCount++，继续注入后续帧]
@@ -518,10 +532,10 @@ Inj -> Tx : InjectResult{ok, latencyUs}
    b. 系统行为：丢弃该事件，记录告警 CFX-W-INJ-INVALID-PARAM，不注入。
    c. 用户感知：该输入不产生效果；日志提示非法参数。
 
-4. **断线释放未完成 / CGEventPost 失败 / releaseAllPressed 失败（CF2-REQ-R7 修订）**
-   a. 触发条件：断线释放指令发出后 100ms 内仍有未释放的按下状态；或 CGEventPost 本身返回错误；或 releaseAllPressed 返回失败结果。"调用 releaseAllPressed" ≠ "物理键已经释放"。
-   b. 系统行为：按 §5.3.1 规则 6 Step 4 执行**有界重试 ≤ 3 次，每次 ≤ 30ms**（含重新 snapshot + 重新注入），告警 CFX-W-INJ-RELEASE-INCOMPLETE；**禁止无限重试**；有界重试仍失败则按 Step 5 进入 **local safety degradation**——强制清空内部按下状态记录 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进入 RECOVERY 态，保证 P3 Recoverable。
-   c. 用户感知：可能出现短暂"粘键"，有界重试或 local safety degradation 后恢复；日志提示释放未完成与最终处置（CLOSED / degraded）；不出现无限重试卡死。
+4. **断线释放未完成 / CGEventPost 失败 / releaseAllPressed 失败（CF2-REQ-R7/R9 修订，total deadline）**
+   a. 触发条件：断线释放指令发出后 100ms total deadline 内仍有未释放的按下状态；或 CGEventPost 本身返回错误；或 releaseAllPressed 返回失败结果。"调用 releaseAllPressed" ≠ "物理键已经释放"。
+   b. 系统行为：按 §5.3.1 规则 6 Step 4 **在剩余 total budget ≤ 100ms 内有界重试**（含重新 snapshot + 重新注入 + result validation，均计入同一 total budget；retry 次数与每次时延不固定，由剩余预算决定），告警 CFX-W-INJ-RELEASE-INCOMPLETE；**禁止无限重试、禁止超出 100ms total deadline**；100ms deadline reached 仍失败则按 Step 5 进入 **local safety degradation**——强制清空内部按下状态记录 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进入 RECOVERY 态，保证 P3 Recoverable。
+   c. 用户感知：可能出现短暂"粘键"，有界重试或 local safety degradation 后恢复；日志提示释放未完成与最终处置（CLOSED / degraded）；不出现无限重试卡死，不出现"次数 × 每次时延"乘积超界。
 
 ---
 
@@ -646,9 +660,10 @@ note over Tap: 回调内无 Edge Detection / 无 FSM 调用\n(CF2-REQ-R1, CF0 §
    a. 验收条件：[CI benchmark 测量读取耗时] → [记录 P50/P95/P99，参考硬件 P50 ≤ 100ns]
    b. 验收条件：[CI benchmark 测量写入耗时] → [记录 P50/P95/P99，参考硬件 P50 ≤ 200ns]
 
-5. **按下状态快照生成规则（CF2-REQ-R5 修订）**：CF2 必须能即时生成 PressedStateSnapshot，包含当前 ModifierState、按下鼠标按钮位图（MouseButtonBitmap）、按下普通键位图（KeyCodeBitmap）；生成延迟必须 ≤ 1ms；快照用于断线释放与 Handoff 时修饰键同步。**按下集合必须采用 fixed-size bitmap + atomic/SPSC ownership model**（详见 §4.6.4），**禁止使用 std::vector 等动态容器承载按下集合**（动态 vector 无法保证 snapshot 不与捕获线程写操作发生 data race；键盘是有限键码集合，固定大小位图即可承载）。
-   a. 验收条件：[请求 PressedStateSnapshot] → [≤ 1ms 内返回，含 modifiers + MouseButtonBitmap + KeyCodeBitmap，无 std::vector，无 data race]
-   b. 验收条件：[并发：捕获线程写 bitmap + FSM/injection 线程读快照] → [经 std::atomic<Bitmap>（is_lock_free static_assert）或 SPSC 队列，无锁竞争，无 data race]
+5. **按下状态快照生成规则（CF2-REQ-R5/R11 修订，唯一 ownership model 冻结）**：CF2 必须能即时生成 PressedStateSnapshot，包含当前 ModifierState、按下鼠标按钮位图（MouseButtonBitmap，**位宽 = 8 bit 冻结**）、按下普通键位图（KeyCodeBitmap，**位宽 = 256 bit 冻结**）；生成延迟必须 ≤ 1ms；快照用于断线释放与 Handoff 时修饰键同步。**按下集合必须采用 fixed-size bitmap + 唯一冻结的 SPSC snapshot publication ownership model**（详见 §4.6.4：Capture thread owns mutable bitmap → SPSC snapshot publication → FSM/injection thread owns immutable snapshot），**禁止使用 std::vector 等动态容器承载按下集合**（动态 vector 无法保证 snapshot 不与捕获线程写操作发生 data race；键盘是有限键码集合，固定大小位图即可承载），**禁止使用 std::atomic<KeyCodeBitmap> / std::atomic<MouseButtonBitmap> 整体原子化**（256-bit atomic 在目标平台不一定 lock-free，方案 B SPSC snapshot publication 已冻结为唯一 model）。
+   a. 验收条件：[请求 PressedStateSnapshot] → [≤ 1ms 内返回，含 modifiers + MouseButtonBitmap(8bit) + KeyCodeBitmap(256bit)，无 std::vector，无 data race]
+   b. 验收条件：[并发：Capture thread owns mutable bitmap + FSM/injection thread owns immutable snapshot] → [经 SPSC snapshot publication（Capture thread 发布 immutable 副本，FSM/injection thread 消费），无锁竞争，无 data race，无 std::atomic<Bitmap> 整体原子化]
+   c. 验收条件：[审查 ownership model] → [唯一冻结方案 B SPSC snapshot publication，无"std::atomic<Bitmap> 或 SPSC"二选一分支]
 
 6. **修饰键状态对齐规则**：Handoff 完成后目标端进入被控态时，CF2 必须根据源端 ModifierState 快照显式构造并注入修饰键按下/释放事件，对齐本端 ModifierState；对齐后本端状态与源端一致。
    a. 验收条件：[源端 Shift+Ctrl 按下 + Handoff 完成] → [目标端注入 Shift 按下 + Ctrl 按下，本端 ModifierState={Shift:true, Ctrl:true}]
@@ -797,12 +812,12 @@ note over Cap,Inj: 独立线程, 无共享可变状态\n经无锁队列/std::ato
 2. **failedCount**：注入失败计数，无符号 32 位整数；单次注入为 0 或 1，批量注入为该批次失败帧数。
 3. **latencyUs**：注入延迟，无符号 64 位整数，单位微秒；单次注入必须 ≤ 5000（5ms）。
 
-## **6.4 PressedStateSnapshot（CF0 定义，CF2 产出，CF2-REQ-R5 修订）**
+## **6.4 PressedStateSnapshot（CF0 定义，CF2 产出，CF2-REQ-R5/R11 修订，唯一 ownership model 冻结）**
 
-1. **modifiers**：当前修饰键状态，ModifierState 位图；由 CF2 从 std::atomic<ModifierState> 无锁读取（is_lock_free static_assert，复用 CF0 §8.2.8）。
-2. **pressedMouseButtons**：当前按下的鼠标按钮位图，**MouseButtonBitmap**（fixed-size 位图，位宽 = MouseButton 枚举基数，编译期确定）；由 CF2 从 std::atomic<MouseButtonBitmap> 无锁读取或经 SPSC 队列递交。**禁止使用 std::vector<MouseButton>**（动态 vector 无法保证 snapshot 无 data race）。
-3. **pressedKeys**：当前按下的普通键位图，**KeyCodeBitmap**（fixed-size 位图，位宽 = KeyCode 枚举基数，编译期确定；键盘为有限键码集合）；由 CF2 从 std::atomic<KeyCodeBitmap> 无锁读取或经 SPSC 队列递交。**禁止使用 std::vector<KeyCode>**。
-4. **ownership model**：捕获线程写 bitmap，FSM/injection 线程读快照，经 std::atomic<Bitmap>（is_lock_free static_assert）或无锁 SPSC 队列传递，无锁竞争，无 data race（详见 §4.6.4）。
+1. **modifiers**：当前修饰键状态，ModifierState 位图；由 CF2 从 std::atomic<ModifierState> 无锁读取（is_lock_free static_assert，复用 CF0 §8.2.8；ModifierState 为小位图，保持 atomic 不变）。
+2. **pressedMouseButtons**：当前按下的鼠标按钮位图，**MouseButtonBitmap**（fixed-size 位图，**位宽 = 8 bit 冻结**，对应 MouseButton 枚举基数 ≤ 8，编译期确定）；由 Capture thread 单线程 owns mutable bitmap，经 SPSC snapshot publication 发布 immutable 副本给 FSM/injection thread。**禁止使用 std::vector<MouseButton>**（动态 vector 无法保证 snapshot 无 data race）；**禁止使用 std::atomic<MouseButtonBitmap> 整体原子化**（方案 B SPSC snapshot publication 已冻结为唯一 model，详见 §4.6.4）。
+3. **pressedKeys**：当前按下的普通键位图，**KeyCodeBitmap**（fixed-size 位图，**位宽 = 256 bit 冻结**，对应 macOS 虚拟键码 0-255，编译期确定；键盘为有限键码集合）；由 Capture thread 单线程 owns mutable bitmap，经 SPSC snapshot publication 发布 immutable 副本给 FSM/injection thread。**禁止使用 std::vector<KeyCode>**；**禁止使用 std::atomic<KeyCodeBitmap> 整体原子化**（256-bit atomic 在目标平台不一定 lock-free，方案 B SPSC snapshot publication 已冻结为唯一 model，详见 §4.6.4）。
+4. **ownership model（唯一冻结 = 方案 B SPSC snapshot publication）**：Capture thread 单线程 owns mutable KeyCodeBitmap / MouseButtonBitmap（单线程写，无竞争）→ snapshot 请求经无锁 SPSC 队列递交 → Capture thread 发布 immutable snapshot 副本（拷贝当前 bitmap）→ FSM/injection thread owns immutable snapshot（单线程消费，无竞争）。无锁竞争，无 data race，不依赖 std::atomic<256-bit> 平台 lock-free 保证（详见 §4.6.4）。**删除"std::atomic<Bitmap> 或 SPSC"二选一分支，Requirements 冻结唯一 model，不给 Design 留两个分支**。
 
 ## **6.5 ScreenBoundary（CF0 定义，CF2 产出，CF2-REQ-R6 修订）**
 
@@ -827,7 +842,7 @@ note over Cap,Inj: 独立线程, 无共享可变状态\n经无锁队列/std::ato
 
 | CF0 接口 | CF2 实现方式 | CF2 实现约束 |
 |---------|-------------|-------------|
-| `IInputCapture.start(onEvent)` | 经 CGEventTap 安装用户态事件 tap，回调内转换 CGEvent→RawInputEvent 并异步调用 onEvent | 回调 ≤1ms；权限前置；失败降级 |
+| `IInputCapture.start(onEvent)` | 经 CGEventTap 安装用户态事件 tap；**CGEventTap callback 仅做最小字段提取 + Modifier atomic update + RawInputEvent enqueue 到无锁 SPSC 队列（callback 不调用 onEvent、不调用 FSM、不执行 Edge Detection）**；Capture/Input thread 消费 SPSC 队列后才调用 onEvent 进行 downstream dispatch（onEvent 由 Capture/Input thread 触发，不由 callback 触发） | 回调 ≤1ms；callback 不调用 onEvent/FSM；权限前置；失败降级（CF2-REQ-R1/R8，复用 CF0 §4.6.4 + §4.6.2 + 契约⑦） |
 | `IInputCapture.stop(handle)` | 释放 CGEventTap 资源，标记 handle.active=false | ≤200ms 释放；RAII |
 | `IInputCapture.queryScreenBoundary()` | 经 NSScreen/CGDisplay 查询主显示器几何，返回 ScreenBoundary | ≤10ms；缓存；变更适应 |
 | `IInputInjector.inject(event)` | 被控态下构造 CGEvent 并 CGEventPost 注入，返回 InjectResult | ≤5ms；仅主控端流；参数校验 |
@@ -983,14 +998,14 @@ CF2 在 CF0/CF1 冻结基线之上，新增六个 macOS 输入捕获地基：
 - **Acceptance Test**：[事件 source_node_id ≠ 主控端] → [拒绝注入，告警 CFX-E-INJ-UNAUTHORIZED-SOURCE]
 - **对应规则**：§5.3.1 规则 3, 9
 
-### CF2-S03-REQ-002：断线强制释放（≤100ms，CF2-REQ-R7 bounded completion）
-- **Contract**：被控态链路断开时必须 ≤100ms 内释放所有按下键/按钮（成功路径）；CGEventPost / releaseAllPressed 失败时执行有界重试 ≤3 次（每次 ≤30ms），不无限重试；有界重试仍失败则 local safety degradation（强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY），保证 P3 Recoverable。
-- **Invariant**：成功路径断线后 100ms 内 PressedStateSnapshot 中全部按下状态释放（CLOSED）；失败路径有界重试 ≤3 次后进入 local safety degradation，无无限重试循环。
-- **Violation**：断线后超时未释放导致"粘键"；或 release 失败时无限重试卡死影响 P3；或未验证 CGEventPost 注入结果即假定物理键已释放。
-- **Observable Evidence**：断线释放日志含释放清单、耗时、最终处置（CLOSED / degraded）；失败路径含有界重试计数与 CFX-E-INJ-RELEASE-FAILED 告警。
-- **Acceptance Test**：[被控态链路断开 + 存在按下键 + 注入成功] → [≤100ms 内全部释放，状态 CLOSED，无残留]
-- **Acceptance Test**：[CGEventPost 失败] → [有界重试 ≤3 次，每次 ≤30ms；仍失败则 local safety degradation + 告警 CFX-E-INJ-RELEASE-FAILED + FSM 进 RECOVERY，P3 保持，无无限重试]
-- **对应规则**：§5.3.1 规则 6, §5.3.3 异常 4
+### CF2-S03-REQ-002：断线强制释放（total deadline ≤100ms，CF2-REQ-R7/R9 bounded completion）
+- **Contract**：被控态链路断开时必须 **total deadline ≤ 100ms** 内释放所有按下键/按钮（成功路径）；**所有 snapshot / release attempt / retry / result validation / degradation notification 计入同一 ≤ 100ms bounded completion budget**（不采用"次数 × 每次时延"乘积模型）；CGEventPost / releaseAllPressed 失败时在剩余 total budget 内有界重试（retry 次数与每次时延不固定，由剩余预算决定），不无限重试，不超出 100ms total deadline；deadline reached 仍失败则 local safety degradation（强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY），保证 P3 Recoverable。
+- **Invariant**：成功路径断线后 100ms total budget 内 PressedStateSnapshot 中全部按下状态释放（CLOSED）；失败路径在剩余 total budget 内有界重试后进入 local safety degradation，无无限重试循环，无"次数 × 每次时延"乘积超界。
+- **Violation**：断线后超时未释放导致"粘键"；或 release 失败时无限重试卡死影响 P3；或采用"次数 × 每次时延"乘积模型导致最坏情况超 100ms（如 4×30ms=120ms）；或未验证 CGEventPost 注入结果即假定物理键已释放。
+- **Observable Evidence**：断线释放日志含释放清单、total elapsed 耗时、最终处置（CLOSED / degraded）；失败路径含剩余预算内重试计数与 CFX-E-INJ-RELEASE-FAILED 告警；total elapsed ≤ 100ms 可验证。
+- **Acceptance Test**：[被控态链路断开 + 存在按下键 + 注入成功] → [≤100ms total budget 内全部释放，状态 CLOSED，无残留]
+- **Acceptance Test**：[CGEventPost 失败] → [在剩余 total budget ≤ 100ms 内有界重试；deadline reached 仍失败则 local safety degradation + 告警 CFX-E-INJ-RELEASE-FAILED + FSM 进 RECOVERY，P3 保持，无无限重试，无乘积超界]
+- **对应规则**：§5.3.1 规则 6, §5.3.3 异常 4, §4.2.5
 
 ## **9.4 S04 屏幕边界与边缘越界检测 验证矩阵**
 
