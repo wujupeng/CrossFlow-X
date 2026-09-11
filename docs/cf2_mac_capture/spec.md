@@ -6,7 +6,19 @@
 > **CF0 冻结基线引用**：本阶段所有需求严格遵循 `.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）冻结的全部架构基线，包括 Driverless User-Mode Architecture、C++20 技术栈、Canonical Input Event 规范化隔离、Handoff 六态 FSM（ARMED/PENDING/ACK/ACTIVE/COOLDOWN/RECOVERY）、防抖/冷却/驻留/熔断、Input/Control 双平面隔离、FSM 单线程所有权、捕获回调轻量化（≤1ms）、7 个核心契约、CF0 Architecture Safety Invariant（P1 No Split-Brain / P2 No Void-Owner / P3 Recoverable）、并发模型（≤8 线程）、用户态约束。
 > **CF1 冻结基线引用**：本阶段复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）、Topology Membership、Session Epoch，作为捕获事件的源端标识与拓扑邻居查询依据；不修改 CF1 身份与发现机制。
 > **CF0 接口契约引用**：CF2 实现 CF0 冻结的 `IInputCapture`、`IInputInjector`、`IMonotonicClock`、`IScreenQuery` 四个平台抽象接口（见 `platform/common/platform_ports.hpp`）的 macOS 适配层，不修改接口签名。
-> **文档状态**：DRAFT v1 → 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
+> **文档状态**：DRAFT v1.1（Amendment）→ 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
+
+> **Amendment v1.1 变更记录（受控修订，不删除重写）**
+> **修订背景**：大G 项目经理 Requirements Gate 审查裁决 = CONDITIONAL FAIL / REVISION REQUIRED，发现 7 项问题（5 BLOCKER + 1 BLOCKER + 1 REQUIRED）。本次 Amendment 仅修复下列 7 项，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标，不修改 CF0/CF1 Frozen 文档，不进入 Design，不直接 Coding。所有修订保持 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一验证格式。
+> **修订项**：
+> - **CF2-REQ-R1 (🔴 BLOCKER)**：Callback / Edge Detection / FSM 边界冲突。修正：Edge Detection 移出 CGEventTap 回调，改为 Capture/Input thread 的捕获后处理；回调仅做最小字段提取 + Modifier atomic update + RawInputEvent enqueue；越界事件经无锁 SPSC 队列递交 CF0 FSM（复用 CF0 §4.6.4 回调轻量化 + §4.6.2 FSM 单线程所有权 + 契约⑦）。涉及 §4.1.5、§5.1.1 规则 2、§5.4.1 规则 6/7、§5.4.2。
+> - **CF2-REQ-R2 (🔴 BLOCKER)**：CGEvent Mouse Location 与 RelativeDelta 语义错误。修正：CF2-S03 接收 CanonicalInputEvent 的 RelativeDelta 语义（CF0-COORD-001）；macOS adapter 基于 RelativeDelta 经 CGEventSetDoubleValueField(kCGMouseEventDeltaX/Y) + CGEventPost 注入，或基于当前有效 cursor location + delta 计算目标 location 后 CGEventPost；ACTIVE 进入一次性定位用 AbsolutePosition（CF0-COORD-002）。涉及 §5.3.1 规则 2。
+> - **CF2-REQ-R3 (🔴 BLOCKER)**：atomic lock-free + 100ns 硬指标定义不当。修正：分两层 — Architecture Requirement（CF0 inherited Gate：is_lock_free() 编译期 static_assert，复用 CF0 §8.2.8 + design §2.7.3）+ Performance Evidence（CI/physical validation benchmark P50/P95/P99，目标 P50 读 ≤100ns / 写 ≤200ns，测量型 DFX 而非可移植功能 Contract）。涉及 §4.1.6、§5.5.1 规则 3/4、§9.5。
+> - **CF2-REQ-R4 (🔴 BLOCKER)**：Callback allocation / RawInputEvent / queue contract 不完整。修正：CGEventTap 回调不得触发动态堆分配；callback 使用预分配/固定容量无锁传递结构；RawInputEvent payload 为 inline variant（无 heap）；callback → Capture/Input thread 经无锁 SPSC 队列（容量固定，默认 256，复用 CF0 design §2.7.3）；队列满执行明确 drop policy（丢弃 + 计数告警），不得阻塞 callback。涉及 §5.1.1 规则 2、§5.2.1 规则 8、新增 §5.2.1 规则 11。
+> - **CF2-REQ-R5 (🔴 BLOCKER)**：PressedStateSnapshot 并发 ownership 不完整。修正：定义明确 snapshot ownership model — fixed-size pressed-key bitmap + fixed-size pressed-button bitmap + atomic snapshot / SPSC transfer；键盘是有限键码集合，不使用动态 vector。涉及 §4.6.4、§5.5.1 规则 5、§6.4。
+> - **CF2-REQ-R6 (🔴 BLOCKER)**：ScreenBoundary 与 CF0 Coordinate Space 对齐不明确。修正：CF2 是"CF0 Logical Screen Space 的 macOS 实现"，查询 macOS native screen geometry 并归一化为 CF0 Frozen 的 ScreenBoundary 语义（origin=(0,0) 左上角，CF0 §5.4.1.4 + 契约⑤）；macOS native 坐标系差异（NSScreen 左下角原点 / CGDisplay 左上角原点 / 多显示器排列）在 platform/mac/ 适配层消化，不让 CF2 发明坐标语义。涉及 §5.4.1 规则 2、§6.5。
+> - **CF2-REQ-R7 (🟠 REQUIRED)**：releaseAllPressed failure path 不完整。修正：Disconnect → snapshot → release attempt → success CLOSED / failure retry with bounded completion / local safety degradation；有界重试（≤3 次，每次 ≤30ms），不无限重试；超界仍失败则 local safety degradation（强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY），保证 P3 Recoverable。涉及 §5.3.1 规则 6、§5.3.3 异常 4、§9.3。
+> **未变更项**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径全部保持不变。
 
 ---
 
@@ -186,8 +198,10 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
 2. **CGEvent 到 RawInputEvent 转换延迟**：单个 CGEvent 转换为 RawInputEvent 的延迟必须 ≤ 100us；转换仅做类型映射与字段提取，禁止重处理。
 3. **CGEventPost 注入延迟**：单个 CanonicalInputEvent 经 CGEventPost 注入本机的延迟必须 ≤ 5ms；批量注入（injectBatch）单帧延迟必须 ≤ 10ms。
 4. **屏幕边界查询延迟**：ScreenBoundary 查询延迟必须 ≤ 10ms；查询结果可缓存，分辨率变更时失效重查。
-5. **边缘越界检测延迟**：从鼠标移动事件到越界判定完成的延迟必须 ≤ 500us；检测在捕获回调内完成，不额外派发。
-6. **修饰键状态读取延迟**：ModifierState 读取延迟必须 ≤ 100ns（std::atomic 无锁读）；写入延迟必须 ≤ 200ns。
+5. **边缘越界检测延迟**：从鼠标移动事件到越界判定完成的延迟必须 ≤ 500us；**检测在 Capture/Input thread（回调后处理线程）完成，不在 CGEventTap 回调内完成**（CF2-REQ-R1 修订：Edge Detection 是 Input Plane 的捕获后处理，不是回调内调用）。回调仅做最小字段提取 + Modifier atomic update + RawInputEvent enqueue（≤1ms 返回，复用 CF0 §4.6.4）；越界事件经无锁 SPSC 队列递交 CF0 Handoff FSM（复用 CF0 §4.6.2 FSM 单线程所有权 + 契约⑦ CF0-ARCH-CONCURRENCY-002），CF2 不在回调内直接调用 FSM 或产生越界事件给 FSM。
+6. **修饰键状态读取延迟（CF2-REQ-R3 分层）**：
+   - **Architecture Requirement（CF0 inherited Gate）**：ModifierState 必须采用无锁原子访问 `std::atomic<ModifierState>`，目标平台（Apple Clang ≥15 / MSVC ≥19.3x / Clang ≥17，CF0 §4.5.5 编译器矩阵）必须验证 `is_lock_free() == true`（编译期 `static_assert`，复用 CF0 §8.2.8 + design §2.7.3，此为 CF0 已 Frozen 的硬 Gate，非 CF2 自行定义的可移植保证）；捕获回调线程写入，FSM 线程与注入路径读取，禁止互斥量（复用 CF0 §4.6.5）。
+   - **Performance Evidence（测量型 DFX，非可移植功能 Contract）**：在 CI / physical validation 中 benchmark 记录读取/写入延迟 P50/P95/P99；目标 P50 读 ≤ 100ns / 写 ≤ 200ns（在参考硬件上测量，不作为源码可移植硬性 Contract，架构不达标时升级目标平台或加宽预算而非破坏 is_lock_free()）。
 7. **按下状态快照生成延迟**：PressedStateSnapshot 生成延迟必须 ≤ 1ms；快照用于断线释放，必须即时可用。
 8. **捕获启停延迟**：从收到捕获启停指令到 CGEventTap 实际启用/禁用的延迟必须 ≤ 50ms。
 
@@ -231,7 +245,12 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
 1. **不新增线程**：CF2 复用 CF0 8 线程模型中的捕获线程与注入线程，不新增线程；CF2 的捕获回调运行在 CGEventTap 系统回调线程（不计入 8 线程预算，但受 ≤1ms 回调约束）。
 2. **捕获与注入路径隔离**：CGEventTap 捕获路径与 CGEventPost 注入路径必须运行在相互独立的线程上，禁止共享可变状态；跨路径数据交换必须经无锁队列或 std::atomic（复用 CF0 §4.6.3）。
 3. **修饰键状态无锁**：ModifierState 必须使用 std::atomic<ModifierState> 无锁存储，捕获回调写入、FSM 线程读取，禁止互斥量（复用 CF0 §4.6.5）。
-4. **按下状态快照无锁优先**：PressedStateSnapshot 生成必须优先使用无锁读取当前按下集合；若集合较大允许局部快照锁但持锁时间必须 ≤ 100us（复用 CF0 §4.6.5）。
+4. **按下状态快照无锁优先（CF2-REQ-R5 修订，snapshot ownership model）**：PressedStateSnapshot 生成必须采用无锁 ownership model，**禁止使用 std::vector 等动态容器承载按下集合**（动态 vector 无法保证 snapshot 不与写操作发生 data race）。具体模型：
+   - **fixed-size pressed-key bitmap**：按下普通键集合为固定大小位图 `KeyCodeBitmap`（键码为有限集合，位宽 = KeyCode 枚举基数，编译期确定）；
+   - **fixed-size pressed-button bitmap**：按下鼠标按钮集合为固定大小位图 `MouseButtonBitmap`（MouseButton 枚举基数固定，编译期确定）；
+   - **atomic snapshot / SPSC transfer**：捕获线程写 bitmap 经 `std::atomic<KeyCodeBitmap>` / `std::atomic<MouseButtonBitmap>`（`is_lock_free()` 编译期 static_assert，复用 CF0 §8.2.8）或经无锁 SPSC 队列递交快照请求方；FSM/injection 线程读快照无锁；
+   - **生成延迟**：≤ 1ms（位图原子读 + 拷贝，无锁竞争）；
+   - 复用 CF0 §4.6.5 共享状态无锁优先。键盘是有限键码集合，不需要动态 vector。
 5. **禁止阻塞捕获回调**：CGEventTap 回调内禁止执行磁盘 I/O、网络等待、锁竞争、sleep、同步日志写入、跨平面调用；回调仅做轻量采集并异步派发（复用 CF0 §4.6.4）。
 
 ---
@@ -248,9 +267,11 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
    a. 验收条件：[macOS 端启动捕获] → [经 CGEventTap 安装用户态 tap，无 kext/驱动/root 特权]
    b. 验收条件：[审查 platform/mac/ 实现] → [仅使用 CGEventTap 等 Core Graphics 用户态 API，无 IOKit kext]
 
-2. **CGEventTap 回调轻量化规则**：CGEventTap 回调必须仅做轻量采集——将 CGEvent 转换为 RawInputEvent 并异步派发到 CF0 处理线程，禁止在回调内执行锁等待、I/O、内存分配、跨平面调用或同步日志写入；回调返回延迟必须 ≤ 1ms。
+2. **CGEventTap 回调轻量化规则**：CGEventTap 回调必须仅做轻量采集——将 CGEvent 转换为 RawInputEvent 并异步派发到 CF0 处理线程，禁止在回调内执行锁等待、I/O、内存分配、跨平面调用或同步日志写入；回调返回延迟必须 ≤ 1ms。**回调内禁止直接调用 CF0 Handoff FSM、禁止产生越界事件给 FSM、禁止执行 Edge Detection**（CF2-REQ-R1 修订：Edge Detection 是 Input Plane 的捕获后处理，不是 CGEventTap callback 内的 FSM 调用；流程为 CGEventTap callback → 最小字段提取 + Modifier atomic update + RawInputEvent enqueue → Capture/Input thread → Edge Detection → 越界事件经无锁 SPSC 队列递交 CF0 Handoff FSM，复用 CF0 §4.6.4 回调轻量化 + §4.6.2 FSM 单线程所有权 + 契约⑦ CF0-ARCH-CONCURRENCY-002/003）。
    a. 验收条件：[测量 CGEventTap 回调耗时] → [≤ 1ms，无锁等待/IO/内存分配]
    b. 验收条件：[回调内派发 RawInputEvent] → [异步派发到独立处理线程，回调不阻塞等待处理完成]
+   c. 验收条件：[审查回调代码] → [无 FSM 直接调用、无越界事件产生、无 Edge Detection；越界事件由 Capture/Input thread 后处理经 SPSC 队列递交 FSM]
+   d. 验收条件：[审查回调内存行为] → [无动态堆分配，RawInputEvent 传递遵循 §5.2.1 规则 11（无锁 SPSC + 固定容量 + drop policy，CF2-REQ-R4）]
 
 3. **捕获事件完备性规则**：CGEventTap 必须监听并捕获以下完整事件类型：鼠标移动（kCGEventMouseMoved）、鼠标按钮按下（kCGEventLeftMouseDown / kCGEventRightMouseDown / kCGEventOtherMouseDown）、鼠标按钮释放（对应 Up）、滚轮滚动（kCGEventScrollWheel）、按键按下（kCGEventKeyDown）、按键释放（kCGEventKeyUp）；缺一不可（复用 CF0 §5.1.1.4-5 鼠标/键盘完备性）。
    a. 验收条件：[用户执行移动/按下/释放/滚轮/按键] → [CGEventTap 均捕获并产出对应 RawInputEvent]
@@ -351,14 +372,26 @@ note over Tap: 回调内无锁等待/IO/重处理
 7. **platformTime 提取规则**：RawInputEvent.platformTime 必须从 CGEventTimestamp 提取，作为平台时间戳供 CF0 进一步转换为规范单调时间戳。
    a. 验收条件：[CGEvent 携带 timestamp T] → [RawInputEvent.platformTime = T]
 
-8. **转换延迟规则**：单个 CGEvent 转换为 RawInputEvent 的延迟必须 ≤ 100us；转换仅做类型映射与字段提取，禁止内存分配（除 variant 构造）、禁止锁等待、禁止 I/O。
+8. **转换延迟规则（CF2-REQ-R4 修订）**：单个 CGEvent 转换为 RawInputEvent 的延迟必须 ≤ 100us；转换仅做类型映射与字段提取，禁止锁等待、禁止 I/O。**callback 不得触发动态堆分配**（`new`/`malloc`/容器扩容）：RawInputEvent 及其 RawPayload variant 必须为 **inline variant**（无 heap 分配，所有 payload 类型固定大小且栈上构造）；所谓"除 variant 构造"仅指 inline std::variant 在栈上的就地构造，不包含任何堆分配。callback 使用预分配/固定容量的无锁传递结构将 RawInputEvent enqueue 到 Capture/Input thread。
    a. 验收条件：[测量单次转换耗时] → [≤ 100us]
+   b. 验收条件：[审查回调转换代码] → [无 new/malloc/容器扩容；RawPayload 为 inline variant，所有 payload 固定大小栈上构造]
 
 9. **禁止项：禁止 Core 层平台污染**：Core 业务层禁止包含 macOS 平台头文件或平台条件分支；平台差异必须在 `platform/mac/` 适配层消化（复用 CF0 契约①禁止项）。
    a. 验收条件：[grep core/ 层] → [不存在 CGEvent、CGEventType、#ifdef __APPLE__]
 
 10. **禁止项：禁止转换丢失语义**：CGEvent → RawInputEvent 转换禁止丢失事件语义（类型、按钮、键码、增量、时间戳）；无法映射的字段必须记录告警，不得静默丢弃。
     a. 验收条件：[审查转换路径] → [全部字段映射或告警，无静默丢弃]
+
+11. **RawInputEvent 传递契约（CF2-REQ-R4 新增）**：CGEventTap callback → Capture/Input thread 的 RawInputEvent 传递必须满足下列契约，复用 CF0 design §2.7.3 无锁 SPSC 队列：
+    - **队列类型**：无锁 SPSC（单生产者单消费者）队列，callback 为唯一生产者，Capture/Input thread 为唯一消费者；
+    - **队列容量**：固定容量（默认 256，复用 CF0 design §2.7.3），编译期确定，禁止动态扩容；
+    - **队列存储**：队列槽位为预分配的固定大小 RawInputEvent（inline variant），enqueue 为无锁原子写，无堆分配；
+    - **enqueue 行为**：callback 仅做 enqueue，不阻塞等待消费者，不调用消费者逻辑；
+    - **drop policy（队列满）**：队列满时 callback 执行明确 drop policy——丢弃最旧或最新事件 + 原子计数器递增 + 异步告警标记（CFX-W-CAP-QUEUE-DROP），**禁止阻塞 callback、禁止等待消费者、禁止动态扩容队列**；
+    - **drop policy 可观测**：丢弃计数必须可经运行时指标暴露，供运维监控。
+    a. 验收条件：[审查 callback → Capture/Input thread 传递] → [无锁 SPSC 队列，固定容量，callback 仅 enqueue，无堆分配]
+    b. 验收条件：[队列满 + callback enqueue] → [执行 drop policy（丢弃+计数+告警标记），callback 不阻塞，不等待消费者，不扩容]
+    c. 验收条件：[运行时查询丢弃计数] → [可观测，供运维监控]
 
 ### **5.2.2 交互流程**
 
@@ -405,9 +438,15 @@ Raw -> Tap : 返回(≤100us)
 1. **用户态注入规则**：当 macOS 端处于被控态需要注入对端转发的事件时，系统必须通过 CGEventPost 在用户态构造并注入 CGEvent；禁止引入内核扩展或驱动。
    a. 验收条件：[被控态 + 收到规范输入事件] → [经 CGEventPost 用户态注入，无 kext/驱动]
 
-2. **规范事件到 CGEvent 构造规则**：CF2 必须将 CanonicalInputEvent 完整构造为 CGEvent：鼠标移动构造 CGEventCreateMouseEvent(deltaX, deltaY)、鼠标按下/释放构造对应 button state、滚轮构造 CGEventCreateScrollWheelEvent、按键按下/释放构造 CGEventCreateKeyboardEvent(keyCode, keyDown)；构造不得丢失事件语义。
-   a. 验收条件：[收到鼠标移动事件 deltaX=10] → [构造 CGEvent 并 post，光标移动 10px]
+2. **规范事件到 CGEvent 构造规则**：CF2 必须将 CanonicalInputEvent 完整构造为 CGEvent 并经 CGEventPost 注入；构造不得丢失事件语义。**鼠标移动注入必须遵循 CF0 Frozen 的 RelativeDelta 语义**（CF2-REQ-R2 修订，CF0-COORD-001/003/005，CF0 design §2.10.0.2/§2.10.0.5）：CF2-S03 接收的 CanonicalInputEvent.MouseMotionPayload 在核心控制路径上为 RelativeDelta{deltaX, deltaY}，macOS adapter 必须采用下列之一正确注入方式，**禁止简单写 `CGEventCreateMouseEvent(deltaX, deltaY)`**（CGEvent mouse event creation API 使用的是鼠标位置坐标，不是 RelativeDelta）：
+   - 方式 A（delta 字段注入）：构造 CGEvent 后调用 `CGEventSetDoubleValueField(event, kCGMouseEventDeltaX, deltaX)` / `kCGMouseEventDeltaY` 设置相对运动，再 `CGEventPost(kCGHIDEventTap, event)`；
+   - 方式 B（location 换算注入）：查询当前有效 cursor location (curX, curY)，计算目标 location (curX + deltaX, curY + deltaY)，调用 `CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, CGPointMake(targetX, targetY), 0)` + `CGEventPost`；
+   - **ACTIVE 进入一次性光标定位**使用 AbsolutePosition（CF0-COORD-002）：`CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, CGPointMake(entry.x, entry.y), 0)` + `CGEventPost`，定位完成后后续鼠标移动切换回 RelativeDelta。
+   鼠标按下/释放构造对应 button state（CGEventCreateMouseEvent with kCGEventLeftMouseDown/RightMouseDown/OtherMouseDown 及对应 Up）、滚轮构造 CGEventCreateScrollWheelEvent、按键按下/释放构造 CGEventCreateKeyboardEvent(keyCode, keyDown)；macOS 平台坐标转换逻辑隔离在 platform/mac/ 适配层（契约①）。
+   a. 验收条件：[收到鼠标移动 RelativeDelta{deltaX=10, deltaY=0}] → [经方式 A 或 B 注入，光标相对移动 10px，不传绝对坐标]
    b. 验收条件：[收到按键按下 KeyCode::A] → [构造 CGEvent keyDown=A 并 post，本机产生 'a' 输入]
+   c. 验收条件：[ACTIVE 进入 + AbsolutePosition{entry.x=5, entry.y=540}] → [一次性 CGEventCreateMouseEvent(location=(5,540)) + CGEventPost 定位，后续切换回 RelativeDelta]
+   d. 验收条件：[审查 platform/mac/ 注入代码] → [无 CGEventCreateMouseEvent(deltaX, deltaY) 误用；delta 经 kCGMouseEventDeltaX/Y 字段或 location 换算注入]
 
 3. **注入仅接受主控端流规则**：被控态注入路径仅接受当前主控端经 Input Plane 转发的规范事件；事件 source_node_id 必须等于当前主控端 NodeID，否则拒绝注入并记录安全告警（复用 CF0 §4.3.4 控制权不可窃取）。
    a. 验收条件：[事件 source_node_id = 当前主控端] → [接受注入]
@@ -420,8 +459,16 @@ Raw -> Tap : 返回(≤100us)
 5. **修饰键显式同步规则**：Handoff 完成后目标端进入被控态时，CF2 必须根据源端修饰键状态快照显式构造并注入修饰键按下/释放事件，对齐本端修饰键状态；禁止依赖隐式状态（复用 CF0 §5.1.1.6 修饰键独立追踪）。
    a. 验收条件：[Handoff 完成 + 源端 Shift 按下] → [目标端显式注入 Shift 按下，本端 ModifierState 对齐]
 
-6. **断线强制释放规则**：被控态链路断开时，CF2 必须在 ≤ 100ms 内根据 PressedStateSnapshot 构造并注入所有按下键/按钮的合成释放事件，释放本端键鼠状态（复用 CF0 §4.2.1）。
-   a. 验收条件：[被控态链路断开 + 存在按下键 A、B + 按下鼠标左键] → [≤ 100ms 内注入 A 释放、B 释放、左键释放，本端无残留按下状态]
+6. **断线强制释放规则（CF2-REQ-R7 修订，bounded completion）**：被控态链路断开时，CF2 必须按下列有限步骤释放本端键鼠状态（复用 CF0 §4.2.1 ≤100ms 释放目标）：
+   - **Step 1（snapshot）**：经 §4.6.4 ownership model 无锁生成 PressedStateSnapshot（≤1ms）；
+   - **Step 2（release attempt）**：根据 snapshot 构造合成释放事件，经 CGEventPost 注入；**"调用 releaseAllPressed" ≠ "物理键已经释放"**，必须验证注入结果；
+   - **Step 3（success CLOSED）**：若全部合成释放事件注入成功且本端无残留按下状态 → 释放完成，状态 CLOSED；
+   - **Step 4（failure retry with bounded completion）**：若 CGEventPost 失败或释放后仍有残留 → **有界重试 ≤ 3 次，每次 ≤ 30ms**（含重新 snapshot + 重新注入），**禁止无限重试**（否则影响 P3 Recoverable）；
+   - **Step 5（local safety degradation）**：有界重试仍失败 → 强制清空内部按下状态记录（local safety degradation，本端不再认为有键按下）+ 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进入 RECOVERY 态，保证 P3 Recoverable（系统在有限时间内回到满足 P1 ∧ P2 的状态）。
+   a. 验收条件：[被控态链路断开 + 存在按下键 A、B + 按下鼠标左键 + 注入全部成功] → [≤ 100ms 内注入 A 释放、B 释放、左键释放，本端无残留，状态 CLOSED]
+   b. 验收条件：[CGEventPost 失败或释放后仍有残留] → [有界重试 ≤ 3 次，每次 ≤ 30ms，不无限重试]
+   c. 验收条件：[有界重试仍失败] → [强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY，P3 Recoverable 保持]
+   d. 验收条件：[审查释放路径] → [无无限重试循环，bounded completion 可验证]
 
 7. **注入失败处理规则**：CGEventPost 注入失败时，CF2 必须记录失败计数（InjectResult.failedCount），单帧失败不中断注入流；连续失败超过阈值（默认 10 帧）时记录告警 CFX-W-INJ-FAIL-STREAK 并通知 CF0 FSM。
    a. 验收条件：[单次注入失败] → [failedCount++，继续注入后续帧]
@@ -471,10 +518,10 @@ Inj -> Tx : InjectResult{ok, latencyUs}
    b. 系统行为：丢弃该事件，记录告警 CFX-W-INJ-INVALID-PARAM，不注入。
    c. 用户感知：该输入不产生效果；日志提示非法参数。
 
-4. **断线释放未完成**
-   a. 触发条件：断线释放指令发出后 100ms 内仍有未释放的按下状态。
-   b. 系统行为：继续尝试释放并告警 CFX-W-INJ-RELEASE-INCOMPLETE；超时后强制清空内部按下状态记录。
-   c. 用户感知：可能出现短暂"粘键"，超时后恢复；日志提示释放未完成。
+4. **断线释放未完成 / CGEventPost 失败 / releaseAllPressed 失败（CF2-REQ-R7 修订）**
+   a. 触发条件：断线释放指令发出后 100ms 内仍有未释放的按下状态；或 CGEventPost 本身返回错误；或 releaseAllPressed 返回失败结果。"调用 releaseAllPressed" ≠ "物理键已经释放"。
+   b. 系统行为：按 §5.3.1 规则 6 Step 4 执行**有界重试 ≤ 3 次，每次 ≤ 30ms**（含重新 snapshot + 重新注入），告警 CFX-W-INJ-RELEASE-INCOMPLETE；**禁止无限重试**；有界重试仍失败则按 Step 5 进入 **local safety degradation**——强制清空内部按下状态记录 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进入 RECOVERY 态，保证 P3 Recoverable。
+   c. 用户感知：可能出现短暂"粘键"，有界重试或 local safety degradation 后恢复；日志提示释放未完成与最终处置（CLOSED / degraded）；不出现无限重试卡死。
 
 ---
 
@@ -487,8 +534,10 @@ Inj -> Tx : InjectResult{ok, latencyUs}
 1. **用户态屏幕查询规则**：CF2 必须通过 NSScreen / CGDisplay 用户态 API 查询 macOS 主显示器逻辑几何（原点、宽高）；禁止依赖内核态或特权操作。
    a. 验收条件：[查询屏幕边界] → [经 NSScreen/CGDisplay 用户态 API 返回 ScreenBoundary]
 
-2. **屏幕边界声明规则**：ScreenBoundary 必须声明主显示器逻辑宽高与原点；原点必须为屏幕左上角 (0,0)（复用 CF0 §5.4.1.4 坐标原点规则）；宽高为正整数。
-   a. 验收条件：[查询 ScreenBoundary] → [origin=(0,0), width>0, height>0]
+2. **屏幕边界声明规则（CF2-REQ-R6 修订）**：**CF2 是"CF0 Logical Screen Space 的 macOS 实现"**，不是自行发明坐标语义的"主显示器局部坐标适配器"。CF2 查询 macOS native screen geometry（NSScreen / CGDisplay）并**归一化为 CF0 已 Frozen 的 ScreenBoundary 语义**：原点固定为屏幕左上角 (0,0)（复用 CF0 §5.4.1.4 坐标原点规则 + 契约⑤ Coordinate Space + CF0 design §2.10.0 ScreenBoundary.originX/originY=0）；宽高为正整数。**macOS native 坐标系差异在 platform/mac/ 适配层消化**（NSScreen 原点在主显示器左下角、CGDisplay 原点在主显示器左上角、多显示器排列可能产生负坐标），适配层负责将 native geometry 转换为 CF0 Frozen 的左上角 (0,0) 原点语义后呈现给 Core 层，**禁止让 CF2 发明坐标语义或假定 native origin 直接等于 (0,0)**。多显示器合并规则引用 CF0 §5.4.1.7（第一版每端点按单一逻辑屏幕处理，合并取包围盒或声明不支持）。
+   a. 验收条件：[查询 ScreenBoundary] → [返回 CF0 Frozen 语义：origin=(0,0) 左上角, width>0, height>0，native 坐标系差异已在 platform/mac/ 消化]
+   b. 验收条件：[macOS 多显示器 / NSScreen 左下角原点 / CGDisplay 左上角原点] → [platform/mac/ 适配层归一化为 CF0 左上角 (0,0) 语义，Core 层不感知 native 差异]
+   c. 验收条件：[审查 Core 层] → [不出现 NSScreen/CGDisplay native 坐标假设，仅依赖 CF0 ScreenBoundary 语义]
 
 3. **查询延迟与缓存规则**：ScreenBoundary 查询延迟必须 ≤ 10ms；查询结果可缓存，分辨率变更或显示器连接/断开时失效重查并更新缓存。
    a. 验收条件：[测量查询耗时] → [≤ 10ms]
@@ -501,13 +550,15 @@ Inj -> Tx : InjectResult{ok, latencyUs}
    a. 验收条件：[端点存在多显示器 + 声明合并] → [合并为单一逻辑边界，取包围盒]
    b. 验收条件：[端点存在多显示器 + 未声明合并] → [拒绝加入拓扑，提示需声明合并或不支持]
 
-6. **边缘越界检测规则**：当鼠标移动事件产生时，CF2 必须在捕获回调内（≤ 500us）实时比较光标坐标与屏幕逻辑边缘；光标越过左边缘（x < 0）或右边缘（x > width）时产生越界事件（方向 + 越界量）；上/下边缘不触发（复用 CF0 §5.4.1.2）。
-   a. 验收条件：[光标 x = width + 5] → [产生右边缘越界事件，越界量=5]
-   b. 验收条件：[光标 x = -3] → [产生左边缘越界事件，越界量=3]
+6. **边缘越界检测规则**：当鼠标移动事件产生时，CF2 必须在 **Capture/Input thread（回调后处理线程）** 内（≤ 500us）实时比较光标坐标与屏幕逻辑边缘；光标越过左边缘（x < 0）或右边缘（x > width）时产生越界事件（方向 + 越界量）；上/下边缘不触发（复用 CF0 §5.4.1.2）。**检测不在 CGEventTap 回调内完成**（CF2-REQ-R1 修订）。完整流程：CGEventTap callback → 最小字段提取 + Modifier atomic update + RawInputEvent enqueue（≤1ms 返回，复用 CF0 §4.6.4）→ Capture/Input thread 消费 RawInputEvent → Edge Detection 比较光标坐标与屏幕逻辑边缘（≤500us）→ 若越界则产生 EdgeOverflowEvent 经无锁 SPSC 队列递交 CF0 Handoff FSM（复用 CF0 §4.6.2 FSM 单线程所有权 + 契约⑦ CF0-ARCH-CONCURRENCY-002）。CF2 不在回调内直接调用 FSM，不创造 CF0 FSM 与系统回调线程的新调用关系。
+   a. 验收条件：[光标 x = width + 5] → [Capture/Input thread 产生右边缘越界事件，越界量=5，经 SPSC 队列递交 FSM]
+   b. 验收条件：[光标 x = -3] → [Capture/Input thread 产生左边缘越界事件，越界量=3，经 SPSC 队列递交 FSM]
    c. 验收条件：[光标 y < 0 或 y > height] → [不产生越界事件，不触发 Handoff]
+   d. 验收条件：[审查回调代码] → [回调内无 Edge Detection、无 FSM 调用、无越界事件产生；Edge Detection 在 Capture/Input thread 完成]
 
-7. **越界事件输出规则**：越界事件必须输出至 CF0 Handoff FSM 供其消费触发 Handoff；越界事件含边缘方向（左/右）与越界量（像素）；纵向坐标供 CF0 Coordinate Engine 按比例映射。
-   a. 验收条件：[右边缘越界 5px，纵向 540] → [输出越界事件{direction=Right, overflow=5, y=540} 至 FSM]
+7. **越界事件输出规则**：越界事件必须经**无锁 SPSC 队列**递交 CF0 Handoff FSM 供其消费触发 Handoff（CF2-REQ-R1 修订：复用 CF0 §4.6.2 FSM 单线程所有权 + 契约⑦ CF0-ARCH-CONCURRENCY-002，FSM 由专属线程串行消费，CF2 不跨线程直接调用 FSM）；越界事件含边缘方向（左/右）与越界量（像素）；纵向坐标供 CF0 Coordinate Engine 按比例映射。
+   a. 验收条件：[右边缘越界 5px，纵向 540] → [Capture/Input thread 输出越界事件{direction=Right, overflow=5, y=540} 经 SPSC 队列递交 FSM，FSM 线程串行消费]
+   b. 验收条件：[审查越界事件递交路径] → [经无锁 SPSC 队列，无跨线程 FSM 直接调用，无锁竞争]
 
 8. **越界检测不依赖画面规则**：边缘越界检测必须仅基于光标坐标与声明的逻辑边界比较，禁止依赖任何屏幕画面、截图、像素数据（复用 CF0 契约⑤）。
    a. 验收条件：[越界检测过程] → [不读取、不传输任何像素数据，仅坐标比较]
@@ -522,20 +573,28 @@ Inj -> Tx : InjectResult{ok, latencyUs}
 
 ```plantuml
 @startuml
-participant "CGEventTap 回调" as Tap
+participant "CGEventTap 回调\n(系统回调线程)" as Tap
+participant "无锁 SPSC 队列\n(固定容量)" as Q
+participant "Capture/Input thread\n(CF2 后处理)" as Cap
 participant "边缘检测\n(CF2)" as Edge
 participant "屏幕边界缓存" as Cache
-participant "CF0 Handoff FSM" as Fsm
+participant "无锁 SPSC 队列\n(递交 FSM)" as QFsm
+participant "CF0 Handoff FSM\n(FSM 专属线程)" as Fsm
 
-Tap -> Edge : 鼠标移动事件(光标坐标)
+Tap -> Tap : 最小字段提取 + Modifier atomic update\n(≤1ms 返回, 无 FSM 调用)
+Tap -> Q : enqueue RawInputEvent\n(无堆分配, 满则 drop+计数)
+Q -> Cap : 消费 RawInputEvent
+Cap -> Edge : 鼠标移动事件(光标坐标)
 Edge -> Cache : 查询 ScreenBoundary
 Cache -> Edge : 返回(width, height)
 Edge -> Edge : 比较光标坐标与边缘\n(≤500us)
 alt 越界
-    Edge -> Fsm : 越界事件{direction, overflow, y}
+    Edge -> QFsm : enqueue 越界事件{direction, overflow, y}
+    QFsm -> Fsm : FSM 线程串行消费\n(无锁, 无跨线程调用)
 else 未越界
-    Edge -> Tap : 无越界
+    Edge -> Cap : 无越界
 end
+note over Tap: 回调内无 Edge Detection / 无 FSM 调用\n(CF2-REQ-R1, CF0 §4.6.4 + §4.6.2 + 契约⑦)
 @enduml
 ```
 
@@ -577,16 +636,19 @@ end
    a. 验收条件：[CGEventFlags 含 kCGEventFlagMaskShift] → [ModifierState.Shift = true]
    b. 验收条件：[CGEventFlags 不含 kCGEventFlagMaskShift] → [ModifierState.Shift = false]
 
-3. **无锁状态存储规则**：ModifierState 必须使用 std::atomic<ModifierState> 无锁存储；捕获回调线程写入，FSM 线程与注入路径读取，禁止互斥量（复用 CF0 §4.6.5）。
-   a. 验收条件：[审查 ModifierState 存储] → [std::atomic<ModifierState>，is_lock_free()=true]
-   b. 验收条件：[并发读写 ModifierState] → [无锁竞争，读取延迟 ≤ 100ns]
+3. **无锁状态存储规则（CF2-REQ-R3 分层）**：
+   - **Architecture Requirement（CF0 inherited Gate）**：ModifierState 必须使用 `std::atomic<ModifierState>` 无锁存储；目标平台（CF0 §4.5.5 编译器矩阵）必须验证 `is_lock_free() == true`（编译期 `static_assert`，复用 CF0 §8.2.8 + design §2.7.3，此为 CF0 已 Frozen 的硬 Gate，非 CF2 自行定义的可移植保证）；捕获回调线程写入，FSM 线程与注入路径读取，禁止互斥量（复用 CF0 §4.6.5）。
+   - **Performance Evidence（测量型 DFX）**：CI / physical validation benchmark 记录并发读写延迟 P50/P95/P99，目标 P50 读 ≤ 100ns / 写 ≤ 200ns（参考硬件测量，非源码可移植硬性 Contract）。
+   a. 验收条件：[审查 ModifierState 存储] → [std::atomic<ModifierState>，编译期 static_assert(is_lock_free())，无 std::mutex]
+   b. 验收条件：[CI benchmark 并发读写 ModifierState] → [记录 P50/P95/P99，参考硬件上 P50 读 ≤ 100ns / 写 ≤ 200ns；不达标时加宽预算而非破坏 is_lock_free()]
 
-4. **修饰键状态读取延迟规则**：ModifierState 读取延迟必须 ≤ 100ns（无锁原子读）；写入延迟必须 ≤ 200ns。
-   a. 验收条件：[测量读取耗时] → [≤ 100ns]
-   b. 验收条件：[测量写入耗时] → [≤ 200ns]
+4. **修饰键状态读取延迟规则（CF2-REQ-R3 测量型 DFX）**：本规则为 Performance Evidence（测量型 DFX），非可移植功能 Contract。Architecture Requirement（`is_lock_free() == true` 编译期 static_assert）已在规则 3 定义为 CF0 inherited Gate。在 CI / physical validation 中 benchmark 记录读取/写入延迟 P50/P95/P99；目标 P50 读 ≤ 100ns / 写 ≤ 200ns（参考硬件测量值，不达标时加宽预算或升级目标平台，而非破坏 `is_lock_free()`）。
+   a. 验收条件：[CI benchmark 测量读取耗时] → [记录 P50/P95/P99，参考硬件 P50 ≤ 100ns]
+   b. 验收条件：[CI benchmark 测量写入耗时] → [记录 P50/P95/P99，参考硬件 P50 ≤ 200ns]
 
-5. **按下状态快照生成规则**：CF2 必须能即时生成 PressedStateSnapshot，包含当前 ModifierState、所有按下鼠标按钮列表、所有按下普通键列表；生成延迟必须 ≤ 1ms；快照用于断线释放与 Handoff 时修饰键同步。
-   a. 验收条件：[请求 PressedStateSnapshot] → [≤ 1ms 内返回，含 modifiers + pressedMouseButtons + pressedKeys]
+5. **按下状态快照生成规则（CF2-REQ-R5 修订）**：CF2 必须能即时生成 PressedStateSnapshot，包含当前 ModifierState、按下鼠标按钮位图（MouseButtonBitmap）、按下普通键位图（KeyCodeBitmap）；生成延迟必须 ≤ 1ms；快照用于断线释放与 Handoff 时修饰键同步。**按下集合必须采用 fixed-size bitmap + atomic/SPSC ownership model**（详见 §4.6.4），**禁止使用 std::vector 等动态容器承载按下集合**（动态 vector 无法保证 snapshot 不与捕获线程写操作发生 data race；键盘是有限键码集合，固定大小位图即可承载）。
+   a. 验收条件：[请求 PressedStateSnapshot] → [≤ 1ms 内返回，含 modifiers + MouseButtonBitmap + KeyCodeBitmap，无 std::vector，无 data race]
+   b. 验收条件：[并发：捕获线程写 bitmap + FSM/injection 线程读快照] → [经 std::atomic<Bitmap>（is_lock_free static_assert）或 SPSC 队列，无锁竞争，无 data race]
 
 6. **修饰键状态对齐规则**：Handoff 完成后目标端进入被控态时，CF2 必须根据源端 ModifierState 快照显式构造并注入修饰键按下/释放事件，对齐本端 ModifierState；对齐后本端状态与源端一致。
    a. 验收条件：[源端 Shift+Ctrl 按下 + Handoff 完成] → [目标端注入 Shift 按下 + Ctrl 按下，本端 ModifierState={Shift:true, Ctrl:true}]
@@ -735,17 +797,19 @@ note over Cap,Inj: 独立线程, 无共享可变状态\n经无锁队列/std::ato
 2. **failedCount**：注入失败计数，无符号 32 位整数；单次注入为 0 或 1，批量注入为该批次失败帧数。
 3. **latencyUs**：注入延迟，无符号 64 位整数，单位微秒；单次注入必须 ≤ 5000（5ms）。
 
-## **6.4 PressedStateSnapshot（CF0 定义，CF2 产出）**
+## **6.4 PressedStateSnapshot（CF0 定义，CF2 产出，CF2-REQ-R5 修订）**
 
-1. **modifiers**：当前修饰键状态，ModifierState 位图；由 CF2 从 std::atomic<ModifierState> 无锁读取。
-2. **pressedMouseButtons**：当前按下的鼠标按钮列表，std::vector<MouseButton>；由 CF2 维护。
-3. **pressedKeys**：当前按下的普通键列表，std::vector<KeyCode>；由 CF2 维护。
+1. **modifiers**：当前修饰键状态，ModifierState 位图；由 CF2 从 std::atomic<ModifierState> 无锁读取（is_lock_free static_assert，复用 CF0 §8.2.8）。
+2. **pressedMouseButtons**：当前按下的鼠标按钮位图，**MouseButtonBitmap**（fixed-size 位图，位宽 = MouseButton 枚举基数，编译期确定）；由 CF2 从 std::atomic<MouseButtonBitmap> 无锁读取或经 SPSC 队列递交。**禁止使用 std::vector<MouseButton>**（动态 vector 无法保证 snapshot 无 data race）。
+3. **pressedKeys**：当前按下的普通键位图，**KeyCodeBitmap**（fixed-size 位图，位宽 = KeyCode 枚举基数，编译期确定；键盘为有限键码集合）；由 CF2 从 std::atomic<KeyCodeBitmap> 无锁读取或经 SPSC 队列递交。**禁止使用 std::vector<KeyCode>**。
+4. **ownership model**：捕获线程写 bitmap，FSM/injection 线程读快照，经 std::atomic<Bitmap>（is_lock_free static_assert）或无锁 SPSC 队列传递，无锁竞争，无 data race（详见 §4.6.4）。
 
-## **6.5 ScreenBoundary（CF0 定义，CF2 产出）**
+## **6.5 ScreenBoundary（CF0 定义，CF2 产出，CF2-REQ-R6 修订）**
 
-1. **origin**：屏幕原点，固定为 (0, 0)（复用 CF0 §5.4.1.4）。
-2. **width**：屏幕逻辑宽度，正整数，单位像素；由 CF2 从 NSScreen/CGDisplay 查询。
-3. **height**：屏幕逻辑高度，正整数，单位像素；由 CF2 从 NSScreen/CGDisplay 查询。
+1. **origin**：屏幕原点，固定为 (0, 0) 左上角——此为 **CF0 Frozen 语义**（复用 CF0 §5.4.1.4 + 契约⑤ + CF0 design §2.10.0），**不是 macOS native 坐标系的直接假定**。macOS adapter（platform/mac/）负责将 native geometry（NSScreen 左下角原点 / CGDisplay 左上角原点 / 多显示器排列可能负坐标）归一化为 CF0 Frozen 的左上角 (0,0) 语义后呈现给 Core 层。
+2. **width**：屏幕逻辑宽度，正整数，单位像素；由 CF2 从 NSScreen/CGDisplay 查询 native geometry，经 platform/mac/ 适配层归一化为 CF0 逻辑宽度。
+3. **height**：屏幕逻辑高度，正整数，单位像素；由 CF2 从 NSScreen/CGDisplay 查询 native geometry，经 platform/mac/ 适配层归一化为 CF0 逻辑高度。
+4. **坐标语义归属**：CF2 是"CF0 Logical Screen Space 的 macOS 实现"，不发明坐标语义；native 坐标系差异在 platform/mac/ 消化（契约①），Core 层仅依赖 CF0 Frozen 的 ScreenBoundary 语义。
 
 ## **6.6 EdgeOverflowEvent（CF2 新增）**
 
@@ -919,13 +983,14 @@ CF2 在 CF0/CF1 冻结基线之上，新增六个 macOS 输入捕获地基：
 - **Acceptance Test**：[事件 source_node_id ≠ 主控端] → [拒绝注入，告警 CFX-E-INJ-UNAUTHORIZED-SOURCE]
 - **对应规则**：§5.3.1 规则 3, 9
 
-### CF2-S03-REQ-002：断线强制释放（≤100ms）
-- **Contract**：被控态链路断开时必须 ≤100ms 内释放所有按下键/按钮。
-- **Invariant**：断线后 100ms 内 PressedStateSnapshot 中全部按下状态释放。
-- **Violation**：断线后超时未释放导致"粘键"。
-- **Observable Evidence**：断线释放日志含释放清单与耗时 ≤100ms。
-- **Acceptance Test**：[被控态链路断开 + 存在按下键] → [≤100ms 内全部释放，无残留]
-- **对应规则**：§5.3.1 规则 6
+### CF2-S03-REQ-002：断线强制释放（≤100ms，CF2-REQ-R7 bounded completion）
+- **Contract**：被控态链路断开时必须 ≤100ms 内释放所有按下键/按钮（成功路径）；CGEventPost / releaseAllPressed 失败时执行有界重试 ≤3 次（每次 ≤30ms），不无限重试；有界重试仍失败则 local safety degradation（强制清空内部按下状态 + 告警 CFX-E-INJ-RELEASE-FAILED + 通知 CF0 FSM 进 RECOVERY），保证 P3 Recoverable。
+- **Invariant**：成功路径断线后 100ms 内 PressedStateSnapshot 中全部按下状态释放（CLOSED）；失败路径有界重试 ≤3 次后进入 local safety degradation，无无限重试循环。
+- **Violation**：断线后超时未释放导致"粘键"；或 release 失败时无限重试卡死影响 P3；或未验证 CGEventPost 注入结果即假定物理键已释放。
+- **Observable Evidence**：断线释放日志含释放清单、耗时、最终处置（CLOSED / degraded）；失败路径含有界重试计数与 CFX-E-INJ-RELEASE-FAILED 告警。
+- **Acceptance Test**：[被控态链路断开 + 存在按下键 + 注入成功] → [≤100ms 内全部释放，状态 CLOSED，无残留]
+- **Acceptance Test**：[CGEventPost 失败] → [有界重试 ≤3 次，每次 ≤30ms；仍失败则 local safety degradation + 告警 CFX-E-INJ-RELEASE-FAILED + FSM 进 RECOVERY，P3 保持，无无限重试]
+- **对应规则**：§5.3.1 规则 6, §5.3.3 异常 4
 
 ## **9.4 S04 屏幕边界与边缘越界检测 验证矩阵**
 
@@ -947,13 +1012,14 @@ CF2 在 CF0/CF1 冻结基线之上，新增六个 macOS 输入捕获地基：
 
 ## **9.5 S05 修饰键状态追踪 验证矩阵**
 
-### CF2-S05-REQ-001：修饰键无锁状态（std::atomic）
-- **Contract**：ModifierState 必须使用 std::atomic 无锁存储；禁止互斥量。
-- **Invariant**：ModifierState 存储为 std::atomic<ModifierState>；is_lock_free()=true。
-- **Violation**：使用 std::mutex 保护 ModifierState。
-- **Observable Evidence**：代码使用 std::atomic；无 std::mutex；读取 ≤100ns。
-- **Acceptance Test**：[并发读写 ModifierState] → [无锁竞争，读取 ≤100ns]
-- **对应规则**：§5.5.1 规则 3, 8
+### CF2-S05-REQ-001：修饰键无锁状态（std::atomic，CF2-REQ-R3 分层）
+- **Contract（Architecture Requirement，CF0 inherited Gate）**：ModifierState 必须使用 `std::atomic<ModifierState>` 无锁存储；目标平台（CF0 §4.5.5 编译器矩阵）必须 `is_lock_free() == true`（编译期 `static_assert`，复用 CF0 §8.2.8 + design §2.7.3）；禁止互斥量。
+- **Contract（Performance Evidence，测量型 DFX）**：CI / physical validation benchmark 记录并发读写延迟 P50/P95/P99，目标 P50 读 ≤ 100ns / 写 ≤ 200ns（参考硬件测量，非源码可移植硬性 Contract）。
+- **Invariant**：ModifierState 存储为 std::atomic<ModifierState>；编译期 static_assert(is_lock_free())；无 std::mutex。
+- **Violation**：使用 std::mutex 保护 ModifierState；或目标平台 is_lock_free() == false 未修复。
+- **Observable Evidence**：代码使用 std::atomic + static_assert(is_lock_free())；无 std::mutex；CI benchmark 输出 P50/P95/P99 读/写延迟报告。
+- **Acceptance Test**：[并发读写 ModifierState] → [编译期 static_assert(is_lock_free()) 通过；CI benchmark 记录 P50/P95/P99，参考硬件 P50 读 ≤ 100ns / 写 ≤ 200ns]
+- **对应规则**：§5.5.1 规则 3, 4, 8
 
 ### CF2-S05-REQ-002：修饰键显式同步
 - **Contract**：Handoff 完成后目标端必须根据源端快照显式对齐 ModifierState。
