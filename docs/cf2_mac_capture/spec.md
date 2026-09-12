@@ -6,7 +6,7 @@
 > **CF0 冻结基线引用**：本阶段所有需求严格遵循 `.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）冻结的全部架构基线，包括 Driverless User-Mode Architecture、C++20 技术栈、Canonical Input Event 规范化隔离、Handoff 六态 FSM（ARMED/PENDING/ACK/ACTIVE/COOLDOWN/RECOVERY）、防抖/冷却/驻留/熔断、Input/Control 双平面隔离、FSM 单线程所有权、捕获回调轻量化（≤1ms）、7 个核心契约、CF0 Architecture Safety Invariant（P1 No Split-Brain / P2 No Void-Owner / P3 Recoverable）、并发模型（≤8 线程）、用户态约束。
 > **CF1 冻结基线引用**：本阶段复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）、Topology Membership、Session Epoch，作为捕获事件的源端标识与拓扑邻居查询依据；不修改 CF1 身份与发现机制。
 > **CF0 接口契约引用**：CF2 实现 CF0 冻结的 `IInputCapture`、`IInputInjector`、`IMonotonicClock`、`IScreenQuery` 四个平台抽象接口（见 `platform/common/platform_ports.hpp`）的 macOS 适配层，不修改接口签名。
-> **文档状态**：DRAFT v1.3（Amendment）→ 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
+> **文档状态**：DRAFT v1.4（Amendment）→ 待用户审查冻结（Evidence-First，先规格后实现，不进入 Design，不直接 Coding）
 
 > **Amendment v1.1 变更记录（受控修订，不删除重写）**
 > **修订背景**：大G 项目经理 Requirements Gate 审查裁决 = CONDITIONAL FAIL / REVISION REQUIRED，发现 7 项问题（5 BLOCKER + 1 BLOCKER + 1 REQUIRED）。本次 Amendment 仅修复下列 7 项，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标，不修改 CF0/CF1 Frozen 文档，不进入 Design，不直接 Coding。所有修订保持 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一验证格式。
@@ -35,6 +35,12 @@
 > - **CF2-REQ-R10 (🔴 BLOCKER，v1.2 → v1.3 重新修复)**：Queue-full Drop Policy 对 Key/Button Press/Release 仍然没有形成可证明的闭环。修正：**废弃 v1.2 的单通道 + gap counter 模型，冻结双通道模型（方案 A：为状态变更事件建立保留通道）**——CGEventTap callback 按事件类型分发到两个独立无锁 SPSC 队列：SPSC_DATA（MouseMove/Wheel，Drop Oldest）+ SPSC_STATE（Key/Button Press/Release，reserved capacity，必须可靠进入 STATE lane）。SPSC_STATE 具有预留容量（默认 64，按 "单次用户操作 burst 内状态变更事件数上界 + 余量" 预留，人类输入速率有限，正常设计条件下 callback 无需等待即可提交状态事件）。SPSC_STATE 饱和（异常过载）时执行 **确定性安全降级**（非简单 gap++）：callback 设置 stateChannelSaturated + 告警 CFX-E-CAP-STATE-CHANNEL-SATURATED；Capture thread 检测饱和 → **authoritative resynchronization**（修饰键: CGEventSourceFlagsState ground truth + 按键/按钮: bitmap best-effort + FSM 进 RECOVERY），**不依赖 gap counter 神奇恢复**。**PressedState authoritative source 冻结**：CGEvent callback → SPSC_STATE → Capture thread → mutable bitmap → SPSC snapshot publication → FSM/Injection thread，只有 Capture thread 的 bitmap 是权威状态。涉及 §4.6.4、§5.2.1 规则 11、§9.2。
 > - **文档一致性修复（顺手，非 Blocker）**：§5.1.1 规则 2 仍使用 "将 CGEvent 转换为 RawInputEvent 并异步派发"，与 §5.4/§7.1 已更严格定义不一致。修正：§5.1.1 规则 2、§5.1.2、§5.6.2 的流程文字统一为 "CGEventTap callback → minimal extraction → RawInputEvent enqueue → Capture/Input thread → normalization / edge detection / downstream dispatch"。涉及 §5.1.1 规则 2、§5.1.2、§5.6.2。
 > **未变更项（v1.3）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、R1-R9/R11 已修复内容全部保持不变。
+
+> **Amendment v1.4 变更记录（受控修订，不删除重写）**
+> **修订背景**：大G 项目经理对 v1.3 的 Requirements Gate 复审裁决 = CONDITIONAL FAIL / REVISION REQUIRED。v1.3 已正确修复 R8/R9/R10/R11 核心架构（双通道 + authoritative resynchronization + ownership model + bounded completion），但全文 Callback Boundary 一致性未完全闭合——v1.3 在核心 R10 修复中已正确冻结 callback 边界（callback 仅 enqueue，不调用 onEvent/FSM/Edge Detection），但旧文本残留导致全文 Contract 冲突：§5.1.1 规则 9 仍写"回调仅做 CGEvent→RawInputEvent 转换 + 异步派发"，§5.2.2 时序图仍描述 callback 内完成全部转换并返回，多处"异步派发"/"回调内派发"措辞与 R8 冻结的"callback 不调用 onEvent"冲突。本次 Amendment 仅修复 R14（全文 Callback Boundary 一致性），不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标 / R1-R11 已修复内容 / 双通道架构 / SPSC_DATA=256 / SPSC_STATE=64 / STATE saturation safety path / CGEventSourceFlagsState / bitmap ownership / RECOVERY / R9 ≤100ms / R11 ownership / CF0/CF1 Frozen boundary，不修改 CF0/CF1 Frozen 文档，不进入 Design，不直接 Coding。所有修订保持 EARS 格式 + Contract / Invariant / Violation / Observable Evidence / Acceptance Test 统一验证格式。
+> **修订项**：
+> - **CF2-REQ-R14 (🔴 BLOCKER)**：全文 Callback Boundary 一致性未完全闭合。冻结唯一 Callback Boundary 模型：**CGEventTap callback → minimal field extraction → Modifier atomic update → RawInputEvent enqueue（SPSC_DATA 或 SPSC_STATE）→ Capture/Input thread → normalization → edge detection → downstream dispatch / CF0 FSM**。callback MUST NOT：call onEvent / call FSM / perform edge detection / perform handoff decision / perform downstream dispatch / perform blocking operation。具体修改点：(1) §2 领域术语 Capture Thread 定义统一为新模型（callback 在系统回调线程仅 enqueue，Capture/Input thread 消费 SPSC 队列执行后处理）；(2) §4.6.4 规则 5 "异步派发"→"RawInputEvent enqueue 到无锁 SPSC 队列"；(3) §5.1.1 规则 2 验收条件 b "回调内派发"→"enqueue"；(4) §5.1.1 规则 9 统一为"callback 仅做 minimal field extraction + Modifier atomic update + RawInputEvent enqueue，不调用 onEvent/FSM/Edge Detection/downstream dispatch"；(5) §5.2.2 时序图重绘为 callback → minimal extraction → enqueue → Capture/Input thread → normalization → dispatch（原时序图描述 callback 内完成全部转换并返回，与新模型冲突）；(6) §5.6.1 规则 3 "异步派发"→"RawInputEvent enqueue"；(7) §9.1 CF2-S01-REQ-002 Contract/Invariant/Violation 统一 Callback Boundary。涉及 §2、§4.6.4、§5.1.1 规则 2/9、§5.2.2、§5.6.1 规则 3、§9.1。
+> **未变更项（v1.4）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、R1-R11 已修复内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、CF0/CF1 Frozen boundary 全部保持不变。
 
 ---
 
@@ -99,7 +105,7 @@
 : 捕获会话句柄，由 CF0 `IInputCapture.start()` 返回，含 id 与 active 标志；用于管理捕获生命周期。
 
 **Capture Thread**
-: 专责从 macOS 输入子系统采集 CGEvent 的用户态线程，仅做轻量采集与异步派发到 CF0 处理线程，禁止在回调内执行重处理（CF0 §4.6.4 捕获回调轻量化）。
+: 专责消费无锁 SPSC 队列中的 RawInputEvent 并执行 normalization / edge detection / downstream dispatch 的用户态线程；CGEventTap callback 运行在 macOS 系统回调线程，仅做 minimal field extraction + Modifier atomic update + RawInputEvent enqueue 到 SPSC 队列（SPSC_DATA / SPSC_STATE），禁止在回调内执行重处理、禁止调用 onEvent / FSM / Edge Detection / downstream dispatch（CF0 §4.6.4 捕获回调轻量化，CF2-REQ-R14 Callback Boundary 统一）。
 : 备注：CF0 8 线程模型中的捕获线程，CF2 不得新增线程。
 
 **Injection Path**
@@ -269,7 +275,7 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
    - **生成延迟**：≤ 1ms（SPSC snapshot publication：Capture thread 拷贝 256+8 bit bitmap 到 snapshot 对象，无锁竞争）；
    - 复用 CF0 §4.6.5 共享状态无锁优先。键盘是有限键码集合，不需要动态 vector。
    - **PressedState authoritative source 冻结（CF2-REQ-R10 v1.3 新增）**：PressedState 的权威状态来源链路为 **CGEvent callback → SPSC_STATE（state event reliable lane，reserved capacity，详见 §5.2.1 规则 11）→ Capture thread → mutable KeyCodeBitmap / MouseButtonBitmap → SPSC snapshot publication → FSM / Injection thread**。**只有 Capture thread 的 bitmap 是 PressedState 的权威状态**；SPSC_STATE 是状态事件到达 Capture thread 的可靠通道；gap counter（v1.2 已废弃）不能被当成 state recovery 本身。若 SPSC_STATE 饱和导致状态事件无法到达 Capture thread，Requirements 定义的真实可验证 resynchronization source =（修饰键: `CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState)` ground truth）+（按键/按钮: bitmap best-effort + FSM 进 RECOVERY + 用户自然释放），不依赖被丢弃的单个事件，不依赖 gap counter 神奇恢复（详见 §5.2.1 规则 11 drop policy）。
-5. **禁止阻塞捕获回调**：CGEventTap 回调内禁止执行磁盘 I/O、网络等待、锁竞争、sleep、同步日志写入、跨平面调用；回调仅做轻量采集并异步派发（复用 CF0 §4.6.4）。
+5. **禁止阻塞捕获回调**：CGEventTap 回调内禁止执行磁盘 I/O、网络等待、锁竞争、sleep、同步日志写入、跨平面调用；回调仅做 minimal field extraction + Modifier atomic update + RawInputEvent enqueue 到无锁 SPSC 队列（SPSC_DATA / SPSC_STATE），不调用 onEvent / FSM / Edge Detection / downstream dispatch（复用 CF0 §4.6.4，CF2-REQ-R14 Callback Boundary 统一）。
 
 ---
 
@@ -287,7 +293,7 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
 
 2. **CGEventTap 回调轻量化规则**：CGEventTap 回调必须仅做轻量采集——**CGEventTap callback → minimal extraction（最小字段提取 + Modifier atomic update）→ RawInputEvent enqueue（到无锁 SPSC 队列，详见 §5.2.1 规则 11 双通道）→ Capture/Input thread → normalization / edge detection / downstream dispatch**，禁止在回调内执行锁等待、I/O、内存分配、跨平面调用或同步日志写入；回调返回延迟必须 ≤ 1ms。**回调内禁止直接调用 CF0 Handoff FSM、禁止产生越界事件给 FSM、禁止执行 Edge Detection**（CF2-REQ-R1 修订：Edge Detection 是 Input Plane 的捕获后处理，不是 CGEventTap callback 内的 FSM 调用；流程为 CGEventTap callback → 最小字段提取 + Modifier atomic update + RawInputEvent enqueue → Capture/Input thread → Edge Detection → 越界事件经无锁 SPSC 队列递交 CF0 Handoff FSM，复用 CF0 §4.6.4 回调轻量化 + §4.6.2 FSM 单线程所有权 + 契约⑦ CF0-ARCH-CONCURRENCY-002/003）。
    a. 验收条件：[测量 CGEventTap 回调耗时] → [≤ 1ms，无锁等待/IO/内存分配]
-   b. 验收条件：[回调内派发 RawInputEvent] → [异步派发到独立处理线程，回调不阻塞等待处理完成]
+   b. 验收条件：[回调内 enqueue RawInputEvent 到无锁 SPSC 队列] → [callback 仅 enqueue 不调用消费者逻辑，Capture/Input thread 异步消费，回调不阻塞等待处理完成]
    c. 验收条件：[审查回调代码] → [无 FSM 直接调用、无越界事件产生、无 Edge Detection；越界事件由 Capture/Input thread 后处理经 SPSC 队列递交 FSM]
    d. 验收条件：[审查回调内存行为] → [无动态堆分配，RawInputEvent 传递遵循 §5.2.1 规则 11（无锁 SPSC + 固定容量 + drop policy，CF2-REQ-R4）]
 
@@ -313,8 +319,8 @@ Cf1Id --> Agent : 本端 NodeID(源端标识)
 8. **禁止项：禁止内核态捕获**：CF2 禁止以内核扩展、IOKit 驱动、HID 驱动或任何内核态机制实现输入捕获；必须完全经用户态 CGEventTap 完成。
    a. 验收条件：[审查 platform/mac/ 实现] → [无 kext/IOKit 驱动/HID 驱动，仅 CGEventTap]
 
-9. **禁止项：禁止回调内重处理**：CGEventTap 回调禁止执行规范化序号分配、时间戳标注、源端 NodeID 标注、坐标换算、Handoff 判定等业务逻辑；这些归属 CF0 处理线程，回调仅做轻量采集与异步派发。
-   a. 验收条件：[审查回调代码] → [仅含 CGEvent→RawInputEvent 转换 + 异步派发，无业务逻辑]
+9. **禁止项：禁止回调内重处理**：CGEventTap 回调禁止执行规范化序号分配、时间戳标注、源端 NodeID 标注、坐标换算、Handoff 判定等业务逻辑；这些归属 CF0 处理线程，回调仅做 minimal field extraction + Modifier atomic update + RawInputEvent enqueue 到无锁 SPSC 队列（SPSC_DATA / SPSC_STATE），不调用 onEvent / FSM / Edge Detection / downstream dispatch（CF2-REQ-R14 修订，统一 Callback Boundary）。
+   a. 验收条件：[审查回调代码] → [仅含 minimal field extraction + Modifier atomic update + RawInputEvent enqueue，无 onEvent / FSM / Edge Detection / downstream dispatch 调用，无业务逻辑]
 
 ### **5.1.2 交互流程**
 
@@ -441,16 +447,22 @@ note over Tap: 回调内无锁等待/IO/重处理\n无 FSM 调用, 无 Edge Dete
 
 ```plantuml
 @startuml
-participant "CGEventTap 回调" as Tap
+actor "桌面用户" as U
+participant "macOS 输入子系统" as MacIO
+participant "CGEventTap 回调\n(系统回调线程)" as Tap
 participant "平台适配层\n(platform/mac/)" as Adapt
-participant "RawInputEvent" as Raw
+participant "无锁 SPSC 队列\n(双通道, 固定容量)" as Q
+participant "Capture/Input thread\n(CF2 后处理)" as Cap
+participant "CF0 事件规范化" as Norm
 
-Tap -> Adapt : CGEvent
-Adapt -> Adapt : 映射 CGEventType → RawEventKind
-Adapt -> Adapt : 提取 payload\n(deltaX/deltaY/button/keyCode/wheel)
-Adapt -> Adapt : 提取 platformTime\n(CGEventTimestamp)
-Adapt -> Raw : 构造 RawInputEvent\n{platformTime, kind, payload}
-Raw -> Tap : 返回(≤100us)
+U -> MacIO : 物理键鼠操作
+MacIO -> Tap : CGEvent
+Tap -> Adapt : minimal extraction\n(类型映射 + payload 提取\n+ platformTime 提取\n+ Modifier atomic update, ≤100us)
+Adapt -> Tap : RawInputEvent\n(inline variant, 无堆分配)
+Tap -> Q : RawInputEvent enqueue\n(SPSC_DATA / SPSC_STATE, ≤1ms 返回)
+Q -> Cap : 消费 RawInputEvent
+Cap -> Norm : normalization / edge detection\n/ downstream dispatch\n(独立处理线程)
+note over Tap: 回调内无 onEvent / FSM / Edge Detection\n无 downstream dispatch / 无阻塞操作\n(CF2-REQ-R14 Callback Boundary)
 @enduml
 ```
 
@@ -752,7 +764,7 @@ Mod -> Fsm : 返回快照(≤1ms)
    a. 验收条件：[审查捕获/注入线程] → [独立线程，无共享可变状态]
    b. 验收条件：[跨路径数据交换] → [经无锁队列或 std::atomic，无互斥量]
 
-3. **捕获回调不阻塞规则**：CGEventTap 回调内禁止执行磁盘 I/O、网络等待、锁竞争、sleep、同步日志写入、跨平面调用；回调仅做轻量采集并异步派发（复用 CF0 §4.6.4）；回调返回延迟必须 ≤ 1ms。
+3. **捕获回调不阻塞规则**：CGEventTap 回调内禁止执行磁盘 I/O、网络等待、锁竞争、sleep、同步日志写入、跨平面调用；回调仅做 minimal field extraction + Modifier atomic update + RawInputEvent enqueue 到无锁 SPSC 队列（SPSC_DATA / SPSC_STATE），不调用 onEvent / FSM / Edge Detection / downstream dispatch（复用 CF0 §4.6.4，CF2-REQ-R14 Callback Boundary 统一）；回调返回延迟必须 ≤ 1ms。
    a. 验收条件：[审查回调代码] → [无 I/O/锁/sleep/同步日志/跨平面调用]
    b. 验收条件：[测量回调耗时] → [≤ 1ms]
 
@@ -987,10 +999,10 @@ CF2 在 CF0/CF1 冻结基线之上，新增六个 macOS 输入捕获地基：
 - **Acceptance Test**：[macOS 端启动捕获] → [经 CGEventTap 用户态 tap，无 kext/驱动/root 特权]
 - **对应规则**：§5.1.1 规则 1, 8
 
-### CF2-S01-REQ-002：回调轻量化（≤1ms）
-- **Contract**：CGEventTap 回调必须 ≤1ms 返回；回调内仅轻量采集与异步派发，禁止锁等待/IO/重处理。
-- **Invariant**：回调耗时 ≤ 1ms；回调内无 mutex::lock/IO/内存分配/跨平面调用。
-- **Violation**：回调内执行锁等待、I/O、重处理或超时 >1ms。
+### CF2-S01-REQ-002：回调轻量化（≤1ms，CF2-REQ-R14 Callback Boundary 统一）
+- **Contract**：CGEventTap 回调必须 ≤1ms 返回；回调仅做 minimal field extraction + Modifier atomic update + RawInputEvent enqueue 到无锁 SPSC 队列（SPSC_DATA / SPSC_STATE），禁止锁等待/IO/重处理/调用 onEvent / FSM / Edge Detection / downstream dispatch（CF2-REQ-R14 修订，统一 Callback Boundary）。
+- **Invariant**：回调耗时 ≤ 1ms；回调内无 mutex::lock/IO/内存分配/跨平面调用；回调不调用 onEvent / FSM / Edge Detection / downstream dispatch。
+- **Violation**：回调内执行锁等待、I/O、重处理、调用 onEvent / FSM / Edge Detection / downstream dispatch 或超时 >1ms。
 - **Observable Evidence**：回调耗时测量 ≤1ms；回调代码无锁/IO/重处理。
 - **Acceptance Test**：[测量 CGEventTap 回调耗时] → [≤ 1ms，无锁等待/IO/内存分配]
 - **对应规则**：§5.1.1 规则 2
