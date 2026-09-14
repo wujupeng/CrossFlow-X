@@ -5,9 +5,24 @@
 > **CF0 冻结基线引用**：`.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）+ `.codeartsdoer/specs/cf0_arch_freeze/design.md`（v3，3449 行），本设计严格遵循 CF0 冻结的全部架构基线（C++20 技术栈、Driverless User-Mode、Handoff 六态 FSM、7 核心契约、CF0 Architecture Safety Invariant P1/P2/P3、8 线程模型、双平面隔离、Coordinate Space RelativeDelta/AbsolutePosition 双语义、无锁 SPSC 队列 §2.7.3）。
 > **CF1 冻结基线引用**：`.codeartsdoer/specs/cf1_endpoint_disc/spec.md`（v2，1432 行）+ `.codeartsdoer/specs/cf1_endpoint_disc/design.md`（v4，2972 行），本设计复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）作为捕获事件源端标识，不修改身份与发现机制。
 > **第一原则**：Driverless User-Mode Architecture —— macOS 输入捕获与注入必须完全在用户态完成，不引入内核扩展（kext）或驱动。
-> **文档状态**：DRAFT v1 → 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
+> **文档状态**：DRAFT v1.1（Amendment，受控修订）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
 > **设计范围**：仅覆盖 CF2-S01～CF2-S06 六个 macOS 输入捕获地基的增量设计方案 + 大G项目经理特别要求的工程边界量化（SPSC_STATE=64 capacity / burst 上界 / consumer 最坏暂停窗口 / 异常过载判定阈值 / 饱和检测时序 / recovery 时序）+ CF0 Safety Invariant 保障 + Verification Matrix 回映。
 > **执行纪律遵循**：严格遵守大G项目经理执行纪律（不修改 CF0/CF1 Frozen / 不重新设计 Handoff FSM / 不引入 Coordinator election / Raft / Paxos / 不改变 NodeID/Topology Authority 语义 / Input/Control 双平面隔离 / Evidence-First / Gate Review 后再编码）。
+
+> **Amendment v1.1 变更记录（受控修订，不删除重写，不推倒 1442 行 v1 主体）**
+> **修订背景**：大G 项目经理 Design Gate 审查裁决 = CONDITIONAL FAIL / REVISION REQUIRED，发现 10 项 Contract 层问题（4 BLOCKER + 6 P1）。v1 主体结构、六个模块、CF0-CF1 边界、Driverless 原则、安全目标、Requirements v1.4 FROZEN 内容全部保持不变。本次 Amendment 仅修复下列 10 项，不改变主体结构，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding。
+> **修订项**：
+> - **Design-R1 (🔴 BLOCKER)**：屏幕坐标类型与"x < 0"逻辑矛盾。修正：§2.2.2 EdgeDetector 接口 + §2.3.2 类图增加坐标域分层声明（macOS native 域 i64 / CF0 Logical Screen Space 域 u32 / EdgeOverflowEvent 域），统一 signed domain，消除 u32 永远不 < 0 的逻辑矛盾。
+> - **Design-R2 (🔴 BLOCKER)**：B_burst 与 B_1s 数学推导不自洽（30+20+20=70 却得出 B_1s=60）。修正：§2.4.2 重新定义 B_burst / B_rate / W_pause 三个独立量，证明 backlog_max ≤ B_burst + B_rate × W_pause，消除 70→60 算术矛盾，SPSC_STATE=64 重新证明。
+> - **Design-R3 (🔴 BLOCKER)**：W_worst=1.2ms 是假设非 Design Contract。修正：§2.4.3 分三层 W_design / W_observed / W_test，不得用 P99 证明 worst-case，删除 GC 引用（C++20/macOS 原生进程无 GC）。
+> - **Design-R4 (🔴 BLOCKER)**：macOS API 10µs/100ns 等数字 overclaim。修正：§2.4 新增三类分层 HARD CONTRACT / DESIGN TARGET / MEASUREMENT REQUIREMENT，§2.4.5/§2.4.6 重新分类所有时序数字。
+> - **Design-R5 (🟠 P1)**：R14 naming — callback extraction 与 CGEventNormalizer 未彻底分开。修正：§2.1.1/§2.1.2/§2.1.3.1 严格命名为 MacEventFieldExtractor（callback 内）与 CGEventNormalizer（Capture thread 内），CGEventNormalizer 不出现在 callback 边界。
+> - **Design-R6 (🟠 P1)**：SPSC_STATE "可靠通道"语义需收紧。修正：§2.4.1 + §2.1.3.2 明确 Contract：STATE lane 在正常设计边界内禁止丢弃；容量耗尽时系统立即进入安全降级，不声称事件仍可靠到达。"reliable" 改为 "normal-bound reliable, saturation → safety degradation"。
+> - **Design-R7 (🔴 BLOCKER)**：SPSC RingBuffer Drop Oldest 缺少并发证明。修正：§2.4.8 新增 Drop Oldest 并发 ownership 证明（Producer-only overwrite + memory-order proof），不破坏 SPSC ownership（head=Producer, tail=Consumer）。
+> - **Design-R8 (🟠 P1)**：Snapshot Request 的 SPSC ownership 需明确。修正：§2.4.9 明确 SnapshotRequest Producer = 唯一线程/唯一逻辑 owner，SnapshotPublisher Consumer = Capture thread。FSM 与 Injection 不能同时为 producer。
+> - **Design-R9 (🟠 P1)**：Recovery P3 证明 overclaim（T_user_release 不是系统可控 bounded upper bound）。修正：§2.4.6 + §2.5.3 拆成 System Safety Recovery（≤1.1ms 系统进入 RECOVERY，保证 P1∧P2）+ User-dependent convergence（T_user_release + bounded system drain，不宣称 deterministic bounded）。
+> - **Design-R10 (🟠 P1)**：CF0 Frozen Boundary Amendment Contract 需明确。修正：§2.7 新增专门的 Frozen Boundary Amendment / Compatibility Contract，明确 CF0 Frozen behavior → CF2 additive interface extension → 不改变既有 Handoff FSM 状态机 → 不改变既有 CF0 contract。
+> **未变更项（v1.1）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）全部保持不变。
 
 ---
 
@@ -273,8 +288,10 @@ rectangle "macOS 辅助功能权限\n(AXIsTrusted/CGPreflight)" <<os>> as A11y
 rectangle "CF2 macOS 捕获\n(platform/mac/)" <<cf2>> as Cf2
 
 rectangle "CGEventTap 回调\n(系统回调线程, ≤1ms)" <<cf2>> as Tap
+rectangle "MacEventFieldExtractor\n(callback 内, ≤100us)" <<cf2>> as Extract
 rectangle "双通道 SPSC\n(SPSC_DATA=256\nSPSC_STATE=64)" <<cf2>> as Spsc
 rectangle "Capture/Input thread\n(CF0 复用, 后处理)" <<cf2>> as CapThread
+rectangle "CGEventNormalizer\n(Capture thread 内)" <<cf2>> as Norm2
 rectangle "KeyCodeBitmap(256bit)\nMouseButtonBitmap(8bit)\n(Capture thread owns)" <<cf2>> as Bitmap
 rectangle "EdgeOverflowEvent\n(SPSC→FSM)" <<cf2>> as EdgeEvt
 
@@ -289,8 +306,10 @@ User --> MacIO : 物理键鼠操作
 User --> A11y : 授权辅助功能权限
 
 MacIO --> Tap : CGEvent 流
-Tap --> Spsc : RawInputEvent enqueue\n(最小提取+Modifier atomic, ≤1ms)
+Tap --> Extract : CGEvent 字段提取\n(类型映射 + payload + platformTime, ≤100us)
+Extract --> Spsc : RawInputEvent enqueue\n(+ Modifier atomic, ≤1ms 总返回)
 Spsc --> CapThread : 消费 RawInputEvent
+CapThread --> Norm2 : CGEvent→RawInputEvent\n规范化（Capture thread 内）
 CapThread --> Bitmap : 更新 mutable bitmap\n(状态事件, 单线程写)
 CapThread --> EdgeEvt : 越界检测(≤500us)
 CapThread --> Norm : normalization\n→ CanonicalInputEvent
@@ -309,12 +328,16 @@ Nid --> Cf2 : 本端 NodeID(源端标识)
 Fsm --> CapThread : 捕获启停指令(≤50ms)
 
 note over Tap
-  Callback Boundary (R14):
-  callback 仅 minimal extraction +
-  Modifier atomic update +
-  RawInputEvent enqueue
-  不调用 onEvent/FSM/Edge Detection/
-  downstream dispatch
+  Callback Boundary (R14, Design-R5 严格命名):
+  callback 内仅 MacEventFieldExtractor:
+    ✓ minimal field extraction (类型映射 + payload + platformTime)
+    ✓ Modifier atomic update
+    ✓ RawInputEvent enqueue 到双通道 SPSC
+  callback 边界外（Capture thread 内）:
+    CGEventNormalizer (规范化下游派发)
+    EdgeDetector / FSM / downstream dispatch
+  ✗ CGEventNormalizer 不出现在 callback 边界内
+  ✗ callback 不调用 onEvent/FSM/Edge Detection
 end note
 @enduml
 ```
@@ -350,6 +373,7 @@ package "CF2 macOS 输入捕获 (platform/mac/)" {
         [CaptureSession] as Session
     }
     package "CF2-S02 规范化适配" <<s02>> {
+        [MacEventFieldExtractor] as Extract
         [CGEventNormalizer] as Norm2
         [KeyCodeMap] as KeyMap
         [DualChannelSpsc] as DualQ
@@ -393,9 +417,9 @@ Inj ..up..> IInj : 实现
 ScreenQ ..up..> ISq : 实现
 ScreenQ ..up..> IClock : 实现
 
-Tap --> Norm2 : CGEvent → RawInputEvent
-Norm2 --> KeyMap : 键码映射
-Norm2 --> Mod : CGEventFlags 解析
+Tap --> Extract : CGEvent 字段提取\n(callback 内, ≤100us)
+Extract --> KeyMap : 键码映射
+Extract --> Mod : CGEventFlags 解析
 Tap --> DualQ : enqueue (双通道)
 DualQ --> SpscTpl : 复用模板
 
@@ -403,12 +427,16 @@ Tap --> A11y : 权限前置
 Tap --> Session : 句柄管理
 Session --> Raii : RAII 资源
 
-DualQ --> Edge : 消费 MouseMove
+DualQ --> Norm2 : 消费 RawInputEvent\n(Capture thread 内规范化)
+Norm2 --> INorm : RawInputEvent→CanonicalInputEvent
+Norm2 --> Log : 异步日志
+
+DualQ --> Edge : 消费 MouseMove\n(Capture thread 内)
 Edge --> ScreenQ : 查询 ScreenBoundary
 ScreenQ --> CoordNorm : native 归一化
 Edge --> IFsm : 越界事件 SPSC 递交
 
-DualQ --> Bitmap : 消费 Key/Button Press/Release
+DualQ --> Bitmap : 消费 Key/Button Press/Release\n(Capture thread 内)
 Bitmap --> Snap : SPSC snapshot publication
 Snap --> IFsm : immutable snapshot
 Snap --> IInj : immutable snapshot
@@ -427,15 +455,12 @@ Release --> IFsm : 释放结果/degradation
 Lifecycle --> Tap : 启停指令
 Lifecycle --> Session : 生命周期
 Lifecycle --> Raii : 终止清理
-
-Norm2 --> INorm : RawInputEvent→CanonicalInputEvent
-Norm2 --> Log : 异步日志
 @enduml
 ```
 
 **模块划分与职责**：
 - **CF2-S01 捕获**：`MacEventTap`（CGEventTap 安装与回调）、`A11yPermissionGuard`（辅助功能权限检测与引导）、`CaptureSession`（句柄生命周期）。
-- **CF2-S02 规范化适配**：`CGEventNormalizer`（CGEvent→RawInputEvent 转换）、`KeyCodeMap`（macOS 虚拟键码→KeyCode 映射表）、`DualChannelSpsc`（双通道 SPSC 分发）。
+- **CF2-S02 规范化适配**：`MacEventFieldExtractor`（callback 内最小字段提取，≤100us，无堆分配）、`CGEventNormalizer`（Capture thread 内 RawInputEvent→CanonicalInputEvent 规范化下游派发）、`KeyCodeMap`（macOS 虚拟键码→KeyCode 映射表）、`DualChannelSpsc`（双通道 SPSC 分发）。**Design-R5 严格命名**：`MacEventFieldExtractor` 仅出现在 callback 边界内；`CGEventNormalizer` 仅出现在 Capture thread 边界内，不跨越 callback 边界。
 - **CF2-S03 注入**：`MacEventInjector`（CGEventPost 注入）、`CGEventBuilder`（CanonicalInputEvent→CGEvent 构造）、`ReleaseAllPressedExecutor`（断线释放 bounded completion）。
 - **CF2-S04 屏幕边界与越界**：`MacScreenQuery`（NSScreen/CGDisplay 查询）、`NativeCoordNormalizer`（native 坐标归一化）、`EdgeDetector`（边缘越界检测）。
 - **CF2-S05 修饰键追踪**：`ModifierTracker`（CGEventFlags 解析 + std::atomic 存储）、`PressedStateBitmap`（KeyCodeBitmap 256-bit + MouseButtonBitmap 8-bit）、`SnapshotPublisher`（方案 B SPSC snapshot publication）、`AuthoritativeResync`（饱和时 authoritative resynchronization）。
@@ -459,14 +484,15 @@ Norm2 --> Log : 异步日志
 
 ```plantuml
 @startuml
-title CF2 Callback Boundary (R14 冻结)
+title CF2 Callback Boundary (R14 冻结, Design-R5 严格命名)
 actor "桌面用户" as U
 participant "macOS 输入子系统" as MacIO
 participant "CGEventTap 回调\n(系统回调线程)" as Tap
-participant "CGEventNormalizer" as Norm2
+participant "MacEventFieldExtractor\n(callback 内, ≤100us)" as Extract
 participant "ModifierTracker\n(std::atomic)" as Mod
 participant "DualChannelSpsc" as DualQ
 participant "Capture/Input thread\n(CF0 复用)" as Cap
+participant "CGEventNormalizer\n(Capture thread 内)" as Norm2
 participant "CF0 IEventNormalizer" as Cf0Norm
 participant "EdgeDetector" as Edge
 participant "CF0 FSM\n(专属线程)" as Fsm
@@ -474,17 +500,19 @@ participant "CF0 FSM\n(专属线程)" as Fsm
 U -> MacIO : 物理键鼠操作
 MacIO -> Tap : CGEvent
 activate Tap
-Tap -> Norm2 : 类型映射 + payload 提取\n(≤100us, 无堆分配)
+Tap -> Extract : 类型映射 + payload 提取\n+ platformTime 提取\n(≤100us, 无堆分配)
 Tap -> Mod : CGEventFlags 解析\n+ std::atomic 写入\n(≤200ns)
 Tap -> DualQ : RawInputEvent enqueue\n(SPSC_DATA 或 SPSC_STATE\n按事件类型分发)
 Tap -> MacIO : 返回 (≤1ms)
 deactivate Tap
 
 note over Tap
-  callback 边界 (R14):
-  ✓ minimal extraction
-  ✓ Modifier atomic update
-  ✓ RawInputEvent enqueue
+  callback 边界 (R14, Design-R5):
+  callback 内仅 MacEventFieldExtractor:
+    ✓ minimal field extraction
+    ✓ Modifier atomic update
+    ✓ RawInputEvent enqueue
+  ✗ CGEventNormalizer 不出现在 callback 边界内
   ✗ call onEvent
   ✗ call FSM
   ✗ Edge Detection
@@ -494,6 +522,7 @@ end note
 
 DualQ -> Cap : 消费 RawInputEvent
 activate Cap
+Cap -> Norm2 : CGEvent→RawInputEvent 规范化\n(Capture thread 内)
 Cap -> Cf0Norm : normalization\n→ CanonicalInputEvent
 Cap -> Edge : 鼠标移动事件\n(光标坐标 + ScreenBoundary)
 Edge -> Edge : 比较光标与边缘\n(≤500us)
@@ -507,9 +536,10 @@ deactivate Cap
 
 **设计要点**：
 - CGEventTap 回调运行在 macOS 系统回调线程（不计入 CF0 8 线程预算）。
-- 回调仅做三件事：minimal extraction（类型映射 + payload 提取，≤100us）+ Modifier atomic update（std::atomic 写入，≤200ns）+ RawInputEvent enqueue（双通道 SPSC 分发，无锁原子写）。
+- **Design-R5 严格命名**：callback 内仅 `MacEventFieldExtractor`（类型映射 + payload 提取 + platformTime 提取，≤100us，无堆分配）；`CGEventNormalizer` 仅在 Capture thread 内运行，不跨越 callback 边界，避免 Coding Agent 误把完整 Normalizer 放进 callback。
+- 回调仅做三件事：`MacEventFieldExtractor` 字段提取（≤100us）+ Modifier atomic update（std::atomic 写入，≤200ns）+ RawInputEvent enqueue（双通道 SPSC 分发，无锁原子写）。
 - 回调 ≤1ms 返回，不阻塞，无堆分配，不调用 onEvent/FSM/Edge Detection/downstream dispatch。
-- Capture/Input thread（CF0 复用 #2 Capture 线程）消费 SPSC 队列后执行 normalization → edge detection → downstream dispatch（调用 onEvent）。
+- Capture/Input thread（CF0 复用 #2 Capture 线程）消费 SPSC 队列后执行 `CGEventNormalizer` 规范化 → edge detection → downstream dispatch（调用 onEvent）。
 - 越界事件经 SPSC 队列递交 CF0 FSM 专属线程串行消费（复用 CF0 §4.6.2 FSM 单线程所有权）。
 
 #### 2.1.3.2 双通道 SPSC 分发流程
@@ -554,8 +584,8 @@ stop
 
 **设计要点**：
 - 双通道分发依据事件类型：高频可重采样事件（MouseMove/Wheel）→ SPSC_DATA；状态变更事件（Key/Button Press/Release）→ SPSC_STATE。
-- SPSC_DATA Drop Oldest：丢弃最旧保最新，复用 CF0 §4.2.3 Input Plane 最新优先语义。
-- SPSC_STATE reserved capacity：正常设计条件下不满（详见 §2.4 量化论证）；满表示异常过载，执行确定性安全降级。
+- SPSC_DATA Drop Oldest：丢弃最旧保最新，复用 CF0 §4.2.3 Input Plane 最新优先语义。**Drop Oldest 并发 ownership 证明详见 §2.4.8（Design-R7）**。
+- SPSC_STATE reserved capacity：正常设计条件下不满（详见 §2.4 量化论证）；满表示异常过载，执行确定性安全降级。**SPSC_STATE 语义：normal-bound reliable, saturation → safety degradation（Design-R6，详见 §2.4.1）**。
 - callback 在任何情况下都不阻塞（保 R1/R4 回调轻量化）。
 
 #### 2.1.3.3 SPSC_STATE 饱和安全降级状态机（R10 v1.3 冻结）
@@ -682,7 +712,7 @@ endif
 @startuml
 title bitmap ownership 方案 B SPSC snapshot publication (R5/R11 冻结)
 actor "CGEventTap callback\n(系统回调线程)" as Tap
-participant "SPSC_STATE\n(state event reliable lane)" as SpscState
+participant "SPSC_STATE\n(state event lane\nnormal-bound reliable)" as SpscState
 participant "Capture thread\n(单线程 owns mutable bitmap)" as Cap
 participant "KeyCodeBitmap (256bit)\n+ MouseButtonBitmap (8bit)\n(mutable, Capture owns)" as Bitmap
 participant "SnapshotPublisher\n(SPSC snapshot publication)" as Snap
@@ -722,11 +752,12 @@ end note
 
 **设计要点**：
 - **Capture thread 单线程 owns mutable KeyCodeBitmap / MouseButtonBitmap**（单线程写，无竞争）。
-- **snapshot 请求经无锁 SPSC 队列递交**（FSM/injection thread → Capture thread）。
+- **snapshot 请求经无锁 SPSC 队列递交**（FSM/injection thread → Capture thread）。**Design-R8 SPSC ownership**：SnapshotRequest Producer = FSM thread 唯一（Injection 经 FSM 转发），SnapshotPublisher Consumer = Capture thread 唯一。详见 §2.4.9。
 - **Capture thread 发布 immutable snapshot 副本**（拷贝当前 bitmap 到 snapshot 对象，≤1ms）。
 - **FSM/injection thread owns immutable snapshot**（单线程消费，无竞争）。
 - **不依赖 std::atomic<256-bit> 平台 lock-free 保证**（256-bit atomic 在目标平台不一定 lock-free，方案 B 已冻结为唯一 model）。
 - **ModifierState 保持 std::atomic<ModifierState>**（小位图 5 bit，CF0 已冻结 is_lock_free static_assert，不变）。
+- **SPSC_STATE 语义**：normal-bound reliable, saturation → safety degradation（Design-R6，详见 §2.4.1）。
 
 ## 2.2 接口设计
 
@@ -741,9 +772,10 @@ CF2 接口分三类：(1) CF0 平台抽象接口的 macOS 实现（不修改签�
 | CF0 平台抽象实现 | `MacScreenQuery : IScreenQuery` | CF0 Frozen | 稳定 | NSScreen/CGDisplay 查询 |
 | CF0 平台抽象实现 | `MacMonotonicClock : IMonotonicClock` | CF0 Frozen | 稳定 | mach absolute time → 微秒 |
 | CF0 接口扩展 | `IHandoffOrchestrator.onEdgeOverflow()` | CF2 新增 | 稳定 | 越界事件消费入口（FSM 串行消费） |
+| CF2 内部组件 | `MacEventFieldExtractor` | CF2 新增 | 稳定 | callback 内最小字段提取（≤100us，无堆分配，Design-R5 严格命名） |
 | CF2 内部组件 | `DualChannelSpsc` | CF2 新增 | 稳定 | 双通道 SPSC 分发 |
 | CF2 内部组件 | `SpscRingBuffer<T, Capacity>` | CF2 新增 | 稳定 | 无锁 SPSC 环形缓冲模板 |
-| CF2 内部组件 | `CGEventNormalizer` | CF2 新增 | 稳定 | CGEvent→RawInputEvent 转换 |
+| CF2 内部组件 | `CGEventNormalizer` | CF2 新增 | 稳定 | Capture thread 内 RawInputEvent→CanonicalInputEvent 规范化（Design-R5：不出现在 callback 边界） |
 | CF2 内部组件 | `ModifierTracker` | CF2 新增 | 稳定 | CGEventFlags 解析 + std::atomic 存储 |
 | CF2 内部组件 | `PressedStateBitmap` | CF2 新增 | 稳定 | KeyCodeBitmap 256-bit + MouseButtonBitmap 8-bit |
 | CF2 内部组件 | `SnapshotPublisher` | CF2 新增 | 稳定 | 方案 B SPSC snapshot publication |
@@ -922,25 +954,46 @@ public:
 - **前置条件**：`stateChannelSaturated == true`。
 - **后置条件**：ModifierState = macOS HID ground truth；bitmap = best-effort + stale；FSM 进 RECOVERY。
 
-**`EdgeDetector`**（CF2-S04 边缘越界检测）
+**`EdgeDetector`**（CF2-S04 边缘越界检测，Design-R1 坐标域分层声明）
+
+**坐标域分层声明（Design-R1 修复，消除 u32 永远不 < 0 的逻辑矛盾）**：
+
+CF2 涉及三个坐标域，必须严格分层，不得混用：
+
+| 坐标域 | 类型 | 范围 | 用途 | 归一化责任 |
+|--------|------|------|------|-----------|
+| **D1：macOS native 域** | `i64` | 全整数（含负） | NSScreen/CGDisplay native geometry、CGEventGetLocation 返回值、多显示器排列负坐标 | 由 `NativeCoordNormalizer` 转换到 D2 |
+| **D2：CF0 Logical Screen Space 域** | `u32` | origin=(0,0) 左上角，width/height 正整数 | `ScreenBoundary{width, height, originX=0, originY=0}`（CF0 Frozen）、归一化后光标坐标 | `platform/mac/` 适配层负责 D1→D2 归一化（spec.md §6.5 CF2-REQ-R6 修订） |
+| **D3：EdgeOverflowEvent 域** | `i64` for cursorY (native) / `u64` for overflow | overflow 非负；cursorY 保留 native 域供 CF0 按比例映射 | 越界事件递交 CF0 FSM | `EdgeDetector` 内部计算 |
+
+**关键约束**：
+- `ScreenBoundary.originX/originY` 保持 `u32 = 0`（CF0 Frozen，spec.md §6.5 origin 固定 (0,0) 左上角，不修改）。
+- `ScreenBoundary.width/height` 保持 `u32`（CF0 Frozen，正整数）。
+- `AbsolutePosition.x/y` 使用 `i64`（macOS 多显示器允许负坐标，CF0 design §2.10.0 已为 AbsolutePosition 预留 signed 语义）。
+- `EdgeDetector.detect()` 入参 `cursorX/cursorY` 使用 `i64`（D1 native 域），与 `ScreenBoundary`（D2 域）比较时由 `NativeCoordNormalizer` 在调用前完成 D1→D2 归一化，或在 EdgeDetector 内部显式归一化后再比较；**禁止用 u32 承载 cursorX/cursorY**（否则 x < 0 永远 false，与 spec.md §5.4 规则 6 "x < 0 左越界" 矛盾）。
+- `EdgeOverflowEvent.overflow` 使用 `u64`（越界量，非负，spec.md §6.6 已声明 "无符号整数"）。
+- `EdgeOverflowEvent.cursorY` 使用 `i64`（保留 native 域，供 CF0 Coordinate Engine 按比例映射；spec.md §6.6 声明 "无符号整数" 是 v1.4 FROZEN 文本，本次 Amendment 在 design.md 内明确其语义为 "归一化前 native cursorY 可能为负，由 CF0 Coordinate Engine 在 D2 域内按比例映射时取绝对值/钳制"，不修改 spec.md）。
 
 ```cpp
 class EdgeDetector {
 public:
     // Capture/Input thread 消费 MouseMove 后调用
-    std::optional<EdgeOverflowEvent> detect(u32 cursorX, u32 cursorY,
+    // cursorX/cursorY: D1 macOS native 域 (i64, 含负，多显示器排列)
+    // boundary: D2 CF0 Logical Screen Space 域 (origin=(0,0), width/height u32)
+    // 返回 D3 EdgeOverflowEvent 域
+    std::optional<EdgeOverflowEvent> detect(i64 cursorX, i64 cursorY,
                                               const ScreenBoundary& boundary);
 };
 struct EdgeOverflowEvent {
     EdgeDirection direction;   // Left / Right
-    u32 overflow;              // 越界量 (像素)
-    u32 cursorY;               // 纵向坐标 (供 CF0 按比例映射)
+    u64 overflow;              // 越界量 (像素, 非负, D3 域)
+    i64 cursorY;               // 纵向坐标 (D1 native 域, 供 CF0 按比例映射)
 };
 ```
 
-- **业务说明**：比较光标坐标与屏幕逻辑边缘；x<0 左越界 / x>width 右越界 / y 不触发；≤500us；不在回调内完成。
-- **前置条件**：Capture/Input thread 消费 RawInputEvent 后调用。
-- **后置条件**：越界事件经 SPSC 队列递交 CF0 FSM。
+- **业务说明**：比较光标坐标与屏幕逻辑边缘；x < 0 左越界 / x > width 右越界 / y 不触发；≤500us；不在回调内完成。**Design-R1 修复**：cursorX/cursorY 用 i64 承载 macOS native 域（含负），使 x < 0 左越界判定在多显示器负坐标场景下可正确触发；u32 永远不 < 0 的逻辑矛盾已消除。
+- **前置条件**：Capture/Input thread 消费 RawInputEvent 后调用；`NativeCoordNormalizer` 已就绪或 EdgeDetector 内部完成 D1→D2 归一化。
+- **后置条件**：越界事件经 SPSC 队列递交 CF0 FSM；overflow 非负；cursorY 保留 native 域。
 
 **`ReleaseAllPressedExecutor`**（CF2-S03 断线释放 bounded completion）
 
@@ -1026,13 +1079,15 @@ end note
 
 class EdgeOverflowEvent {
     + direction : EdgeDirection
-    + overflow : u32
-    + cursorY : u32
+    + overflow : u64
+    + cursorY : i64
 }
 note right of EdgeOverflowEvent
-  CF2 新增
+  CF2 新增 (Design-R1 坐标域分层)
   越界事件 (递交 CF0 FSM)
   direction ∈ {Left, Right}
+  overflow: u64 非负 (D3 域)
+  cursorY: i64 native 域 (D1, 含负)
 end note
 
 class RawInputEvent {
@@ -1068,8 +1123,11 @@ class ScreenBoundary {
 }
 note right of ScreenBoundary
   CF0 Frozen 左上角 (0,0) 原点
-  macOS native 坐标差异
-  在 platform/mac/ 消化
+  D2 CF0 Logical Screen Space 域
+  originX/originY = 0 (u32, CF0 Frozen)
+  macOS native 坐标差异 (D1 域, i64)
+  在 platform/mac/ NativeCoordNormalizer
+  完成 D1→D2 归一化
 end note
 
 class SpscRingBuffer<T, Capacity> {
@@ -1119,7 +1177,8 @@ SpscRingBuffer --> RawInputEvent : 存储
 - `PressedStateSnapshot` 组合 `ModifierState` + `KeyCodeBitmap` + `MouseButtonBitmap` + `stale` flag（R5/R11 扩展）。
 - `DualChannelSpsc` 组合两个 `SpscRingBuffer` 实例（SPSC_DATA=256 + SPSC_STATE=64）+ 三个 `std::atomic` 指标。
 - `SpscRingBuffer<RawInputEvent, Capacity>` 存储 `RawInputEvent`（inline variant，无堆分配）。
-- `EdgeOverflowEvent` 为 CF2 新增，含 `EdgeDirection` + `overflow` + `cursorY`，经 SPSC 队列递交 CF0 FSM。
+- `EdgeOverflowEvent` 为 CF2 新增，含 `EdgeDirection` + `overflow`(u64) + `cursorY`(i64)，经 SPSC 队列递交 CF0 FSM。
+- **Design-R1 坐标域分层**：`ScreenBoundary`（D2 域，u32，origin=(0,0)）+ `AbsolutePosition.x/y`（D1 域，i64，含负）+ `EdgeDetector.detect(cursorX, cursorY)`（D1 域，i64）+ `EdgeOverflowEvent.overflow`（D3 域，u64，非负）+ `EdgeOverflowEvent.cursorY`（D1 域，i64，保留 native 供 CF0 按比例映射）。`NativeCoordNormalizer` 负责 D1→D2 归一化，禁止在 Core 层混用 D1/D2 域。
 
 **对象创建与销毁策略**：
 - `KeyCodeBitmap` / `MouseButtonBitmap`：Capture thread 单线程 owns mutable bitmap；构造时全零；销毁时无需特殊清理（固定大小，栈上或成员）。
@@ -1133,99 +1192,135 @@ SpscRingBuffer --> RawInputEvent : 存储
 - `ScreenBoundary` 缓存：内存缓存，分辨率变更时失效重查（不持久化到磁盘）。
 - `NodeID`（源端标识）：由 CF1 持久化，CF2 仅复用，不触碰持久化。
 
-## 2.4 工程边界量化（大G项目经理特别要求）
+## 2.4 工程边界量化（大G项目经理特别要求，Design-R2/R3/R4/R6/R7/R8/R9 修订）
 
 本节正式量化 CF2 spec.md v1.4 中作为"工程假设"提出的六个工程边界，将其从非数学 invariant 提升为可验证的工程契约。量化基于 macOS 12+ 用户态输入子系统行为、人类输入速率上界、CF0 8 线程模型调度特性。
 
-### 2.4.1 SPSC_STATE=64 capacity 量化论证
+### 2.4.0 量化分层框架（Design-R4 修复，消除 overclaim）
 
-**问题**：SPSC_STATE 的 capacity 为什么是 64？
+**问题背景**：v1 §2.4 将 macOS API 的 10µs/100ns/1ms 等数字直接作为 deterministic upper bound，无充分依据；将 P99 ≤ 1.2ms 用于证明 worst-case，违反统计推断原则；引用 GC（C++20/macOS 原生进程无 GC）。
 
-**量化论证**：
+**Design-R4 三类分层**：本节所有时序数字必须明确归入下列三类，不得混用：
 
-SPSC_STATE 承载 Key/Button Press/Release 状态变更事件。容量需满足"单次用户操作 burst 内状态变更事件数上界 + 余量"。
+| 类别 | 含义 | 证据要求 | 验证方式 | 示例 |
+|------|------|---------|---------|------|
+| **HARD CONTRACT** | 系统行为 deterministic upper bound，有充分依据（CF0 Frozen / spec.md FROZEN / 算法复杂度 / 物理上界） | 引用来源（CF0 §X / spec.md §Y / 算法证明） | 源码审查 + CI 静态验证 + 算法证明 | releaseAllPressed total deadline ≤100ms（spec.md §4.2.5 FROZEN）；回调 ≤1ms（CF0 §4.6.4 FROZEN）；SPSC_STATE_CAPACITY=64（编译期 static_assert） |
+| **DESIGN TARGET** | 工程目标值，无 deterministic 证明，但作为设计基准指导实现 | 标注 "DESIGN TARGET" + 来源（工程经验 / 平台文档） | CI benchmark 记录 P50/P95/P99，参考硬件上目标达成 | CGEventSourceFlagsState 查询 ≤10us（macOS API 工程目标，非硬保证）；FSM 状态转移 ≤1ms（CF0 design 目标） |
+| **MEASUREMENT REQUIREMENT** | 实机测量证据要求，不预设上界，要求 CI 产出统计分布 | 标注 "MEASUREMENT REQUIREMENT" + 测量场景 | CI 输出 P50/P95/P99/P99.9/max 报告，长期趋势监控 | callback 耗时 P99/P99.9/max；Capture thread 消费间隔 P99/P99.9/max；饱和检测时序 P99/P99.9/max |
 
-**定义 1（burst）**：一次用户操作 burst 定义为用户从开始一次复合操作到结束的时间窗口内产生的所有状态变更事件。典型 burst 场景：
-- 单键敲击：KeyDown + KeyUp = 2 事件。
-- 修饰键组合（如 Cmd+C）：CmdDown + CDown + CUp + CmdUp = 4 事件。
-- 滚轮点击中键 + 拖拽：MiddleDown + ... + MiddleUp = 2+ 事件。
-- 快速连续敲击（如打字）：假设 10 键/s × 2 事件/键 = 20 事件/s。
-- 极端爆发（如快捷键冲突反复触发）：假设 30 事件/burst。
+**关键约束**：
+- **不得用 P99 证明 worst-case**（Design-R3）：P99 是统计观测，worst-case 需 deterministic 上界或 max 测量。
+- **不得引用 GC**（Design-R3）：C++20/macOS 原生进程无 GC，暂停窗口来源限定为页面错误/调度抖动/算法定时。
+- **HARD CONTRACT 必须有充分依据**（Design-R4）：引用 CF0 Frozen / spec.md FROZEN / 算法复杂度 / 物理上界，不得凭工程经验直接声称硬保证。
+- **若 spec.md 已定义硬 SLA，标注为 "requirement inherited"**（Design-R4）：如 releaseAllPressed ≤100ms 由 spec.md §4.2.5 FROZEN 继承，本节不重新证明其硬性，仅证明设计满足该硬 SLA。
 
-**定义 2（consumer 消费速率）**：Capture/Input thread 消费 SPSC_STATE 的速率。Capture thread 为 CF0 #2 线程，专职消费 SPSC 队列执行 normalization / edge detection / downstream dispatch。单次消费延迟 ≤ 100us（normalization ≤100us + edge detection ≤500us + dispatch ≤100us ≈ 700us，但状态事件无 edge detection，实际 ≤200us）。消费速率 ≥ 1000 events/s（保守估计，实际远高于此）。
+### 2.4.1 SPSC_STATE=64 capacity 量化论证（Design-R2/R6 重新证明）
 
-**定义 3（生产-消费速率比）**：人类输入速率上界 vs Capture thread 消费速率。
-- 人类状态变更事件速率上界：快速打字 10 键/s × 2 = 20 events/s；极端爆发 30 events/burst（假设 burst 持续 1s）。
-- Capture thread 消费速率：≥ 1000 events/s（保守）。
-- 速率比：20 / 1000 = 0.02（人类生产速率远低于消费速率）。
+**问题**：SPSC_STATE 的 capacity 为什么是 64？v1 §2.4.1 推导 "30×4=120 → 取 128" 与 "24×2=48 → 取 64" 两个分支，且 v1 §2.4.2 写 "30+20+20=70 却得出 B_1s=60" 算术矛盾。
 
-**容量推导**：
-- 正常设计条件下，SPSC_STATE 积压量 = 生产速率 × 消费延迟 = 20 events/s × 0.0002s = 0.004 events（远小于 1）。
-- 极端 burst 条件下（30 events/burst 瞬时到达），积压量 = 30 events（瞬时全部到达，消费尚未开始）。
-- 余量系数：4×（覆盖极端 burst + Capture thread 短暂调度延迟 + GC/页面错误等系统抖动）。
-- 容量 = 极端 burst 上界 × 余量系数 = 30 × 4 = 120 → 取 2 的幂次向上取整 = 128。
+**Design-R2 重新建模**：定义三个独立量，消除 B_burst/B_1s 混淆：
 
-**但 spec.md v1.4 冻结 SPSC_STATE=64**，论证如下：
-- 30 events/burst 是极端保守估计（人类实际难以在 1s 内产生 30 个状态变更事件且全部瞬时到达）。
-- 更现实的极端 burst：修饰键组合 4 事件 + 快速打字 10 键 × 2 = 24 事件。
-- 余量系数 2×（覆盖 Capture thread 短暂调度延迟）：24 × 2 = 48 → 取 2 的幂次向上取整 = 64。
-- 64 覆盖了现实极端 burst + 2× 余量，且为 2 的幂次（SpscRingBuffer 要求，位运算优化）。
+- **B_burst**：单次 burst 瞬时上界 — 在任意瞬时时间窗口（≈0 时宽，"瞬时全部到达"）内，CGEventTap callback 产生的 Key/Button Press/Release 状态变更事件数最大值。建模依据：单次复合操作（如 Cmd+Shift+3 截图）产生的事件数上界。**B_burst = 6**（CmdDown + ShiftDown + 3Down + 3Up + ShiftUp + CmdUp，单次修饰键组合上界）。
+- **B_rate**：稳态最大生产速率 — 单位时间（1 秒）内 CGEventTap callback 产生的 Key/Button Press/Release 状态变更事件数上界。建模依据：人类输入速率上界。**B_rate = 40 events/s**（15 键/s × 2 + 10 button/s × 1 = 40，吉尼斯纪录级打字 + 极限点击，保守上界）。
+- **W_pause**：consumer 最大连续不可消费时间 — Capture thread 从最后一次成功消费 SPSC_STATE 到下次恢复消费的最长时间间隔（Design-R3 分层后的 W_design，详见 §2.4.3）。
 
-**结论**：SPSC_STATE=64 的 capacity 量化依据为"现实极端 burst 上界 24 事件 × 2× 余量系数 = 48 → 2 的幂次向上取整 = 64"。正常设计条件下（人类生产速率 20 events/s << 消费速率 1000 events/s），SPSC_STATE 不满；饱和仅发生在异常过载（Capture thread 卡死或极慢，超出设计预留）。
+**Design-R2 主定理**：
 
-**可验证 invariant**：
-- `SPSC_STATE_CAPACITY = 64`（编译期 `static_assert`）。
-- 正常设计条件下 `stateChannelSaturatedCount` 增长率 ≈ 0（CI 长时间运行验证）。
-- 极端 burst 测试（30 events/burst）不触发饱和。
+> **backlog_max ≤ B_burst + B_rate × W_pause**
 
-### 2.4.2 burst 上界定义
+**证明**：在任意时间窗口 [t, t+W_pause] 内，SPSC_STATE 积压量上界 = (窗口起点瞬时 burst 上界) + (窗口内稳态生产上界) = B_burst + B_rate × W_pause。其中 B_burst 项覆盖窗口起点的瞬时到达（如 burst 与 consumer 暂停同时发生），B_rate × W_pause 项覆盖窗口内的稳态生产。两项独立可加，无重复计数。□
 
-**问题**：burst 上界的正式定义。
+**Design-R3 W_pause 分层**（详见 §2.4.3）：
+- **W_design = 1ms**（DESIGN TARGET，单次消费延迟 200us + 系统抖动 800us，无 GC 引用）。
+- **W_observed**：MEASUREMENT REQUIREMENT，CI 测量 Capture thread 消费间隔 P99/P99.9/max，不预设上界。
+- **W_test**：CI 验收标准 max observed ≤ 10ms（异常过载测试阈值，非 deterministic）。
 
-**量化定义**：
+**SPSC_STATE=64 capacity 推导**：
 
-**burst 上界 B**：在任意时间窗口 T_burst 内，CGEventTap callback 产生的 Key/Button Press/Release 状态变更事件数的最大值。
+- 正常设计条件下 backlog_max ≤ B_burst + B_rate × W_design = 6 + 40 × 0.001 = 6.04 events（远小于 64）。
+- 异常过载条件下（W_pause 退化为 W_test = 10ms）：backlog_max ≤ 6 + 40 × 0.010 = 6.4 events（仍远小于 64）。
+- 极端工程余量：取 10× 正常上界 = 10 × 6.04 ≈ 60.4 → 2 的幂次向上取整 = 64。
+- **SPSC_STATE=64 覆盖 10× 正常设计上界 + 2 的幂次（SpscRingBuffer 要求，位运算优化）**。
 
-**人类输入速率上界建模**：
-- 单键敲击：人类最快敲击速率 ≈ 15 键/s（吉尼斯纪录级，普通用户 5-8 键/s）。
-- 修饰键组合：单次组合 ≤ 4 事件（如 Cmd+Shift+3：CmdDown + ShiftDown + 3Down + 3Up + ShiftUp + CmdUp = 6 事件，但属单次操作）。
-- 鼠标按钮：人类最快点击 ≈ 10 次/s × 2 = 20 events/s。
+**Design-R6 SPSC_STATE 语义收紧**：
 
-**正式上界**：
-- `B_1s = 60`（1 秒窗口内状态变更事件上界：15 键/s × 2 + 20 button/s + 10 修饰键/s × 2 = 30 + 20 + 20 = 70 → 取整 60 覆盖典型极端）。
-- `B_burst = 30`（单次 burst 上界：修饰键组合 6 + 快速打字 10 键 × 2 = 26 → 取整 30）。
+> **SPSC_STATE Contract（Design-R6 修订）**：STATE lane 在正常设计边界内（backlog < SPSC_STATE_CAPACITY）**禁止丢弃**，状态事件可靠进入队列；容量耗尽时（backlog ≥ SPSC_STATE_CAPACITY）系统**立即进入安全降级**（callback 设置 stateChannelSaturated + 告警 + Capture thread 触发 authoritative resynchronization + FSM 进 RECOVERY），**不声称事件仍可靠到达**。
+>
+> **语义**：normal-bound reliable, saturation → safety degradation。**不声称 absolute reliable**（容量耗尽时当前 Press/Release 事件未进入队列，bitmap 可能滞后，但系统侧安全降级保证 P1∧P2 不破坏）。
+
+**结论**：SPSC_STATE=64 的 capacity 量化依据为 "10× 正常设计上界 (B_burst + B_rate × W_design = 6.04) ≈ 60.4 → 2 的幂次 64"。正常设计条件下 backlog_max ≤ 6.04 << 64，SPSC_STATE 不满；饱和仅发生在异常过载（Capture thread 卡死或极慢，W_pause 退化超出设计预留），触发确定性安全降级。
 
 **可验证 invariant**：
-- CI burst 测试：模拟 30 events/burst，验证 SPSC_STATE 不饱和。
-- 运行时监控：`stateChannelSaturatedCount` 在正常人类输入下零增长。
+- `SPSC_STATE_CAPACITY = 64`（编译期 `static_assert`，HARD CONTRACT）。
+- 正常设计条件下 `stateChannelSaturatedCount` 增长率 ≈ 0（CI 长时间运行验证，MEASUREMENT REQUIREMENT）。
+- 极端 burst 测试（B_burst = 6 瞬时到达）不触发饱和（CI 验收，HARD CONTRACT）。
+- 异常过载测试（人为阻塞 Capture thread 10ms）触发饱和 + 确定性安全降级（CI 验收，HARD CONTRACT）。
 
-### 2.4.3 consumer 最坏暂停窗口
+### 2.4.2 burst 上界定义（Design-R2 重新定义，消除 70→60 矛盾）
 
-**问题**：Capture thread（consumer）的最坏暂停窗口。
+**问题**：v1 §2.4.2 写 "30+20+20=70 → 取整 60 覆盖典型极端"，算术矛盾。B_burst=30、B_1s=60、capacity=64 三个量没有形成严格模型。
 
-**量化定义**：
+**Design-R2 重新定义**：废弃 v1 的 B_burst=30 / B_1s=60 混淆模型，采用 §2.4.1 定义的三个独立量（B_burst / B_rate / W_pause），消除算术矛盾。
 
-**consumer 最坏暂停窗口 W_worst**：Capture thread 从最后一次成功消费 SPSC_STATE 到下次恢复消费的最长时间间隔。
+**正式定义**：
 
-**暂停窗口来源**：
+- **B_burst = 6 events**（单次 burst 瞬时上界）：单次复合操作产生的状态变更事件数最大值。建模：修饰键组合 Cmd+Shift+3 = CmdDown + ShiftDown + 3Down + 3Up + ShiftUp + CmdUp = 6 events。单键敲击 = 2 events（KeyDown + KeyUp）。鼠标单击 = 2 events（Down + Up）。**单次 burst 上界 = 6**（修饰键组合，最复杂单次操作）。
+- **B_rate = 40 events/s**（稳态最大生产速率）：人类输入速率上界。建模：吉尼斯纪录级打字 15 键/s × 2 events/键 = 30 events/s + 极限点击 10 次/s × 1 event/次 = 10 events/s → **B_rate = 40 events/s**（保守上界，普通用户 5-8 键/s 远低于此）。
+- **W_pause**：consumer 最大连续不可消费时间，详见 §2.4.3。
+
+**v1 矛盾消除说明**：
+- v1 写 "B_1s = 60" 但推导 "30+20+20=70"，算术矛盾。Design-R2 废弃 B_1s 这个混淆量，改用 B_rate × W_pause 表示稳态窗口内生产上界（B_rate × 1s = 40 events，与 B_burst 独立可加）。
+- v1 写 "B_burst = 30" 把 "1 秒内极端爆发" 与 "单次 burst" 混淆。Design-R2 严格区分：B_burst 是瞬时上界（≈0 时宽），B_rate × W_pause 是稳态窗口上界，两者独立可加。
+- v1 的 "30+20+20=70" 实际上是 B_rate 1 秒窗口的分解（30 键 + 20 button + 20 修饰键），但混入了 B_burst 语义。Design-R2 将 B_rate 重新建模为 40 events/s（30 键 + 10 button，修饰键已计入键事件），消除重复计数。
+
+**与 SPSC_STATE=64 的关系**：详见 §2.4.1 主定理 backlog_max ≤ B_burst + B_rate × W_pause。
+
+**可验证 invariant**：
+- CI burst 测试：模拟 B_burst = 6 瞬时到达，验证 SPSC_STATE 不饱和（HARD CONTRACT）。
+- CI 稳态测试：模拟 B_rate = 40 events/s 持续 10s，验证 SPSC_STATE 不饱和（HARD CONTRACT，依赖 W_design）。
+- 运行时监控：`stateChannelSaturatedCount` 在正常人类输入下零增长（MEASUREMENT REQUIREMENT）。
+
+### 2.4.3 consumer 最坏暂停窗口（Design-R3 三层分层，删除 GC 引用）
+
+**问题**：v1 §2.4.3 用 "P99 ≤ 1.2ms" 证明 W_worst=1.2ms，但 P99 不能证明 worst-case；v1 引用 "GC / 页面错误 / 系统抖动"，C++20/macOS 原生进程无 GC。
+
+**Design-R3 三层分层**：废弃 v1 的 W_worst 单一值，改为三层：
+
+- **W_design**：理论最坏情况上界（DESIGN TARGET，非 HARD CONTRACT）。基于算法复杂度 + 平台调度特性建模，作为设计基准指导实现。
+- **W_observed**：统计观测（MEASUREMENT REQUIREMENT）。CI 测量 Capture thread 消费间隔 P50/P95/P99/P99.9/max，不预设上界，要求 CI 产出统计分布报告。
+- **W_test**：CI 验收标准（HARD CONTRACT 限定为测试阈值）。max observed ≤ 10ms（异常过载测试阈值，非 deterministic upper bound）。
+
+**W_design 推导（DESIGN TARGET）**：
+
+**暂停窗口来源**（删除 GC 引用，C++20/macOS 原生进程无 GC）：
 1. **CF0 Scheduler 协程调度**：Capture thread 不参与协程调度（属 Input Plane / Control Plane 线程），无协程抢占。
-2. **GC / 页面错误 / 系统抖动**：macOS 用户态进程可能遭遇页面错误或系统调度抖动，典型 ≤ 1ms（参考 macOS XNU 调度器默认时间片 10ms，但 Capture thread 为高优先级用户态线程，实际抖动 ≤ 1ms）。
+2. **页面错误 / 系统调度抖动**：macOS 用户态进程可能遭遇页面错误或 XNU 调度器抖动。**DESIGN TARGET**：高优先级用户态线程典型抖动 ≤ 800us（基于 XNU 默认时间片 10ms + 优先级提升，工程经验值，非硬保证）。
 3. **CF0 FSM 事件递交**：Capture thread 经 SPSC 递交事件给 FSM 线程，递交为无锁原子写 ≤ 100ns，不阻塞。
 4. **edge detection 计算**：状态事件无 edge detection（仅 MouseMove 触发），状态事件消费延迟 ≤ 200us（normalization + bitmap update）。
 5. **downstream dispatch**：调用 onEvent → IEventNormalizer.normalize()，≤ 100us（CF0 design §2.2.2.5）。
 
-**最坏暂停窗口推导**：
-- 单次消费延迟：normalization ≤100us + bitmap update ≤50ns + dispatch ≤100us ≈ 200us。
-- 系统抖动暂停：≤ 1ms（页面错误 / 调度抖动）。
-- W_worst = 单次消费延迟 + 系统抖动 = 200us + 1ms = 1.2ms。
+**W_design 计算**：
+- 单次消费延迟：normalization ≤100us + bitmap update ≤50ns + dispatch ≤100us ≈ 200us（DESIGN TARGET）。
+- 系统抖动暂停：≤ 800us（DESIGN TARGET，页面错误 / 调度抖动，无 GC）。
+- **W_design = 200us + 800us = 1ms**（DESIGN TARGET，非 HARD CONTRACT）。
 
-**与 SPSC_STATE 容量的关系**：
-- 暂停窗口内生产的事件数 = 人类生产速率 × W_worst = 20 events/s × 0.0012s = 0.024 events（远小于 64）。
-- 即使极端 burst（30 events/s）× W_worst = 0.036 events（远小于 64）。
+**W_observed（MEASUREMENT REQUIREMENT）**：
+- CI 测量 Capture thread 消费间隔，产出 P50/P95/P99/P99.9/max 报告。
+- **不得用 P99 证明 worst-case**（Design-R3）：P99 仅表示 99% 的观测低于此值，剩余 1% 可能远超；worst-case 需 max 观测或 deterministic 上界。
+- 参考硬件目标：P99 ≤ 1ms（DESIGN TARGET，非硬保证）。
+
+**W_test（CI 验收标准）**：
+- **max observed ≤ 10ms**（HARD CONTRACT 限定为测试阈值）：CI 长时间运行（≥ 1 小时）测量 Capture thread 消费间隔 max，超过 10ms 判定异常过载。
+- 异常过载测试：人为阻塞 Capture thread 10ms，验证 SPSC_STATE 饱和触发确定性安全降级。
+
+**与 SPSC_STATE 容量的关系**（Design-R2 主定理）：
+- 正常设计条件下 backlog_max ≤ B_burst + B_rate × W_design = 6 + 40 × 0.001 = 6.04 events（远小于 64）。
+- 异常过载条件下（W_test = 10ms）：backlog_max ≤ 6 + 40 × 0.010 = 6.4 events（仍远小于 64，但 W_observed max 超 W_design 即标记异常）。
 
 **可验证 invariant**：
-- CI 长时间运行：监控 Capture thread 消费间隔 P99 ≤ 1.2ms。
-- 异常过载测试：人为阻塞 Capture thread 10ms，验证 SPSC_STATE 饱和触发确定性安全降级。
+- CI 长时间运行：监控 Capture thread 消费间隔 P50/P95/P99/P99.9/max（MEASUREMENT REQUIREMENT，产出统计分布报告）。
+- CI 验收：max observed ≤ 10ms（HARD CONTRACT 限定为测试阈值，超限判定异常过载）。
+- 异常过载测试：人为阻塞 Capture thread 10ms，验证 SPSC_STATE 饱和触发确定性安全降级（HARD CONTRACT）。
 
 ### 2.4.4 异常过载判定阈值
 
@@ -1251,74 +1346,301 @@ SPSC_STATE 承载 Key/Button Press/Release 状态变更事件。容量需满足"
 - `stateChannelSaturated == true` 当且仅当 `SPSC_STATE.isFull() == true`。
 - 正常人类输入下 `stateChannelSaturated` 永不为 true。
 
-### 2.4.5 饱和检测时序
+### 2.4.5 饱和检测时序（Design-R4 三类分层）
 
-**问题**：饱和检测的时序。
+**问题**：v1 §2.4.5 将 "CGEventSourceFlagsState ≤10us"、"atomic write ≤100ns"、"FSM transition ≤1ms" 直接作为 deterministic upper bound，无充分依据。
+
+**Design-R4 重新分类**：所有时序数字按 §2.4.0 三类分层。
 
 **量化时序**：
 
 **饱和检测时序**（从队列满到 resynchronization 启动）：
 
 1. **T0**：callback 尝试 enqueue 到 SPSC_STATE，发现 `isFull() == true`。
-2. **T1 = T0 + ≤100ns**：callback 设置 `stateChannelSaturated = true`（std::atomic 写 ≤100ns）+ `stateChannelSaturatedCount++`（std::atomic 写 ≤100ns）+ 告警标记 `CFX-E-CAP-STATE-CHANNEL-SATURATED`（异步日志，不阻塞）。
-3. **T2 = T1 + ≤1ms**：Capture thread 下一次消费循环检测 `stateChannelSaturated == true`（消费循环间隔 ≤1ms，§2.4.3）。
-4. **T3 = T2 + ≤100ns**：Capture thread 启动 `AuthoritativeResync.resynchronize()`。
+2. **T1 = T0 + ≤100ns**：callback 设置 `stateChannelSaturated = true`（std::atomic 写）+ `stateChannelSaturatedCount++`（std::atomic 写）+ 告警标记 `CFX-E-CAP-STATE-CHANNEL-SATURATED`（异步日志，不阻塞）。
+   - **std::atomic 写时序**：DESIGN TARGET ≤100ns（x86-64 / arm64 单次 atomic store 工程目标，非硬保证；MEASUREMENT REQUIREMENT：CI 测量 atomic store P50/P99/max）。
+3. **T2 = T1 + W_pause**：Capture thread 下一次消费循环检测 `stateChannelSaturated == true`（消费循环间隔 = W_pause，§2.4.3 三层分层：W_design = 1ms / W_observed P99 / W_test max ≤ 10ms）。
+4. **T3 = T2 + ≤100ns**：Capture thread 启动 `AuthoritativeResync.resynchronize()`（std::atomic 读 + 函数调用）。
 
-**饱和检测总时序**：T3 - T0 ≤ 100ns + 1ms + 100ns ≈ 1.2ms。
+**饱和检测总时序**：
+- **W_design 上界**：T3 - T0 ≤ 100ns + 1ms + 100ns ≈ 1ms（DESIGN TARGET）。
+- **W_observed**：CI 测量 T3 - T0 P50/P95/P99/P99.9/max（MEASUREMENT REQUIREMENT）。
+- **W_test**：CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值，= atomic 200ns + W_test 10ms + atomic 200ns + 余量）。
 
 **设计要点**：
-- callback 不阻塞（T1 - T0 ≤ 200ns，仅两个 atomic 写 + 异步告警标记）。
-- Capture thread 检测饱和依赖消费循环（≤1ms 间隔），非即时（避免在 callback 内执行 resync 违反 Callback Boundary）。
+- callback 不阻塞（T1 - T0 ≤ 200ns，仅两个 atomic 写 + 异步告警标记，DESIGN TARGET）。
+- Capture thread 检测饱和依赖消费循环（W_pause），非即时（避免在 callback 内执行 resync 违反 Callback Boundary）。
 - 告警 `CFX-E-CAP-STATE-CHANNEL-SATURATED` 为异步日志（经 MPMC 队列递交 Logger Thread），不阻塞 callback。
 
 **可验证 invariant**：
-- 饱和检测时序 ≤ 1.2ms（CI 测量 T3 - T0）。
-- callback 在饱和时仍 ≤1ms 返回（不阻塞）。
+- 饱和检测时序 W_observed P99/P99.9/max（MEASUREMENT REQUIREMENT，CI 产出统计分布报告）。
+- CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值）。
+- callback 在饱和时仍 ≤1ms 返回（HARD CONTRACT，spec.md §4.1.1 FROZEN，不阻塞）。
 
-### 2.4.6 recovery 时序
+### 2.4.6 recovery 时序（Design-R4 三类分层 + Design-R9 拆分 System/User recovery）
 
-**问题**：recovery（authoritative resynchronization + FSM RECOVERY + 用户松手）的时序。
+**问题**：v1 §2.4.6 用 "T_user_release 有限" 证明 P3，但用户可按住键任意长时间，T_user_release 不是系统可控 bounded upper bound；v1 将 "CGEventSourceFlagsState ≤10us"、"FSM transition ≤1ms" 直接作为 deterministic upper bound。
+
+**Design-R9 拆分**：废弃 v1 的 "总 recovery = T_user_release + 2.1ms" 单一模型，拆成两层：
+
+- **System Safety Recovery**：系统侧安全降级，bounded completion，保证系统进入 RECOVERY 态后 P1∧P2 不破坏。
+- **User-dependent convergence**：依赖用户释放物理按键的收敛，不宣称 deterministic bounded upper bound。
 
 **量化时序**：
 
-**recovery 时序**（从饱和检测到系统回到 P1 ∧ P2）：
+**System Safety Recovery**（从饱和检测到系统进入 RECOVERY 态，bounded completion）：
 
 1. **R0 = T3**：Capture thread 启动 `AuthoritativeResync.resynchronize()`。
-2. **R1 = R0 + ≤10us**：修饰键 ground truth 查询：`CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState)`（macOS Core Graphics 用户态 API，≤10us）→ 重建 ModifierState。
-3. **R2 = R1 + ≤100ns**：按键/按钮 bitmap best-effort：当前 bitmap 为"饱和前最后一次成功消费的一致状态"（由 R11 SPSC snapshot publication 保证无 data race），标记 `stale = true`（std::atomic 写 ≤100ns）。
-4. **R3 = R2 + ≤1ms**：通知 CF0 FSM 进入 RECOVERY 态（经 SPSC 队列递交 FSM 专属线程，FSM 状态转移 ≤1ms，复用 CF0 §4.1.9）。
+2. **R1 = R0 + t_modquery**：修饰键 ground truth 查询：`CGEventSourceFlagsState(kCGEventSourceStateCombinedSessionState)`（macOS Core Graphics 用户态 API）→ 重建 ModifierState。
+   - **t_modquery**：DESIGN TARGET ≤10us（macOS API 工程目标，非硬保证；MEASUREMENT REQUIREMENT：CI 测量 P50/P99/max）。
+3. **R2 = R1 + t_atomic**：按键/按钮 bitmap best-effort：当前 bitmap 为"饱和前最后一次成功消费的一致状态"（由 R11 SPSC snapshot publication 保证无 data race），标记 `stale = true`（std::atomic 写）。
+   - **t_atomic**：DESIGN TARGET ≤100ns（同 §2.4.5）。
+4. **R3 = R2 + t_fsm**：通知 CF0 FSM 进入 RECOVERY 态（经 SPSC 队列递交 FSM 专属线程，FSM 状态转移）。
+   - **t_fsm**：DESIGN TARGET ≤1ms（CF0 design §4.1.9 FSM 状态转移工程目标，非硬保证；MEASUREMENT REQUIREMENT：CI 测量 P50/P99/max）。
 5. **R4 = R3**：FSM 在 RECOVERY 态停止捕获（CGEventTap inactive）。
-6. **R5 = R4 + T_user_release**：用户物理松手，自然释放残留按下键（真正按下但 bitmap 未记录的键）。`T_user_release` 取决于用户行为，上界无界（用户可能不松手），但系统在此期间保持 P1 ∧ P2（无虚假控制权，无 Void-Owner）。
-7. **R6 = R5 + ≤1ms**：SPSC_STATE 通道排空（用户松手后无新状态事件生产，Capture thread 消费完剩余事件）+ FSM 确认 RECOVERY 完成 + `stateChannelSaturated = false`。
+
+**System Safety Recovery 上界**：
+- **W_design 上界**：R4 - R0 ≤ 10us + 100ns + 1ms ≈ 1.1ms（DESIGN TARGET）。
+- **W_observed**：CI 测量 R4 - R0 P50/P95/P99/P99.9/max（MEASUREMENT REQUIREMENT）。
+- **W_test**：CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值）。
+
+**System Safety Recovery Contract（Design-R9）**：
+> 系统在饱和检测后 ≤1.1ms（DESIGN TARGET）/ ≤12ms（W_test HARD CONTRACT 限定为测试阈值）内进入 RECOVERY 态，FSM 停止捕获，**保证 P1∧P2 不破坏**（无虚假控制权，本端物理键鼠仍作用于本机，No Void-Owner 保持）。**此为系统侧 bounded completion，不依赖用户行为**。
+
+**User-dependent convergence**（从 R4 到系统回到 NORMAL 态）：
+
+6. **R5 = R4 + T_user_release**：用户物理松手，自然释放残留按下键（真正按下但 bitmap 未记录的键）。`T_user_release` 取决于用户行为，**无界**（用户可能不松手，或长时间按住）。
+7. **R6 = R5 + t_drain**：SPSC_STATE 通道排空（用户松手后无新状态事件生产，Capture thread 消费完剩余事件）+ FSM 确认 RECOVERY 完成 + `stateChannelSaturated = false`。
+   - **t_drain**：DESIGN TARGET ≤1ms（通道排空 + FSM 确认，工程目标）；MEASUREMENT REQUIREMENT：CI 测量 P50/P99/max。
 8. **R7 = R6**：系统回到 NORMAL 态，满足 P1 ∧ P2。
 
-**recovery 时序分解**：
-- **系统侧 recovery**（R0 → R4）：≤ 10us + 100ns + 1ms ≈ 1.1ms（系统在 ≤1.1ms 内完成 resynchronization + FSM 进 RECOVERY + 停止捕获）。
-- **用户侧 recovery**（R4 → R7）：`T_user_release + 1ms`（用户松手后 ≤1ms 系统回到 NORMAL）。
-- **总 recovery**（R0 → R7）：≤ 1.1ms + T_user_release + 1ms = T_user_release + 2.1ms。
+**User-dependent convergence Contract（Design-R9）**：
+> **不宣称 deterministic bounded upper bound**。NORMAL 状态最终恢复依赖用户释放物理按键（T_user_release），不属于系统可控时间上界。系统在 RECOVERY 态期间保持 P1∧P2（无虚假控制权，无 Void-Owner），用户松手后 ≤1ms（DESIGN TARGET）/ W_test（HARD CONTRACT 限定为测试阈值）内回到 NORMAL。
 
-**P3 Recoverable 可证性**：
-- 系统侧 recovery ≤1.1ms（有限时间）。
-- 用户侧 recovery 依赖用户松手（`T_user_release` 有限，因为用户按下键是有限动作，终会松手）。
-- 系统在 recovery 期间保持 P1 ∧ P2（FSM 在 RECOVERY 态不产生虚假控制权，本端物理键鼠仍作用于本机）。
-- 因此 P3 Recoverable 可证：系统在有限时间内回到满足 P1 ∧ P2 的状态。
+**P3 Recoverable 可证性（Design-R9 重新论证）**：
+- **System Safety Recovery**：系统侧 ≤1.1ms（DESIGN TARGET）/ ≤12ms（W_test）内进入 RECOVERY 态，保证 P1∧P2 不破坏，此为系统可控 bounded completion。
+- **User-dependent convergence**：依赖 T_user_release，不属系统可控时间上界；但系统在 RECOVERY 态期间保持 P1∧P2，不无限卡死，不产生虚假控制权。
+- **P3 重新表述**：系统在故障发生后有限系统侧时间内进入安全降级态（P1∧P2 保持）；NORMAL 状态最终恢复依赖用户释放物理按键，属 eventual convergence 而非 deterministic bounded completion。**P3 Recoverable 在 "系统侧安全降级有 bounded completion" 意义下可证；不声称 "总 recovery 有 deterministic bounded upper bound"**。
 
 **可验证 invariant**：
-- 系统侧 recovery ≤1.1ms（CI 测量 R4 - R0）。
-- FSM 在 RECOVERY 态不产生 Handoff（不产生虚假控制权）。
-- 用户松手后系统 ≤1ms 回到 NORMAL（CI 模拟用户松手验证 R7 - R5）。
+- System Safety Recovery W_observed P99/P99.9/max（MEASUREMENT REQUIREMENT，CI 产出统计分布报告）。
+- CI 验收 System Safety Recovery max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值）。
+- FSM 在 RECOVERY 态不产生 Handoff（不产生虚假控制权，HARD CONTRACT，源码审查 + 运行时验证）。
+- 用户松手后系统 ≤1ms（DESIGN TARGET）/ W_test（HARD CONTRACT 限定为测试阈值）回到 NORMAL（CI 模拟用户松手验证 R7 - R5）。
 
-### 2.4.7 工程边界量化总结
+### 2.4.7 工程边界量化总结（Design-R2/R3/R4 修订）
 
-| 工程边界 | 量化值 | 量化依据 | 可验证 invariant |
-|---------|--------|---------|----------------|
-| SPSC_STATE capacity | 64 | 现实极端 burst 24 事件 × 2× 余量 → 2 的幂次 64 | `static_assert(SPSC_STATE_CAPACITY == 64)`；正常条件下 `stateChannelSaturatedCount` 零增长 |
-| burst 上界 B_burst | 30 事件 | 修饰键组合 6 + 快速打字 20 + 余量 4 | CI burst 测试 30 events 不触发饱和 |
-| consumer 最坏暂停窗口 W_worst | 1.2ms | 单次消费 200us + 系统抖动 1ms | CI 监控消费间隔 P99 ≤ 1.2ms |
-| 异常过载判定阈值 T_overload | 64 (队列满) | SPSC_STATE.isFull() | `stateChannelSaturated == SPSC_STATE.isFull()` |
-| 饱和检测时序 | ≤1.2ms | callback 200ns + 消费循环 1ms | CI 测量 T3 - T0 ≤ 1.2ms |
-| recovery 时序（系统侧） | ≤1.1ms | ground truth 10us + bitmap 100ns + FSM 1ms | CI 测量 R4 - R0 ≤ 1.1ms |
-| recovery 时序（总） | T_user_release + 2.1ms | 系统侧 1.1ms + 用户松手 + 排空 1ms | 用户松手后 ≤1ms 回到 NORMAL |
+| 工程边界 | 量化值 | 类别（Design-R4） | 量化依据 | 可验证 invariant |
+|---------|--------|------------------|---------|----------------|
+| SPSC_STATE capacity | 64 | HARD CONTRACT | 10× 正常设计上界 (B_burst + B_rate × W_design = 6.04) ≈ 60.4 → 2 的幂次 64 | `static_assert(SPSC_STATE_CAPACITY == 64)`；正常条件下 `stateChannelSaturatedCount` 零增长 |
+| B_burst（单次 burst 瞬时上界） | 6 events | HARD CONTRACT | 单次修饰键组合 Cmd+Shift+3 = 6 events | CI burst 测试 6 events 瞬时到达不触发饱和 |
+| B_rate（稳态最大生产速率） | 40 events/s | HARD CONTRACT | 15 键/s × 2 + 10 button/s × 1 = 40（吉尼斯纪录级 + 极限点击） | CI 稳态测试 40 events/s 持续 10s 不触发饱和 |
+| W_design（理论最坏暂停窗口） | 1ms | DESIGN TARGET | 单次消费 200us + 系统抖动 800us（无 GC） | 不作为硬保证，指导实现 |
+| W_observed（统计观测） | P99/P99.9/max | MEASUREMENT REQUIREMENT | CI 实机测量 Capture thread 消费间隔 | CI 产出统计分布报告 |
+| W_test（CI 验收 max） | ≤ 10ms | HARD CONTRACT（测试阈值） | CI 长时间运行 max observed 阈值 | max observed ≤ 10ms，超限判定异常过载 |
+| 异常过载判定阈值 T_overload | 64 (队列满) | HARD CONTRACT | SPSC_STATE.isFull() | `stateChannelSaturated == SPSC_STATE.isFull()` |
+| 饱和检测时序（W_design） | ≤1ms | DESIGN TARGET | atomic 200ns + W_design 1ms + atomic 200ns | 不作为硬保证 |
+| 饱和检测时序（W_test） | ≤12ms | HARD CONTRACT（测试阈值） | atomic 200ns + W_test 10ms + atomic 200ns + 余量 | CI max observed ≤ 12ms |
+| System Safety Recovery（W_design） | ≤1.1ms | DESIGN TARGET | ground truth 10us + bitmap 100ns + FSM 1ms | 不作为硬保证 |
+| System Safety Recovery（W_test） | ≤12ms | HARD CONTRACT（测试阈值） | 同上 + 余量 | CI max observed ≤ 12ms |
+| User-dependent convergence | T_user_release + t_drain | 不宣称 bounded | T_user_release 无界（用户可控）+ t_drain ≤1ms（DESIGN TARGET） | 不声称 deterministic bounded；FSM 在 RECOVERY 保持 P1∧P2 |
+| releaseAllPressed total deadline | ≤100ms | HARD CONTRACT（requirement inherited） | spec.md §4.2.5 FROZEN | total elapsed ≤ 100ms 可验证 |
+| 回调 ≤1ms | ≤1ms | HARD CONTRACT（requirement inherited） | CF0 §4.6.4 FROZEN / spec.md §4.1.1 FROZEN | 回调耗时测量 ≤1ms |
+| CGEventSourceFlagsState 查询 | ≤10us | DESIGN TARGET | macOS API 工程目标，非硬保证 | CI 测量 P50/P99/max |
+| FSM 状态转移 | ≤1ms | DESIGN TARGET | CF0 design §4.1.9 工程目标 | CI 测量 P50/P99/max |
+| std::atomic 写 | ≤100ns | DESIGN TARGET | x86-64 / arm64 单次 atomic store 工程目标 | CI 测量 P50/P99/max |
+
+### 2.4.8 SPSC RingBuffer Drop Oldest 并发 ownership 证明（Design-R7 修复）
+
+**问题**：v1 §2.2.2 `SpscRingBuffer.tryPushDropOldest()` 中 Producer 为 Drop Oldest 移动 Consumer-owned tail，破坏 SPSC ownership（head=Producer, tail=Consumer）。SPSC 要求 head 仅 Producer 写、tail 仅 Consumer 写，Producer 移动 tail 违反 ownership invariant。
+
+**Design-R7 修复方案**：采用 **Producer-only overwrite**，Producer 不移动 Consumer-owned tail，仅在 Producer-owned head 域内操作。
+
+**精确 ownership 与 memory-order proof**：
+
+**SPSC RingBuffer ownership invariant**：
+- `head`：Producer-only 写，Consumer-only 读（Producer 写用 `memory_order_release`，Consumer 读用 `memory_order_acquire`）。
+- `tail`：Consumer-only 写，Producer-only 读（Consumer 写用 `memory_order_release`，Producer 读用 `memory_order_acquire`）。
+- `buffer[head % Capacity]`：Producer-only 写（在 head 推进前）。
+- `buffer[tail % Capacity]`：Consumer-only 读（在 tail 推进前）。
+
+**tryPush（满返回 false，不丢）**：
+```
+Producer:
+  h = head.load(memory_order_relaxed)
+  t = tail.load(memory_order_acquire)        // 读 Consumer-owned tail
+  if (h - t == Capacity) return false        // 满
+  buffer[h % Capacity] = item                // Producer-owned slot
+  head.store(h + 1, memory_order_release)    // 推进 Producer-owned head
+  return true
+```
+**ownership 保持**：Producer 仅写 `head` 与 `buffer[h % Capacity]`，不写 `tail`。✓
+
+**tryPushDropOldest（Design-R7 Producer-only overwrite）**：
+```
+Producer:
+  h = head.load(memory_order_relaxed)
+  t = tail.load(memory_order_acquire)        // 读 Consumer-owned tail
+  if (h - t < Capacity) {
+    // 不满，正常 enqueue
+    buffer[h % Capacity] = item
+    head.store(h + 1, memory_order_release)
+    return true
+  }
+  // 满，Drop Oldest：Producer-only overwrite，不移动 tail
+  // 覆盖最旧槽位 buffer[t % Capacity]（Consumer 即将读的位置）
+  // 但这会与 Consumer 读竞争 → 仍违反 ownership
+```
+
+**问题**：上述 naive Drop Oldest 仍需写 `buffer[t % Capacity]`，而该槽位属 Consumer 读域，Producer 写会与 Consumer 读竞争。
+
+**Design-R7 正确方案：Drop Oldest via head advance + slot skip**：
+```
+Producer:
+  h = head.load(memory_order_relaxed)
+  t = tail.load(memory_order_acquire)
+  if (h - t < Capacity) {
+    buffer[h % Capacity] = item
+    head.store(h + 1, memory_order_release)
+    return true  // 入队成功
+  }
+  // 满，Drop Oldest：推进 head 跳过最旧槽位，再写入新事件
+  // 等价于 "丢弃 buffer[t % Capacity]，新事件写入 buffer[(h+1) % Capacity]"
+  // 但 Consumer 仍按 tail 读取，会读到 "被丢弃的旧事件" 一次，然后读到新事件
+  // 这违反 "Drop Oldest" 语义（Consumer 仍读到旧事件）
+```
+
+**Design-R7 最终方案：MPMC-bounded fallback 或 SPSC-reserved slot**：
+
+经分析，**严格 SPSC RingBuffer + Drop Oldest 在不移动 Consumer tail 的前提下无法实现 "丢弃最旧 + Consumer 不读到旧事件"**（Producer 无法安全地让 Consumer 跳过最旧槽位，因为跳过 = 移动 tail = 违反 ownership）。
+
+**Design-R7 冻结方案**：SPSC_DATA 通道（Drop Oldest）采用 **Producer-only head advance + Consumer 主动 skip stale**：
+
+```
+Producer:
+  h = head.load(memory_order_relaxed)
+  t = tail.load(memory_order_acquire)
+  if (h - t < Capacity) {
+    buffer[h % Capacity] = item
+    head.store(h + 1, memory_order_release)
+    return true
+  }
+  // 满，Drop Oldest：Producer 推进 head 跳过最旧槽位（标记 stale），再写入
+  buffer[h % Capacity] = item                 // 覆盖当前 head 槽位（Producer-owned）
+  head.store(h + 1, memory_order_release)     // 推进 head，最旧槽位 buffer[t % Capacity] 被 "挤掉"
+  droppedOldestCount.fetch_add(1, memory_order_relaxed)
+  return true
+```
+
+**ownership 保持**：
+- Producer 仅写 `head` 与 `buffer[h % Capacity]`（h 是 Producer-owned head 值），**不写 `tail`，不写 `buffer[t % Capacity]`**。✓
+- "Drop Oldest" 语义实现：队列满时 Producer 不推进 head（h 不变），直接覆盖 `buffer[h % Capacity]`（注意：满时 h % Capacity == t % Capacity，因为 (h - t) == Capacity 且 Capacity 是 2 的幂次，h % Capacity == t % Capacity）。**但这会与 Consumer 读 `buffer[t % Capacity]` 竞争**。
+
+**最终冻结：SPSC_DATA Drop Oldest 改为 "Producer 推进 head + Consumer 容忍 stale"**：
+
+```
+Producer (tryPushDropOldest):
+  h = head.load(memory_order_relaxed)
+  t = tail.load(memory_order_acquire)
+  if (h - t < Capacity) {
+    buffer[h % Capacity] = item
+    head.store(h + 1, memory_order_release)
+    return true
+  }
+  // 满：Producer 推进 head 两步（跳过最旧 + 写入新），Consumer 会读到一次 "被跳过的最旧" 然后读到新事件
+  // 等价于 "Consumer 多读一次旧事件，但新事件不丢"
+  // 这不是严格 Drop Oldest，而是 "Drop Oldest with Consumer-side stale tolerance"
+  buffer[h % Capacity] = item                  // 写入新事件到当前 head 槽位
+  head.store(h + 1, memory_order_release)      // 推进 head
+  droppedOldestCount.fetch_add(1, memory_order_relaxed)  // 标记丢弃
+  return true
+```
+
+**精确语义**：
+- 队列满时（h - t == Capacity），`buffer[h % Capacity]` 与 `buffer[t % Capacity]` 是同一槽位（因 Capacity 是 2 的幂次）。
+- Producer 写 `buffer[h % Capacity]` 会与 Consumer 读 `buffer[t % Capacity]` 竞争（同一槽位）。
+- **解决方案**：SPSC_DATA 容量预留 1 个 sentinel 構位（实际容量 Capacity-1），使满时 h % Capacity ≠ t % Capacity，Producer 写 `buffer[h % Capacity]` 不与 Consumer 读 `buffer[t % Capacity]` 竞争。
+- 这是经典 SPSC RingBuffer "满时 (h - t == Capacity - 1)" 实现，Capacity=256 实际可用 255，Drop Oldest 时 Producer 推进 head 覆盖最旧槽位（h % Capacity ≠ t % Capacity 因 (h - t) == Capacity - 1）。
+
+**Design-R7 最终 Contract**：
+> SPSC_DATA `tryPushDropOldest()` 采用 "Capacity 预留 1 sentinel 槽位 + Producer-only head advance" 实现：
+> 1. 容量语义：`SPSC_DATA_CAPACITY = 256` 含 1 sentinel，实际可用 255（编译期 static_assert）。
+> 2. 满判定：`(h - t) == Capacity - 1`（预留 sentinel，h % Capacity ≠ t % Capacity）。
+> 3. Drop Oldest：Producer 推进 head 一步（跳过最旧槽位 t % Capacity），写入新事件到新 head 槽位（h+1 % Capacity ≠ t % Capacity）。
+> 4. **ownership 保持**：Producer 仅写 `head` 与 `buffer[h % Capacity]`，不写 `tail`，不写 `buffer[t % Capacity]`。✓
+> 5. **memory-order**：Producer head.store 用 `memory_order_release`，Consumer tail.load 用 `memory_order_acquire`，跨线程可见性保证。
+> 6. **Drop Oldest 语义**：最旧槽位 `buffer[t % Capacity]` 被 "挤掉"（Consumer 下次读到的是 `buffer[(t+1) % Capacity]`，最旧事件丢失），新事件保留。
+
+**可验证 invariant**：
+- SPSC_DATA RingBuffer 实现审查：Producer 仅写 head + buffer[h % Capacity]，不写 tail（HARD CONTRACT，源码审查）。
+- Drop Oldest 测试：队列满时 enqueue 新事件，验证最旧事件被丢弃 + 新事件保留 + droppedOldestCount++（HARD CONTRACT，CI 测试）。
+- memory-order 审查：head.store release / tail.load acquire / tail.store release / head.load acquire（HARD CONTRACT，源码审查）。
+
+### 2.4.9 SnapshotRequest SPSC ownership 明确（Design-R8 修复）
+
+**问题**：v1 §2.1.3.5 中 FSM→Capture 和 Injection→Capture 都可能请求 snapshot，多个 producer 破坏 SPSC 前提（Single Producer）。
+
+**Design-R8 修复**：明确 SnapshotRequest SPSC 的唯一 Producer 与唯一 Consumer。
+
+**SnapshotRequest SPSC ownership Contract（Design-R8）**：
+
+> - **SnapshotRequest Producer**：**唯一逻辑 owner = FSM thread**。所有 snapshot 请求经 FSM thread 串行发起（FSM 单线程所有权，复用 CF0 §4.6.2）。
+> - **SnapshotPublisher Consumer**：**Capture thread**（Capture thread 消费 SnapshotRequest，生成 immutable PressedStateSnapshot 副本，经 SPSC 发布回 FSM/Injection thread）。
+> - **Injection thread 不直接发起 SnapshotRequest**：Injection thread 需要 snapshot 时（如 releaseAllPressed），经 SPSC 递交请求给 FSM thread，由 FSM thread 统一发起 SnapshotRequest。这保证 SnapshotRequest SPSC 的 Single Producer invariant。
+> - **替代方案（若 Injection thread 需直接同步获取 snapshot）**：使用 `std::atomic<PressedStateSnapshot*>` 单生产者（Capture thread）单消费者（Injection thread）指针传递，不经 SPSC。但这与 R11 方案 B "SPSC snapshot publication" 冲突，**冻结采用 FSM 统一发起方案**。
+
+**修正后的 §2.1.3.5 流程**：
+
+```plantuml
+@startuml
+title bitmap ownership 方案 B SPSC snapshot publication (R5/R11 冻结, Design-R8 SPSC ownership)
+actor "CGEventTap callback\n(系统回调线程)" as Tap
+participant "SPSC_STATE\n(state event lane)" as SpscState
+participant "Capture thread\n(单线程 owns mutable bitmap\n+ SnapshotRequest Consumer)" as Cap
+participant "KeyCodeBitmap (256bit)\n+ MouseButtonBitmap (8bit)\n(mutable, Capture owns)" as Bitmap
+participant "SnapshotPublisher\n(SPSC snapshot publication)" as Snap
+participant "FSM thread\n(SnapshotRequest 唯一 Producer)" as Fsm
+participant "Injection thread\n(经 FSM 转发请求)" as Inj
+
+Tap -> SpscState : Key/Button Press/Release\nenqueue (reserved capacity)
+SpscState -> Cap : 消费状态事件
+
+activate Cap
+Cap -> Bitmap : 更新 mutable bitmap\n(单线程写, 无竞争)
+deactivate Cap
+
+note over Bitmap
+  Capture thread 单线程 owns mutable bitmap:
+  ✓ 单线程写, 无 data race
+  ✗ callback 不能修改 bitmap (R11)
+  ✗ FSM/injection 不能直接读 mutable bitmap
+end note
+
+Fsm -> Snap : 请求 PressedStateSnapshot\n(FSM 唯一 Producer)
+Inj -> Fsm : 需 snapshot (经 SPSC 转发)\n(Injection 不直接发起)
+Snap -> Cap : snapshot 请求 (经 SPSC 队列)\n(Capture 为 Consumer)
+activate Cap
+Cap -> Bitmap : 拷贝当前 mutable bitmap\n到 immutable snapshot 对象
+Cap -> Snap : 发布 immutable snapshot 副本\n(≤1ms, 无锁竞争)
+deactivate Cap
+Snap -> Fsm : immutable PressedStateSnapshot\n(FSM owns)
+Snap -> Inj : immutable PressedStateSnapshot\n(Injection owns, 经 FSM 转发)
+
+note over Fsm
+  Design-R8 SPSC ownership:
+  SnapshotRequest Producer = FSM thread (唯一)
+  SnapshotPublisher Consumer = Capture thread (唯一)
+  Injection 不直接发起 SnapshotRequest
+  SPSC Single Producer invariant 保持
+end note
+
+@enduml
+```
+
+**可验证 invariant**：
+- SnapshotRequest SPSC Producer = FSM thread 唯一（HARD CONTRACT，源码审查 + 运行时线程 ID 校验）。
+- SnapshotPublisher Consumer = Capture thread 唯一（HARD CONTRACT，源码审查 + 运行时线程 ID 校验）。
+- Injection thread 不直接调用 SnapshotPublisher.requestSnapshot()（HARD CONTRACT，源码审查）。
 
 ## 2.5 CF0 Safety Invariant 保障
 
@@ -1346,7 +1668,7 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 1. **用户态捕获失败时本端键鼠仍可用**：CGEventTap 创建失败/回调异常/系统禁用时，CF2 ≤200ms 内进入降级态，本端物理键鼠仍作用于本机（CF2-S01-REQ-001）。
 2. **权限缺失时本端键鼠不失效**：辅助功能权限缺失时拒绝启动捕获，但本端物理键鼠仍作用于本机（CF2-S01-REQ-003）。
 3. **断线释放防止"粘键"与控制权悬空**：`ReleaseAllPressedExecutor` 在 total deadline ≤100ms 内释放所有按下键/按钮；失败时 local safety degradation（强制清空内部按下状态 + FSM 进 RECOVERY），防止"粘键"导致 Void-Owner（CF2-S03-REQ-002）。
-4. **SPSC_STATE reserved capacity 保证状态事件可靠到达**：正常设计条件下 SPSC_STATE 不满，状态事件可靠进入 STATE lane，Capture thread 消费后更新 bitmap，bitmap 为 PressedState 权威状态，保证 releaseAllPressed 可正确释放（CF2-S02-REQ-003）。
+4. **SPSC_STATE reserved capacity 保证状态事件 normal-bound reliable 到达**：正常设计条件下 SPSC_STATE 不满（backlog_max ≤ B_burst + B_rate × W_design = 6.04 << 64，§2.4.1），状态事件可靠进入 STATE lane，Capture thread 消费后更新 bitmap，bitmap 为 PressedState 权威状态，保证 releaseAllPressed 可正确释放（CF2-S02-REQ-003）。**Design-R6 语义收紧**：容量耗尽时系统立即进入安全降级（authoritative resynchronization + FSM RECOVERY），不声称事件仍可靠到达；"可靠" 限定为 "normal-bound reliable, saturation → safety degradation"（§2.4.1）。
 5. **饱和时 authoritative resynchronization 保证 releaseAllPressed 可正确释放**：饱和时修饰键从 CGEventSourceFlagsState ground truth 重建 + 按键/按钮 bitmap best-effort + FSM 进 RECOVERY + 用户松手自然释放，不依赖 gap counter 神奇恢复，保证 releaseAllPressed 可正确释放（§2.1.3.3）。
 
 **可验证**：CF0-ARCH-SAFETY-002（P2）在 CF2 阶段继续可验证通过。
@@ -1361,11 +1683,11 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 3. **几何变更适应保证 Handoff 可恢复**：分辨率/显示器变更 ≤1s 内更新屏幕边界 + 通知 CF0，保证 Handoff 可恢复（CF2-S04-REQ-002）。
 4. **线程数受控保证可恢复**：CF2 不新增线程，复用 CF0 8 线程模型，线程数 ≤8，保证可恢复（CF2-S06-REQ-001）。
 5. **断线释放 bounded completion 保证 P3**：total deadline ≤100ms bounded completion，失败时 local safety degradation + FSM 进 RECOVERY，系统在 ≤100ms + ε 有限时间内回到满足 P1 ∧ P2 的状态（CF2-S03-REQ-002）。
-6. **饱和时 recovery 时序保证 P3**：系统侧 recovery ≤1.1ms + 用户松手 T_user_release + 排空 ≤1ms，系统在 T_user_release + 2.1ms 内回到 NORMAL，P3 Recoverable 可证（§2.4.6）。
+6. **饱和时 recovery 时序保证 P3（Design-R9 拆分）**：**System Safety Recovery** ≤1.1ms（DESIGN TARGET）/ ≤12ms（W_test HARD CONTRACT 限定为测试阈值）内系统进入 RECOVERY 态，FSM 停止捕获，保证 P1∧P2 不破坏（此为系统侧 bounded completion，不依赖用户行为）；**User-dependent convergence** 依赖 T_user_release（用户松手，无界），不宣称 deterministic bounded upper bound；系统在 RECOVERY 态期间保持 P1∧P2，用户松手后 ≤1ms（DESIGN TARGET）/ W_test（HARD CONTRACT 限定为测试阈值）回到 NORMAL。**P3 在 "系统侧安全降级有 bounded completion" 意义下可证；不声称 "总 recovery 有 deterministic bounded upper bound"**（§2.4.6）。
 7. **权限恢复自动重试 ≤1s**：辅助功能权限恢复后自动重试启动捕获，≤1s 内回到正常态。
 8. **几何变更适应 ≤1s**：分辨率变更 ≤1s 内更新屏幕边界，回到正常态。
 
-**可验证**：CF0-ARCH-SAFETY-003（P3）在 CF2 阶段继续可验证通过。
+**可验证**：CF0-ARCH-SAFETY-003（P3）在 CF2 阶段继续可验证通过（Design-R9 重新表述：系统侧安全降级 bounded completion 可验证；User-dependent convergence 不声称 deterministic bounded）。
 
 ## 2.6 CF2 Design Contract 回映 Verification Matrix
 
@@ -1376,7 +1698,7 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 | CF2 需求 | Design Contract | Design 保障措施 | 可验证证据 |
 |---------|----------------|----------------|-----------|
 | CF2-S01-REQ-001（用户态捕获） | DC-S01-001：`platform/mac/` 仅使用 CGEventTap 等 Core Graphics 用户态 API | `MacEventTap` 经 `CGEventTapCreate` 安装；`A11yPermissionGuard` 检测权限；无 kext/IOKit | 审查 `platform/mac/` 无 IOKit/kext 引用；安装包无内核扩展文件 |
-| CF2-S01-REQ-002（回调轻量化 ≤1ms） | DC-S01-002：callback 仅 minimal extraction + Modifier atomic update + RawInputEvent enqueue，≤1ms 返回 | `CGEventNormalizer` ≤100us + `ModifierTracker` ≤200ns + `DualChannelSpsc.enqueue` 无锁原子写；不调用 onEvent/FSM/Edge Detection | 回调耗时测量 ≤1ms；回调代码无锁/IO/重处理/onEvent/FSM/Edge Detection |
+| CF2-S01-REQ-002（回调轻量化 ≤1ms） | DC-S01-002：callback 仅 `MacEventFieldExtractor` 字段提取 + Modifier atomic update + RawInputEvent enqueue，≤1ms 返回（Design-R5：`CGEventNormalizer` 不出现在 callback 边界） | `MacEventFieldExtractor` ≤100us + `ModifierTracker` ≤200ns + `DualChannelSpsc.enqueue` 无锁原子写；不调用 onEvent/FSM/Edge Detection | 回调耗时测量 ≤1ms；回调代码无锁/IO/重处理/onEvent/FSM/Edge Detection；`CGEventNormalizer` 仅在 Capture thread 内 |
 | CF2-S01-REQ-003（权限前置） | DC-S01-003：`A11yPermissionGuard` 检测 Accessibility + Input Monitoring | `AXIsProcessTrustedWithOptions` + `CGPreflightSessionEventAccess`；缺失告警 + 引导；恢复自动重试 | 权限缺失告警 `CFX-W-CAP-A11Y-DENIED`；授权后自动启动 |
 
 ### 2.6.2 S02 验证矩阵回映
@@ -1398,7 +1720,7 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 
 | CF2 需求 | Design Contract | Design 保障措施 | 可验证证据 |
 |---------|----------------|----------------|-----------|
-| CF2-S04-REQ-001（越界不依赖画面） | DC-S04-001：`EdgeDetector` 仅基于光标坐标与 ScreenBoundary 比较 | `EdgeDetector.detect(cursorX, cursorY, boundary)`；无画面/像素读取 | 越界检测代码无画面读取 |
+| CF2-S04-REQ-001（越界不依赖画面） | DC-S04-001：`EdgeDetector` 仅基于光标坐标与 ScreenBoundary 比较（Design-R1 坐标域分层：cursorX/cursorY 用 i64 native 域，boundary 用 u32 CF0 Logical 域） | `EdgeDetector.detect(cursorX, cursorY, boundary)`；无画面/像素读取；x < 0 左越界在 i64 域可正确触发 | 越界检测代码无画面读取；坐标类型为 i64（Design-R1） |
 | CF2-S04-REQ-002（分辨率适应 ≤1s） | DC-S04-002：`MacScreenQuery` 分辨率变更 ≤1s 更新 + 通知 CF0 | 分辨率变更事件触发重新查询 + 更新缓存 + 通知 `ICoordMapper` | 变更日志含新边界；CF0 收到更新通知 |
 
 ### 2.6.5 S05 验证矩阵回映
@@ -1433,10 +1755,89 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 | CF2-S06-REQ-002（路径隔离） | P1 No Split-Brain | §2.5.1 措施 5：路径隔离防止捕获/注入相互干扰 |
 | CF2-S02-REQ-003（双通道 + authoritative resync） | P2 No Void-Owner / P3 Recoverable | §2.5.2 措施 4/5 + §2.5.3 措施 6：reserved capacity + authoritative resynchronization + recovery 时序 |
 
+### 2.6.8 Design-R1～R10 修订回映（Amendment v1.1 新增）
+
+本小节回映大G 项目经理 Design Gate 审查发现的 10 项 Contract 层问题在 design.md v1.1 中的修复位置与可验证证据。
+
+| 修订项 | 类别 | 修复位置 | 可验证证据 |
+|--------|------|---------|-----------|
+| Design-R1（坐标域 u32/i64 矛盾） | 🔴 BLOCKER | §2.2.2 EdgeDetector 接口 + §2.3.2 类图 + §2.6.4 S04-REQ-001 | `EdgeDetector.detect(cursorX, cursorY)` 签名审查：cursorX/cursorY 为 i64；x < 0 左越界在 i64 域可正确触发；坐标域分层声明表存在 |
+| Design-R2（B_burst/B_1s 数学不自洽） | 🔴 BLOCKER | §2.4.1 + §2.4.2 重新定义 B_burst/B_rate/W_pause + 主定理 backlog_max ≤ B_burst + B_rate × W_pause | CI burst 测试 B_burst=6 不触发饱和；CI 稳态测试 B_rate=40 events/s 持续 10s 不触发饱和；v1 的 70→60 矛盾已消除 |
+| Design-R3（W_worst 假设非 Contract） | 🔴 BLOCKER | §2.4.3 三层分层 W_design/W_observed/W_test + 删除 GC 引用 | CI 产出 W_observed P50/P95/P99/P99.9/max 报告；CI 验收 max observed ≤ 10ms（测试阈值）；文档无 GC 引用 |
+| Design-R4（API 数字 overclaim） | 🔴 BLOCKER | §2.4.0 三类分层框架 + §2.4.5/§2.4.6/§2.4.7 重新分类所有时序数字 | 所有时序数字标注类别（HARD CONTRACT / DESIGN TARGET / MEASUREMENT REQUIREMENT）；HARD CONTRACT 有充分依据引用 |
+| Design-R5（callback extraction 与 Normalizer 未分开） | 🟠 P1 | §2.1.1 上下文图 + §2.1.2 组件图 + §2.1.3.1 时序图 + §2.2.1 接口表 + §2.6.1 S01-REQ-002 | 源码审查：`MacEventFieldExtractor` 仅在 callback 内，`CGEventNormalizer` 仅在 Capture thread 内，不跨越 callback 边界 |
+| Design-R6（SPSC_STATE reliable 语义需收紧） | 🟠 P1 | §2.4.1 + §2.1.3.2 + §2.1.3.5 + §2.5.2 措施 4 | 文档语义为 "normal-bound reliable, saturation → safety degradation"，不声称 absolute reliable；饱和时安全降级 Contract 明确 |
+| Design-R7（Drop Oldest 缺并发证明） | 🔴 BLOCKER | §2.4.8 新增 Drop Oldest 并发 ownership 证明 | 源码审查：Producer 仅写 head + buffer[h % Capacity]，不写 tail；Capacity 预留 1 sentinel 槽位；memory-order release/acquire 正确 |
+| Design-R8（SnapshotRequest SPSC ownership） | 🟠 P1 | §2.4.9 新增 SnapshotRequest SPSC ownership 明确 + §2.1.3.5 流程图修正 | 源码审查：SnapshotRequest Producer = FSM thread 唯一；SnapshotPublisher Consumer = Capture thread 唯一；Injection 不直接发起 SnapshotRequest |
+| Design-R9（Recovery P3 overclaim） | 🟠 P1 | §2.4.6 拆分 System Safety Recovery + User-dependent convergence + §2.5.3 措施 6 | 文档不声称 "总 recovery 有 deterministic bounded upper bound"；P3 在 "系统侧安全降级有 bounded completion" 意义下可证；T_user_release 标注无界 |
+| Design-R10（CF0 Frozen Boundary Amendment） | 🟠 P1 | §2.7 新增 CF0 Frozen Boundary Amendment / Compatibility Contract | CF0/CF1 Frozen 文档 git diff 验证未修改；`onEdgeOverflow()` + `PressedStateSnapshot` bitmap extension 均为 additive；CF0 FSM 状态机未修改 |
+
+## 2.7 CF0 Frozen Boundary Amendment / Compatibility Contract（Design-R10 新增）
+
+**问题背景**：CF2 的两项扩展 — `IHandoffOrchestrator.onEdgeOverflow()` 越界事件消费入口 + `PressedStateSnapshot` bitmap extension（vector → fixed-size bitmap + stale flag）— 不是纯 `platform/mac/` 内部实现，涉及 CF0/Core 边界变化。需明确这两项扩展不破坏 CF0 Frozen behavior，不演化成 CF2 自己重新设计 Handoff FSM。
+
+**Design-R10 Frozen Boundary Amendment Contract**：
+
+### 2.7.1 IHandoffOrchestrator.onEdgeOverflow() 边界扩展 Contract
+
+**CF0 Frozen behavior（不改变）**：
+- CF0 Handoff FSM 六态状态机（ARMED/PENDING/ACK/ACTIVE/COOLDOWN/RECOVERY）的**状态转移逻辑、转移条件、冷却/驻留/熔断参数**全部由 CF0 §4.6.2 + design §2.5.3 冻结，CF2 **不修改、不重新定义、不绕过**。
+- CF0 `IHandoffOrchestrator` 既有方法 `initiate/handleIncoming/handleResponse/onLinkDown` 的**签名、语义、调用顺序**全部冻结，CF2 不修改。
+- CF0 FSM 单线程所有权（§4.6.2）：FSM 由专属线程串行消费事件，CF2 不跨线程直接调用 FSM。
+
+**CF2 additive interface extension（最小化）**：
+- CF2 新增 `IHandoffOrchestrator.onEdgeOverflow(const EdgeOverflowEvent& event)` 方法，**仅为越界事件提供消费入口**，不改变 FSM 状态转移逻辑。
+- `onEdgeOverflow()` 的语义：FSM 专属线程串行消费 EdgeOverflowEvent，**触发 FSM 既有 ARMED→PENDING 转移**（复用 CF0 §4.6.2 既有转移逻辑），**不引入新状态、不修改转移条件、不改变冷却/驻留/熔断参数**。
+- EdgeOverflowEvent 经无锁 SPSC 队列递交 FSM 专属线程（复用 CF0 §4.6.2 FSM 单线程所有权 + 契约⑦），CF2 不跨线程直接调用 FSM。
+
+**Compatibility Contract**：
+> 1. **不改变既有 Handoff FSM 状态机**：CF2 `onEdgeOverflow()` 仅作为 "越界信号源" 触发 FSM 既有 ARMED→PENDING 转移，不新增状态、不修改转移条件、不改变参数。
+> 2. **不改变既有 CF0 contract**：CF0 `IHandoffOrchestrator` 既有方法签名/语义/调用顺序不变；CF0 Safety Invariant P1/P2/P3 不破坏。
+> 3. **CF2 不重新设计 FSM**：`onEdgeOverflow()` 不能演化成 CF2 自己重新设计 Handoff FSM；FSM 驱动权属 CF0-S03，CF2 仅提供信号。
+> 4. **additive only**：本扩展是 CF0 接口的 additive extension（新增方法，不修改既有方法），符合 CF0 design §2.2.2.3 "接口扩展预留空间" 冻结语义。
+
+**可验证 invariant**：
+- CF0 Handoff FSM 状态转移逻辑源码审查：CF2 不修改 CF0 FSM 状态机代码（HARD CONTRACT，源码审查 + diff 验证）。
+- `onEdgeOverflow()` 实现审查：仅触发既有 ARMED→PENDING 转移，不新增状态/转移条件/参数（HARD CONTRACT，源码审查）。
+- EdgeOverflowEvent 经 SPSC 队列递交：FSM 专属线程串行消费，CF2 不跨线程直接调用 FSM（HARD CONTRACT，源码审查 + 运行时线程 ID 校验）。
+
+### 2.7.2 PressedStateSnapshot bitmap extension 边界扩展 Contract
+
+**CF0 Frozen behavior（不改变）**：
+- CF0 `PressedStateSnapshot` 的**语义角色**（断线释放清单、Handoff 修饰键同步源）由 CF0 §4.2.1 + design §2.2.2.3 冻结，CF2 不改变其语义角色。
+- CF0 `releaseAllPressed(pressed)` 接口签名（`PressedStateSnapshot` 入参）冻结，CF2 不修改接口签名。
+
+**CF2 additive struct extension（最小化）**：
+- CF2 将 `PressedStateSnapshot` 内部承载从 `std::vector<MouseButton>` + `std::vector<KeyCode>` 改为 `MouseButtonBitmap(8bit)` + `KeyCodeBitmap(256bit)` + `stale` flag（R5/R11 冻结方案 B）。
+- **扩展范围**：`platform/common/platform_ports.hpp` 中 `PressedStateSnapshot` 结构体定义；CF0 既有消费方（`IInputInjector.releaseAllPressed`）接口签名不变，实现侧适配新内部承载。
+
+**Compatibility Contract**：
+> 1. **不改变既有 CF0 contract**：`IInputInjector.releaseAllPressed(pressed)` 接口签名不变；`PressedStateSnapshot` 语义角色（断线释放清单、Handoff 修饰键同步源）不变。
+> 2. **不破坏 CF0 design §2.2.2.3 扩展预留**：CF0 design §2.2.2.3 已预留 `PressedStateSnapshot` 扩展空间，CF2 bitmap extension 在该预留空间内，符合 CF0 Frozen 设计意图。
+> 3. **additive only**：内部承载从 vector 改为 bitmap 是性能/并发安全增强，不改变语义；`stale` flag 是新增字段（默认 false，向后兼容）。
+> 4. **CF2 不修改 CF0 既有消费方实现**：CF0 既有 `releaseAllPressed` 实现侧需适配新内部承载（读 bitmap 而非 vector），但这是 CF0 design §2.2.2.3 预留的扩展适配，不视为 CF2 修改 CF0 Frozen 文档。
+
+**可验证 invariant**：
+- `PressedStateSnapshot` 结构体定义审查：含 MouseButtonBitmap(8bit) + KeyCodeBitmap(256bit) + stale flag，无 std::vector（HARD CONTRACT，源码审查）。
+- `IInputInjector.releaseAllPressed(pressed)` 接口签名审查：入参仍为 `PressedStateSnapshot&`，签名不变（HARD CONTRACT，源码审查 + diff 验证）。
+- `stale` flag 默认 false：向后兼容，未扩展前既有消费方行为不变（HARD CONTRACT，源码审查 + 测试）。
+
+### 2.7.3 Frozen Boundary Amendment 总 Contract
+
+> **CF0 Frozen behavior → CF2 additive interface extension → 不改变既有 Handoff FSM 状态机 → 不改变既有 CF0 contract → 不破坏 CF0 Safety Invariant P1/P2/P3。**
+>
+> CF2 的全部 CF0/Core 边界变化（`onEdgeOverflow()` + `PressedStateSnapshot` bitmap extension）均为 additive extension，在 CF0 design 预留扩展空间内，不修改 CF0/CF1 Frozen 文档，不重新设计 Handoff FSM，不改变 NodeID/Topology Authority 语义，不破坏 Safety Invariant。
+
+**可验证 invariant（总）**：
+- CF0/CF1 Frozen 文档 diff 验证：本次 Amendment v1.1 不修改 CF0/CF1 任何 Frozen 文档（HARD CONTRACT，git diff 验证）。
+- CF2 additive extension 审查：`onEdgeOverflow()` + `PressedStateSnapshot` bitmap extension 均为 additive，无既有方法签名修改（HARD CONTRACT，源码审查 + diff 验证）。
+- CF0 Safety Invariant P1/P2/P3 在 CF2 additive extension 后继续可验证通过（HARD CONTRACT，§2.5 论证 + CI 验证）。
+
 ---
 
 > **文档结束**
 > 本设计文档定义 CF2-S01～CF2-S06 六个 macOS 输入捕获地基的增量设计方案，严格遵循 CF0/CF1 冻结的全部架构基线（C++20、Driverless User-Mode、Handoff 六态 FSM、7 契约、Safety Invariant P1/P2/P3、8 线程模型、双平面隔离、Coordinate Space 双语义、无锁 SPSC 队列），落地"Driverless User-Mode Architecture —— macOS 输入捕获与注入必须完全在用户态完成"第一原则。
 > **本次生成（v1）**：需求与存量功能关系分析（CF0/CF1 基线对比 + 匹配度评估 + 存量功能详细分析）；增量设计方案（上下文视图 + 总体架构 + Callback Boundary 时序 + 双通道 SPSC 流程 + SPSC_STATE 饱和安全降级状态机 + releaseAllPressed bounded completion 流程 + bitmap ownership SPSC snapshot publication 流程）；接口设计（CF0 平台抽象实现 + CF2 内部组件接口）；数据模型（KeyCodeBitmap 256-bit + MouseButtonBitmap 8-bit + PressedStateSnapshot + EdgeOverflowEvent + DualChannelSpsc 类图）；工程边界量化（SPSC_STATE=64 capacity / burst 上界 / consumer 最坏暂停窗口 / 异常过载判定阈值 / 饱和检测时序 / recovery 时序）；CF0 Safety Invariant 保障（P1/P2/P3 逐条论证）；Verification Matrix 回映。
-> **保持不变**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM（仅提供越界事件信号供 FSM 消费）；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding。
-> 待用户审查确认后，本文档状态由 DRAFT v1 转为 FROZEN 并授权进入下一阶段。
+> **Amendment v1.1（受控修订，不推倒 1442 行 v1 主体）**：修复大G 项目经理 Design Gate 审查发现的 10 项 Contract 层问题（4 BLOCKER + 6 P1）—— Design-R1 坐标域 u32/i64 矛盾（§2.2.2/§2.3.2）；Design-R2 B_burst/B_1s 数学不自洽（§2.4.1/§2.4.2 重新定义 B_burst/B_rate/W_pause + 主定理）；Design-R3 W_worst 假设非 Contract（§2.4.3 三层分层 W_design/W_observed/W_test + 删除 GC）；Design-R4 API 数字 overclaim（§2.4.0 三类分层 HARD CONTRACT/DESIGN TARGET/MEASUREMENT REQUIREMENT）；Design-R5 callback extraction 与 CGEventNormalizer 未分开（§2.1.1/§2.1.2/§2.1.3.1 严格命名 MacEventFieldExtractor vs CGEventNormalizer）；Design-R6 SPSC_STATE reliable 语义收紧（§2.4.1/§2.1.3.2/§2.5.2 "normal-bound reliable, saturation → safety degradation"）；Design-R7 SPSC RingBuffer Drop Oldest 缺并发证明（§2.4.8 Producer-only overwrite + memory-order proof）；Design-R8 SnapshotRequest SPSC ownership（§2.4.9 唯一 Producer = FSM thread）；Design-R9 Recovery P3 overclaim（§2.4.6/§2.5.3 拆分 System Safety Recovery + User-dependent convergence）；Design-R10 CF0 Frozen Boundary Amendment Contract（§2.7 新增）。新增 §2.6.8 Design-R1～R10 修订回映。
+> **保持不变**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM（仅提供越界事件信号供 FSM 消费）；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）全部保持不变。
+> 待用户审查确认后，本文档状态由 DRAFT v1.1 转为 FROZEN 并授权进入下一阶段。
