@@ -5,7 +5,7 @@
 > **CF0 冻结基线引用**：`.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）+ `.codeartsdoer/specs/cf0_arch_freeze/design.md`（v3，3449 行），本设计严格遵循 CF0 冻结的全部架构基线（C++20 技术栈、Driverless User-Mode、Handoff 六态 FSM、7 核心契约、CF0 Architecture Safety Invariant P1/P2/P3、8 线程模型、双平面隔离、Coordinate Space RelativeDelta/AbsolutePosition 双语义、无锁 SPSC 队列 §2.7.3）。
 > **CF1 冻结基线引用**：`.codeartsdoer/specs/cf1_endpoint_disc/spec.md`（v2，1432 行）+ `.codeartsdoer/specs/cf1_endpoint_disc/design.md`（v4，2972 行），本设计复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）作为捕获事件源端标识，不修改身份与发现机制。
 > **第一原则**：Driverless User-Mode Architecture —— macOS 输入捕获与注入必须完全在用户态完成，不引入内核扩展（kext）或驱动。
-> **文档状态**：DRAFT v1.1（Amendment，受控修订）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
+> **文档状态**：DRAFT v1.2（Amendment，受控修订，不推倒 1843 行 v1.1 主体）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
 > **设计范围**：仅覆盖 CF2-S01～CF2-S06 六个 macOS 输入捕获地基的增量设计方案 + 大G项目经理特别要求的工程边界量化（SPSC_STATE=64 capacity / burst 上界 / consumer 最坏暂停窗口 / 异常过载判定阈值 / 饱和检测时序 / recovery 时序）+ CF0 Safety Invariant 保障 + Verification Matrix 回映。
 > **执行纪律遵循**：严格遵守大G项目经理执行纪律（不修改 CF0/CF1 Frozen / 不重新设计 Handoff FSM / 不引入 Coordinator election / Raft / Paxos / 不改变 NodeID/Topology Authority 语义 / Input/Control 双平面隔离 / Evidence-First / Gate Review 后再编码）。
 
@@ -23,6 +23,15 @@
 > - **Design-R9 (🟠 P1)**：Recovery P3 证明 overclaim（T_user_release 不是系统可控 bounded upper bound）。修正：§2.4.6 + §2.5.3 拆成 System Safety Recovery（≤1.1ms 系统进入 RECOVERY，保证 P1∧P2）+ User-dependent convergence（T_user_release + bounded system drain，不宣称 deterministic bounded）。
 > - **Design-R10 (🟠 P1)**：CF0 Frozen Boundary Amendment Contract 需明确。修正：§2.7 新增专门的 Frozen Boundary Amendment / Compatibility Contract，明确 CF0 Frozen behavior → CF2 additive interface extension → 不改变既有 Handoff FSM 状态机 → 不改变既有 CF0 contract。
 > **未变更项（v1.1）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）全部保持不变。
+
+> **Amendment v1.2 变更记录（受控修订，不删除重写，不推倒 1843 行 v1.1 主体）**
+> **修订背景**：大G 项目经理对 Design v1.1 的 Design Gate 复审裁决 = CONDITIONAL FAIL / REVISION REQUIRED。v1.1 已正确修复 Design-R1/R3/R4/R5/R6/R8/R9/R10（7 项 PASS），但下列 3 项问题 + 1 项 P3 表述需进一步严格限定。本次 Amendment 仅修复下列 4 项（R11/R12/R13 + P3 表述），不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标 / Requirements v1.4 FROZEN / R1/R3/R4/R5/R6/R8/R9/R10 已修复内容，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding。
+> **修订项**：
+> - **Design-R11 (🔴 BLOCKER)**：SPSC_DATA Drop-Oldest 的 producer-only head advance 逻辑错误。问题：v1.1 §2.4.8 "最终冻结"方案声称 Producer-only head advance 实现 Drop Oldest，但自相矛盾——head=Producer-only, tail=Consumer-only, Producer 不得写 tail；Producer 推进 head 只增加队列元素数量，不改变 Consumer 的 tail，旧事件未被 Drop；若 Producer 推进 head 超过 capacity 则 head-tail > capacity 违反不变量；v1.1 §2.4.8 自承认 "这不是严格 Drop Oldest，而是 Drop Oldest with Consumer-side stale tolerance"（1550 行），sentinel 槽位修复仍让 Consumer 读到被跳过的旧事件。修正：§2.4.8 采用**方案 A — Producer-owned `publishedTail` discard boundary + Consumer-owned `consumedTail`**，引入独立于 Consumer-owned tail 的 Producer-owned discard cursor（published read boundary），完整证明 Producer ownership / Consumer ownership / slot lifetime / memory ordering / ABA / overwrite race。Drop Oldest 时 Producer 同步推进 publishedTail（丢弃最旧），Consumer 读 effective range = [consumedTail, publishedTail)，最旧被排除，真正实现 Drop Oldest 语义。
+> - **Design-R12 (🔴 BLOCKER)**：B_burst=6 / B_rate=40 仍标为 HARD CONTRACT。问题：v1.1 把 B_burst=6（Cmd+Shift+3=6 events）和 B_rate=40 events/s（吉尼斯纪录级打字）标为 HARD CONTRACT，但这些是 workload model 非 deterministic system upper bound；一旦有人输入 B_rate > 40，所谓 HARD CONTRACT 立即失效。修正：§2.4.0 三类分层表新增 **WORKLOAD MODEL / TEST PROFILE** 类别；§2.4.1 + §2.4.2 + §2.4.7 把 B_burst / B_rate 降级为 WORKLOAD MODEL；明确 backlog bound 在**声明的 workload envelope** 内成立，而非由"人类绝对输入上界"数学证明出的绝对安全容量；SPSC_STATE=64 是在指定 workload envelope 下经过验证的工程容量（HARD CONTRACT 仅限编译期 static_assert，不延伸到 B_burst/B_rate 的运行时输入上界）。
+> - **Design-R13 (🟠 P1)**：W_test 10ms/12ms 两套口径歧义。问题：v1.1 不同位置出现 W_test=10ms（§2.4.3 consumer pause）和 saturation detection W_test=12ms（§2.4.5）/ System Safety Recovery W_test=12ms（§2.4.6），命名不正交。修正：§2.4.3 命名为 **W_pause_test=10ms**（consumer pause test threshold）；§2.4.5 命名为 **T_saturation_detect_test=12ms**（saturation detection test threshold）；§2.4.6 命名为 **T_system_recovery_test=12ms**（system recovery test threshold）；§2.4.7 表格 + §2.5.3 措施 6 同步，消除单一 W_test 歧义。
+> - **P3 表述严格限定（🟠 P1）**：v1.1 §2.4.6/§2.5.3/§2.6.8 写 "P3 在 '系统侧安全降级有 bounded completion' 意义下可证"，仍可能被 Coding Agent 误解为 "RECOVERY→NORMAL 必须在 X ms 内完成" 的硬约束。修正：统一改为 "**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**" 明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded，依赖 T_user_release eventual convergence），避免 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束。
+> **未变更项（v1.2）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R3/R4/R5/R6/R8/R9/R10 已修复内容全部保持不变。
 
 ---
 
@@ -612,7 +621,7 @@ Resync --> Recovery : 通知 CF0 FSM\n校验按下状态一致性\nFSM 进 RECOV
 Recovery --> Recovery : FSM 停止捕获\n用户物理松手\n自然释放残留按下键
 Recovery --> Recovered : SPSC_STATE 通道排空\n+ FSM 确认 RECOVERY 完成\n+ stateChannelSaturated = false
 
-Recovered --> Normal : 系统回到 P1 ∧ P2\n(P3 Recoverable 可证)
+Recovered --> Normal : 系统回到 P1 ∧ P2\n(P3: bounded safety degradation,\nnot deterministic return to NORMAL)
 
 note right of Resync
   authoritative resynchronization:
@@ -702,7 +711,7 @@ endif
 
 **设计要点**：
 - total deadline ≤100ms bounded completion budget：所有 snapshot / release attempt / retry / result validation / degradation notification 均计入同一预算。
-- 不采用"次数 × 每次时延"乘积模型（R9 修订：最坏 4×30ms=120ms > 100ms 会破坏 P3 可证性）。
+- 不采用"次数 × 每次时延"乘积模型（R9 修订：最坏 4×30ms=120ms > 100ms 会破坏 P3 bounded safety degradation）。
 - retry 在剩余预算内进行，次数与时延不固定，由剩余预算决定。
 - deadline reached → local safety degradation：强制清空内部按下状态 + 告警 + 通知 FSM 进 RECOVERY，保证 P3 Recoverable。
 
@@ -1205,6 +1214,7 @@ SpscRingBuffer --> RawInputEvent : 存储
 | 类别 | 含义 | 证据要求 | 验证方式 | 示例 |
 |------|------|---------|---------|------|
 | **HARD CONTRACT** | 系统行为 deterministic upper bound，有充分依据（CF0 Frozen / spec.md FROZEN / 算法复杂度 / 物理上界） | 引用来源（CF0 §X / spec.md §Y / 算法证明） | 源码审查 + CI 静态验证 + 算法证明 | releaseAllPressed total deadline ≤100ms（spec.md §4.2.5 FROZEN）；回调 ≤1ms（CF0 §4.6.4 FROZEN）；SPSC_STATE_CAPACITY=64（编译期 static_assert） |
+| **WORKLOAD MODEL / TEST PROFILE** | 声明的工作负载包络（workload envelope）参数，**非 deterministic system upper bound**；相关 backlog bound / capacity 充分性仅在"输入满足该 envelope"前提下成立，不延伸到运行时输入上界 | 标注 "WORKLOAD MODEL" + 建模依据（人类输入特征 / 单次操作事件数） | CI 在声明 envelope 内验证（burst/steady-state 测试不触发饱和）；运行时监控超 envelope 输入触发告警 | B_burst=6（单次修饰键组合 Cmd+Shift+3，workload envelope 声明值）；B_rate=40 events/s（吉尼斯纪录级打字 + 极限点击，workload envelope 声明值） |
 | **DESIGN TARGET** | 工程目标值，无 deterministic 证明，但作为设计基准指导实现 | 标注 "DESIGN TARGET" + 来源（工程经验 / 平台文档） | CI benchmark 记录 P50/P95/P99，参考硬件上目标达成 | CGEventSourceFlagsState 查询 ≤10us（macOS API 工程目标，非硬保证）；FSM 状态转移 ≤1ms（CF0 design 目标） |
 | **MEASUREMENT REQUIREMENT** | 实机测量证据要求，不预设上界，要求 CI 产出统计分布 | 标注 "MEASUREMENT REQUIREMENT" + 测量场景 | CI 输出 P50/P95/P99/P99.9/max 报告，长期趋势监控 | callback 耗时 P99/P99.9/max；Capture thread 消费间隔 P99/P99.9/max；饱和检测时序 P99/P99.9/max |
 
@@ -1212,33 +1222,34 @@ SpscRingBuffer --> RawInputEvent : 存储
 - **不得用 P99 证明 worst-case**（Design-R3）：P99 是统计观测，worst-case 需 deterministic 上界或 max 测量。
 - **不得引用 GC**（Design-R3）：C++20/macOS 原生进程无 GC，暂停窗口来源限定为页面错误/调度抖动/算法定时。
 - **HARD CONTRACT 必须有充分依据**（Design-R4）：引用 CF0 Frozen / spec.md FROZEN / 算法复杂度 / 物理上界，不得凭工程经验直接声称硬保证。
+- **WORKLOAD MODEL 不得冒充 HARD CONTRACT**（Design-R12）：B_burst / B_rate 等输入特征参数是**声明的 workload envelope**，非 deterministic system upper bound；一旦运行时输入超出 envelope（如 B_rate > 40），相关 backlog bound 不再成立，系统应触发饱和安全降级而非"违反 HARD CONTRACT"。capacity 充分性论证必须明确限定为 "在声明 workload envelope 内"，不得表述为由"人类绝对输入上界"数学证明出的绝对安全容量。
 - **若 spec.md 已定义硬 SLA，标注为 "requirement inherited"**（Design-R4）：如 releaseAllPressed ≤100ms 由 spec.md §4.2.5 FROZEN 继承，本节不重新证明其硬性，仅证明设计满足该硬 SLA。
 
 ### 2.4.1 SPSC_STATE=64 capacity 量化论证（Design-R2/R6 重新证明）
 
 **问题**：SPSC_STATE 的 capacity 为什么是 64？v1 §2.4.1 推导 "30×4=120 → 取 128" 与 "24×2=48 → 取 64" 两个分支，且 v1 §2.4.2 写 "30+20+20=70 却得出 B_1s=60" 算术矛盾。
 
-**Design-R2 重新建模**：定义三个独立量，消除 B_burst/B_1s 混淆：
+**Design-R2 重新建模**：定义三个独立量，消除 B_burst/B_1s 混淆（Design-R12：B_burst / B_rate 为 **WORKLOAD MODEL / TEST PROFILE**，非 deterministic system upper bound）：
 
-- **B_burst**：单次 burst 瞬时上界 — 在任意瞬时时间窗口（≈0 时宽，"瞬时全部到达"）内，CGEventTap callback 产生的 Key/Button Press/Release 状态变更事件数最大值。建模依据：单次复合操作（如 Cmd+Shift+3 截图）产生的事件数上界。**B_burst = 6**（CmdDown + ShiftDown + 3Down + 3Up + ShiftUp + CmdUp，单次修饰键组合上界）。
-- **B_rate**：稳态最大生产速率 — 单位时间（1 秒）内 CGEventTap callback 产生的 Key/Button Press/Release 状态变更事件数上界。建模依据：人类输入速率上界。**B_rate = 40 events/s**（15 键/s × 2 + 10 button/s × 1 = 40，吉尼斯纪录级打字 + 极限点击，保守上界）。
+- **B_burst**：单次 burst 瞬时上界（**WORKLOAD MODEL，声明值**） — 在任意瞬时时间窗口（≈0 时宽，"瞬时全部到达"）内，CGEventTap callback 产生的 Key/Button Press/Release 状态变更事件数最大值。建模依据：单次复合操作（如 Cmd+Shift+3 截图）产生的事件数。**B_burst = 6**（CmdDown + ShiftDown + 3Down + 3Up + ShiftUp + CmdUp，单次修饰键组合声明值）。**非 deterministic system upper bound**：若运行时出现 B_burst > 6 的瞬时爆发（如自动化脚本失控），本 backlog bound 不再成立，系统应触发饱和安全降级。
+- **B_rate**：稳态最大生产速率（**WORKLOAD MODEL，声明值**） — 单位时间（1 秒）内 CGEventTap callback 产生的 Key/Button Press/Release 状态变更事件数。建模依据：人类输入速率特征。**B_rate = 40 events/s**（15 键/s × 2 + 10 button/s × 1 = 40，吉尼斯纪录级打字 + 极限点击，声明值）。**非 deterministic system upper bound**：若运行时输入 B_rate > 40（如自动化脚本高速注入），本 backlog bound 不再成立，系统应触发饱和安全降级。
 - **W_pause**：consumer 最大连续不可消费时间 — Capture thread 从最后一次成功消费 SPSC_STATE 到下次恢复消费的最长时间间隔（Design-R3 分层后的 W_design，详见 §2.4.3）。
 
-**Design-R2 主定理**：
+**Design-R2 主定理（Design-R12 限定：在声明 workload envelope 内成立）**：
 
-> **backlog_max ≤ B_burst + B_rate × W_pause**
+> **在声明 workload envelope（B_burst / B_rate）内，backlog_max ≤ B_burst + B_rate × W_pause**
 
-**证明**：在任意时间窗口 [t, t+W_pause] 内，SPSC_STATE 积压量上界 = (窗口起点瞬时 burst 上界) + (窗口内稳态生产上界) = B_burst + B_rate × W_pause。其中 B_burst 项覆盖窗口起点的瞬时到达（如 burst 与 consumer 暂停同时发生），B_rate × W_pause 项覆盖窗口内的稳态生产。两项独立可加，无重复计数。□
+**证明**：在任意时间窗口 [t, t+W_pause] 内，**若输入满足声明 workload envelope**，SPSC_STATE 积压量上界 = (窗口起点瞬时 burst 上界) + (窗口内稳态生产上界) = B_burst + B_rate × W_pause。其中 B_burst 项覆盖窗口起点的瞬时到达（如 burst 与 consumer 暂停同时发生），B_rate × W_pause 项覆盖窗口内的稳态生产。两项独立可加，无重复计数。**若输入超出声明 envelope，本定理不适用，系统应触发饱和安全降级（§2.4.4）**。□
 
 **Design-R3 W_pause 分层**（详见 §2.4.3）：
 - **W_design = 1ms**（DESIGN TARGET，单次消费延迟 200us + 系统抖动 800us，无 GC 引用）。
 - **W_observed**：MEASUREMENT REQUIREMENT，CI 测量 Capture thread 消费间隔 P99/P99.9/max，不预设上界。
-- **W_test**：CI 验收标准 max observed ≤ 10ms（异常过载测试阈值，非 deterministic）。
+- **W_pause_test**：CI 验收标准 max observed ≤ 10ms（consumer pause test threshold，异常过载测试阈值，非 deterministic）。
 
 **SPSC_STATE=64 capacity 推导**：
 
 - 正常设计条件下 backlog_max ≤ B_burst + B_rate × W_design = 6 + 40 × 0.001 = 6.04 events（远小于 64）。
-- 异常过载条件下（W_pause 退化为 W_test = 10ms）：backlog_max ≤ 6 + 40 × 0.010 = 6.4 events（仍远小于 64）。
+- 异常过载条件下（W_pause 退化为 W_pause_test = 10ms）：backlog_max ≤ 6 + 40 × 0.010 = 6.4 events（仍远小于 64）。
 - 极端工程余量：取 10× 正常上界 = 10 × 6.04 ≈ 60.4 → 2 的幂次向上取整 = 64。
 - **SPSC_STATE=64 覆盖 10× 正常设计上界 + 2 的幂次（SpscRingBuffer 要求，位运算优化）**。
 
@@ -1248,13 +1259,14 @@ SpscRingBuffer --> RawInputEvent : 存储
 >
 > **语义**：normal-bound reliable, saturation → safety degradation。**不声称 absolute reliable**（容量耗尽时当前 Press/Release 事件未进入队列，bitmap 可能滞后，但系统侧安全降级保证 P1∧P2 不破坏）。
 
-**结论**：SPSC_STATE=64 的 capacity 量化依据为 "10× 正常设计上界 (B_burst + B_rate × W_design = 6.04) ≈ 60.4 → 2 的幂次 64"。正常设计条件下 backlog_max ≤ 6.04 << 64，SPSC_STATE 不满；饱和仅发生在异常过载（Capture thread 卡死或极慢，W_pause 退化超出设计预留），触发确定性安全降级。
+**结论（Design-R12 限定）**：SPSC_STATE=64 的 capacity 量化依据为 "10× 正常设计上界 (B_burst + B_rate × W_design = 6.04) ≈ 60.4 → 2 的幂次 64"。**SPSC_STATE=64 是在指定 workload envelope（B_burst=6 / B_rate=40）下经过验证的工程容量**，非由"人类绝对输入上界"数学证明出的绝对安全容量。在声明 workload envelope 内 backlog_max ≤ 6.04 << 64，SPSC_STATE 不满；饱和发生在 (a) 输入超出声明 workload envelope（如自动化脚本失控），或 (b) Capture thread 卡死或极慢（W_pause 退化超出设计预留），任一情况触发确定性安全降级（§2.4.4）。
 
 **可验证 invariant**：
-- `SPSC_STATE_CAPACITY = 64`（编译期 `static_assert`，HARD CONTRACT）。
-- 正常设计条件下 `stateChannelSaturatedCount` 增长率 ≈ 0（CI 长时间运行验证，MEASUREMENT REQUIREMENT）。
-- 极端 burst 测试（B_burst = 6 瞬时到达）不触发饱和（CI 验收，HARD CONTRACT）。
-- 异常过载测试（人为阻塞 Capture thread 10ms）触发饱和 + 确定性安全降级（CI 验收，HARD CONTRACT）。
+- `SPSC_STATE_CAPACITY = 64`（编译期 `static_assert`，HARD CONTRACT — 仅限编译期容量值，不延伸到 B_burst/B_rate 运行时输入上界）。
+- 在声明 workload envelope 内 `stateChannelSaturatedCount` 增长率 ≈ 0（CI 长时间运行验证，MEASUREMENT REQUIREMENT）。
+- 极端 burst 测试（B_burst = 6 瞬时到达）不触发饱和（CI 验收，**WORKLOAD MODEL 验证** — 验证声明 envelope 内不饱和，非 deterministic upper bound）。
+- 异常过载测试（人为阻塞 Capture thread 10ms）触发饱和 + 确定性安全降级（CI 验收，HARD CONTRACT — 验证饱和检测 + 安全降级机制本身，非验证 B_burst/B_rate 上界）。
+- 超 envelope 输入测试（B_rate > 40 模拟）触发饱和 + 安全降级（CI 验收，验证 workload envelope 边界 + 降级机制，**不声称 HARD CONTRACT 在超 envelope 时仍成立**）。
 
 ### 2.4.2 burst 上界定义（Design-R2 重新定义，消除 70→60 矛盾）
 
@@ -1264,8 +1276,8 @@ SpscRingBuffer --> RawInputEvent : 存储
 
 **正式定义**：
 
-- **B_burst = 6 events**（单次 burst 瞬时上界）：单次复合操作产生的状态变更事件数最大值。建模：修饰键组合 Cmd+Shift+3 = CmdDown + ShiftDown + 3Down + 3Up + ShiftUp + CmdUp = 6 events。单键敲击 = 2 events（KeyDown + KeyUp）。鼠标单击 = 2 events（Down + Up）。**单次 burst 上界 = 6**（修饰键组合，最复杂单次操作）。
-- **B_rate = 40 events/s**（稳态最大生产速率）：人类输入速率上界。建模：吉尼斯纪录级打字 15 键/s × 2 events/键 = 30 events/s + 极限点击 10 次/s × 1 event/次 = 10 events/s → **B_rate = 40 events/s**（保守上界，普通用户 5-8 键/s 远低于此）。
+- **B_burst = 6 events**（单次 burst 瞬时上界，**WORKLOAD MODEL 声明值**）：单次复合操作产生的状态变更事件数。建模：修饰键组合 Cmd+Shift+3 = CmdDown + ShiftDown + 3Down + 3Up + ShiftUp + CmdUp = 6 events。单键敲击 = 2 events（KeyDown + KeyUp）。鼠标单击 = 2 events（Down + Up）。**单次 burst 声明值 = 6**（修饰键组合，最复杂单次人类操作）。**非 deterministic system upper bound**：自动化脚本可产生 B_burst > 6 的瞬时爆发，此时系统应触发饱和安全降级。
+- **B_rate = 40 events/s**（稳态最大生产速率，**WORKLOAD MODEL 声明值**）：人类输入速率特征。建模：吉尼斯纪录级打字 15 键/s × 2 events/键 = 30 events/s + 极限点击 10 次/s × 1 event/次 = 10 events/s → **B_rate = 40 events/s**（声明值，普通用户 5-8 键/s 远低于此）。**非 deterministic system upper bound**：自动化脚本可注入 B_rate > 40，此时系统应触发饱和安全降级。
 - **W_pause**：consumer 最大连续不可消费时间，详见 §2.4.3。
 
 **v1 矛盾消除说明**：
@@ -1276,9 +1288,10 @@ SpscRingBuffer --> RawInputEvent : 存储
 **与 SPSC_STATE=64 的关系**：详见 §2.4.1 主定理 backlog_max ≤ B_burst + B_rate × W_pause。
 
 **可验证 invariant**：
-- CI burst 测试：模拟 B_burst = 6 瞬时到达，验证 SPSC_STATE 不饱和（HARD CONTRACT）。
-- CI 稳态测试：模拟 B_rate = 40 events/s 持续 10s，验证 SPSC_STATE 不饱和（HARD CONTRACT，依赖 W_design）。
-- 运行时监控：`stateChannelSaturatedCount` 在正常人类输入下零增长（MEASUREMENT REQUIREMENT）。
+- CI burst 测试：模拟 B_burst = 6 瞬时到达，验证 SPSC_STATE 不饱和（**WORKLOAD MODEL 验证** — 验证声明 envelope 内不饱和，非 deterministic upper bound）。
+- CI 稳态测试：模拟 B_rate = 40 events/s 持续 10s，验证 SPSC_STATE 不饱和（**WORKLOAD MODEL 验证**，依赖 W_design，在声明 envelope 内成立）。
+- CI 超 envelope 测试：模拟 B_rate > 40 / B_burst > 6，验证 SPSC_STATE 触发饱和 + 确定性安全降级（验证 workload envelope 边界 + 降级机制，HARD CONTRACT 仅限"饱和→降级"机制本身）。
+- 运行时监控：`stateChannelSaturatedCount` 在声明 workload envelope 内零增长（MEASUREMENT REQUIREMENT）。
 
 ### 2.4.3 consumer 最坏暂停窗口（Design-R3 三层分层，删除 GC 引用）
 
@@ -1288,7 +1301,7 @@ SpscRingBuffer --> RawInputEvent : 存储
 
 - **W_design**：理论最坏情况上界（DESIGN TARGET，非 HARD CONTRACT）。基于算法复杂度 + 平台调度特性建模，作为设计基准指导实现。
 - **W_observed**：统计观测（MEASUREMENT REQUIREMENT）。CI 测量 Capture thread 消费间隔 P50/P95/P99/P99.9/max，不预设上界，要求 CI 产出统计分布报告。
-- **W_test**：CI 验收标准（HARD CONTRACT 限定为测试阈值）。max observed ≤ 10ms（异常过载测试阈值，非 deterministic upper bound）。
+- **W_pause_test**：CI 验收标准（HARD CONTRACT 限定为测试阈值）。max observed ≤ 10ms（consumer pause test threshold，异常过载测试阈值，非 deterministic upper bound）。**Design-R13 命名正交**：W_pause_test 专指 consumer pause test threshold，与 §2.4.5 T_saturation_detect_test / §2.4.6 T_system_recovery_test 区分。
 
 **W_design 推导（DESIGN TARGET）**：
 
@@ -1309,18 +1322,18 @@ SpscRingBuffer --> RawInputEvent : 存储
 - **不得用 P99 证明 worst-case**（Design-R3）：P99 仅表示 99% 的观测低于此值，剩余 1% 可能远超；worst-case 需 max 观测或 deterministic 上界。
 - 参考硬件目标：P99 ≤ 1ms（DESIGN TARGET，非硬保证）。
 
-**W_test（CI 验收标准）**：
+**W_pause_test（CI 验收标准，consumer pause test threshold）**：
 - **max observed ≤ 10ms**（HARD CONTRACT 限定为测试阈值）：CI 长时间运行（≥ 1 小时）测量 Capture thread 消费间隔 max，超过 10ms 判定异常过载。
 - 异常过载测试：人为阻塞 Capture thread 10ms，验证 SPSC_STATE 饱和触发确定性安全降级。
 
-**与 SPSC_STATE 容量的关系**（Design-R2 主定理）：
+**与 SPSC_STATE 容量的关系**（Design-R2 主定理，Design-R12 限定在声明 workload envelope 内）：
 - 正常设计条件下 backlog_max ≤ B_burst + B_rate × W_design = 6 + 40 × 0.001 = 6.04 events（远小于 64）。
-- 异常过载条件下（W_test = 10ms）：backlog_max ≤ 6 + 40 × 0.010 = 6.4 events（仍远小于 64，但 W_observed max 超 W_design 即标记异常）。
+- 异常过载条件下（W_pause_test = 10ms）：backlog_max ≤ 6 + 40 × 0.010 = 6.4 events（仍远小于 64，但 W_observed max 超 W_design 即标记异常）。
 
 **可验证 invariant**：
 - CI 长时间运行：监控 Capture thread 消费间隔 P50/P95/P99/P99.9/max（MEASUREMENT REQUIREMENT，产出统计分布报告）。
-- CI 验收：max observed ≤ 10ms（HARD CONTRACT 限定为测试阈值，超限判定异常过载）。
-- 异常过载测试：人为阻塞 Capture thread 10ms，验证 SPSC_STATE 饱和触发确定性安全降级（HARD CONTRACT）。
+- CI 验收：max observed ≤ 10ms（W_pause_test，HARD CONTRACT 限定为测试阈值，超限判定异常过载）。
+- 异常过载测试：人为阻塞 Capture thread 10ms，验证 SPSC_STATE 饱和触发确定性安全降级（HARD CONTRACT — 验证饱和检测 + 降级机制本身）。
 
 ### 2.4.4 异常过载判定阈值
 
@@ -1359,13 +1372,13 @@ SpscRingBuffer --> RawInputEvent : 存储
 1. **T0**：callback 尝试 enqueue 到 SPSC_STATE，发现 `isFull() == true`。
 2. **T1 = T0 + ≤100ns**：callback 设置 `stateChannelSaturated = true`（std::atomic 写）+ `stateChannelSaturatedCount++`（std::atomic 写）+ 告警标记 `CFX-E-CAP-STATE-CHANNEL-SATURATED`（异步日志，不阻塞）。
    - **std::atomic 写时序**：DESIGN TARGET ≤100ns（x86-64 / arm64 单次 atomic store 工程目标，非硬保证；MEASUREMENT REQUIREMENT：CI 测量 atomic store P50/P99/max）。
-3. **T2 = T1 + W_pause**：Capture thread 下一次消费循环检测 `stateChannelSaturated == true`（消费循环间隔 = W_pause，§2.4.3 三层分层：W_design = 1ms / W_observed P99 / W_test max ≤ 10ms）。
+3. **T2 = T1 + W_pause**：Capture thread 下一次消费循环检测 `stateChannelSaturated == true`（消费循环间隔 = W_pause，§2.4.3 三层分层：W_design = 1ms / W_observed P99 / W_pause_test max ≤ 10ms）。
 4. **T3 = T2 + ≤100ns**：Capture thread 启动 `AuthoritativeResync.resynchronize()`（std::atomic 读 + 函数调用）。
 
 **饱和检测总时序**：
 - **W_design 上界**：T3 - T0 ≤ 100ns + 1ms + 100ns ≈ 1ms（DESIGN TARGET）。
 - **W_observed**：CI 测量 T3 - T0 P50/P95/P99/P99.9/max（MEASUREMENT REQUIREMENT）。
-- **W_test**：CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值，= atomic 200ns + W_test 10ms + atomic 200ns + 余量）。
+- **T_saturation_detect_test**：CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值，saturation detection test threshold，= atomic 200ns + W_pause_test 10ms + atomic 200ns + 余量）。**Design-R13 命名正交**：T_saturation_detect_test 专指饱和检测时序测试阈值，与 §2.4.3 W_pause_test / §2.4.6 T_system_recovery_test 区分。
 
 **设计要点**：
 - callback 不阻塞（T1 - T0 ≤ 200ns，仅两个 atomic 写 + 异步告警标记，DESIGN TARGET）。
@@ -1374,7 +1387,7 @@ SpscRingBuffer --> RawInputEvent : 存储
 
 **可验证 invariant**：
 - 饱和检测时序 W_observed P99/P99.9/max（MEASUREMENT REQUIREMENT，CI 产出统计分布报告）。
-- CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值）。
+- CI 验收 max observed ≤ 12ms（T_saturation_detect_test，HARD CONTRACT 限定为测试阈值）。
 - callback 在饱和时仍 ≤1ms 返回（HARD CONTRACT，spec.md §4.1.1 FROZEN，不阻塞）。
 
 ### 2.4.6 recovery 时序（Design-R4 三类分层 + Design-R9 拆分 System/User recovery）
@@ -1402,10 +1415,10 @@ SpscRingBuffer --> RawInputEvent : 存储
 **System Safety Recovery 上界**：
 - **W_design 上界**：R4 - R0 ≤ 10us + 100ns + 1ms ≈ 1.1ms（DESIGN TARGET）。
 - **W_observed**：CI 测量 R4 - R0 P50/P95/P99/P99.9/max（MEASUREMENT REQUIREMENT）。
-- **W_test**：CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值）。
+- **T_system_recovery_test**：CI 验收 max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值，system recovery test threshold）。**Design-R13 命名正交**：T_system_recovery_test 专指系统安全降级 recovery 时序测试阈值，与 §2.4.3 W_pause_test / §2.4.5 T_saturation_detect_test 区分。
 
 **System Safety Recovery Contract（Design-R9）**：
-> 系统在饱和检测后 ≤1.1ms（DESIGN TARGET）/ ≤12ms（W_test HARD CONTRACT 限定为测试阈值）内进入 RECOVERY 态，FSM 停止捕获，**保证 P1∧P2 不破坏**（无虚假控制权，本端物理键鼠仍作用于本机，No Void-Owner 保持）。**此为系统侧 bounded completion，不依赖用户行为**。
+> 系统在饱和检测后 ≤1.1ms（DESIGN TARGET）/ ≤12ms（T_system_recovery_test HARD CONTRACT 限定为测试阈值）内进入 RECOVERY 态，FSM 停止捕获，**保证 P1∧P2 不破坏**（无虚假控制权，本端物理键鼠仍作用于本机，No Void-Owner 保持）。**此为系统侧 bounded completion，不依赖用户行为**。
 
 **User-dependent convergence**（从 R4 到系统回到 NORMAL 态）：
 
@@ -1415,166 +1428,168 @@ SpscRingBuffer --> RawInputEvent : 存储
 8. **R7 = R6**：系统回到 NORMAL 态，满足 P1 ∧ P2。
 
 **User-dependent convergence Contract（Design-R9）**：
-> **不宣称 deterministic bounded upper bound**。NORMAL 状态最终恢复依赖用户释放物理按键（T_user_release），不属于系统可控时间上界。系统在 RECOVERY 态期间保持 P1∧P2（无虚假控制权，无 Void-Owner），用户松手后 ≤1ms（DESIGN TARGET）/ W_test（HARD CONTRACT 限定为测试阈值）内回到 NORMAL。
+> **不宣称 deterministic bounded upper bound**。NORMAL 状态最终恢复依赖用户释放物理按键（T_user_release），不属于系统可控时间上界。系统在 RECOVERY 态期间保持 P1∧P2（无虚假控制权，无 Void-Owner），用户松手后 ≤1ms（DESIGN TARGET）/ T_system_recovery_test（HARD CONTRACT 限定为测试阈值）内回到 NORMAL。
 
-**P3 Recoverable 可证性（Design-R9 重新论证）**：
-- **System Safety Recovery**：系统侧 ≤1.1ms（DESIGN TARGET）/ ≤12ms（W_test）内进入 RECOVERY 态，保证 P1∧P2 不破坏，此为系统可控 bounded completion。
+**P3 Recoverable 表述（Design-R9 重新论证，P3 表述严格限定）**：
+- **System Safety Recovery**：系统侧 ≤1.1ms（DESIGN TARGET）/ ≤12ms（T_system_recovery_test）内进入 RECOVERY 态，保证 P1∧P2 不破坏，此为系统可控 bounded completion。
 - **User-dependent convergence**：依赖 T_user_release，不属系统可控时间上界；但系统在 RECOVERY 态期间保持 P1∧P2，不无限卡死，不产生虚假控制权。
-- **P3 重新表述**：系统在故障发生后有限系统侧时间内进入安全降级态（P1∧P2 保持）；NORMAL 状态最终恢复依赖用户释放物理按键，属 eventual convergence 而非 deterministic bounded completion。**P3 Recoverable 在 "系统侧安全降级有 bounded completion" 意义下可证；不声称 "总 recovery 有 deterministic bounded upper bound"**。
+- **P3 严格表述（P3 表述严格限定）**：系统在故障发生后有限系统侧时间内进入安全降级态（P1∧P2 保持）；NORMAL 状态最终恢复依赖用户释放物理按键，属 eventual convergence 而非 deterministic bounded completion。**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.** 明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded，依赖 T_user_release eventual convergence），避免 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束。
 
 **可验证 invariant**：
 - System Safety Recovery W_observed P99/P99.9/max（MEASUREMENT REQUIREMENT，CI 产出统计分布报告）。
-- CI 验收 System Safety Recovery max observed ≤ 12ms（HARD CONTRACT 限定为测试阈值）。
+- CI 验收 System Safety Recovery max observed ≤ 12ms（T_system_recovery_test，HARD CONTRACT 限定为测试阈值）。
 - FSM 在 RECOVERY 态不产生 Handoff（不产生虚假控制权，HARD CONTRACT，源码审查 + 运行时验证）。
-- 用户松手后系统 ≤1ms（DESIGN TARGET）/ W_test（HARD CONTRACT 限定为测试阈值）回到 NORMAL（CI 模拟用户松手验证 R7 - R5）。
+- 用户松手后系统 ≤1ms（DESIGN TARGET）/ T_system_recovery_test（HARD CONTRACT 限定为测试阈值）回到 NORMAL（CI 模拟用户松手验证 R7 - R5；**此为 eventual convergence 验证，非 deterministic bounded return to NORMAL 硬约束**）。
 
 ### 2.4.7 工程边界量化总结（Design-R2/R3/R4 修订）
 
 | 工程边界 | 量化值 | 类别（Design-R4） | 量化依据 | 可验证 invariant |
 |---------|--------|------------------|---------|----------------|
-| SPSC_STATE capacity | 64 | HARD CONTRACT | 10× 正常设计上界 (B_burst + B_rate × W_design = 6.04) ≈ 60.4 → 2 的幂次 64 | `static_assert(SPSC_STATE_CAPACITY == 64)`；正常条件下 `stateChannelSaturatedCount` 零增长 |
-| B_burst（单次 burst 瞬时上界） | 6 events | HARD CONTRACT | 单次修饰键组合 Cmd+Shift+3 = 6 events | CI burst 测试 6 events 瞬时到达不触发饱和 |
-| B_rate（稳态最大生产速率） | 40 events/s | HARD CONTRACT | 15 键/s × 2 + 10 button/s × 1 = 40（吉尼斯纪录级 + 极限点击） | CI 稳态测试 40 events/s 持续 10s 不触发饱和 |
+| SPSC_STATE capacity | 64 | HARD CONTRACT（编译期容量值） | 10× 正常设计上界 (B_burst + B_rate × W_design = 6.04) ≈ 60.4 → 2 的幂次 64；**在声明 workload envelope 内经过验证的工程容量** | `static_assert(SPSC_STATE_CAPACITY == 64)`；声明 envelope 内 `stateChannelSaturatedCount` 零增长；超 envelope 触发饱和安全降级 |
+| B_burst（单次 burst 瞬时上界） | 6 events | **WORKLOAD MODEL / TEST PROFILE**（Design-R12） | 单次修饰键组合 Cmd+Shift+3 = 6 events（声明值，非 deterministic system upper bound） | CI burst 测试 6 events 瞬时到达不触发饱和（声明 envelope 内验证）；超 envelope 触发降级 |
+| B_rate（稳态最大生产速率） | 40 events/s | **WORKLOAD MODEL / TEST PROFILE**（Design-R12） | 15 键/s × 2 + 10 button/s × 1 = 40（吉尼斯纪录级 + 极限点击，声明值，非 deterministic system upper bound） | CI 稳态测试 40 events/s 持续 10s 不触发饱和（声明 envelope 内验证）；超 envelope 触发降级 |
 | W_design（理论最坏暂停窗口） | 1ms | DESIGN TARGET | 单次消费 200us + 系统抖动 800us（无 GC） | 不作为硬保证，指导实现 |
 | W_observed（统计观测） | P99/P99.9/max | MEASUREMENT REQUIREMENT | CI 实机测量 Capture thread 消费间隔 | CI 产出统计分布报告 |
-| W_test（CI 验收 max） | ≤ 10ms | HARD CONTRACT（测试阈值） | CI 长时间运行 max observed 阈值 | max observed ≤ 10ms，超限判定异常过载 |
+| W_pause_test（consumer pause test threshold） | ≤ 10ms | HARD CONTRACT（测试阈值，Design-R13） | CI 长时间运行 max observed 阈值 | max observed ≤ 10ms，超限判定异常过载 |
 | 异常过载判定阈值 T_overload | 64 (队列满) | HARD CONTRACT | SPSC_STATE.isFull() | `stateChannelSaturated == SPSC_STATE.isFull()` |
 | 饱和检测时序（W_design） | ≤1ms | DESIGN TARGET | atomic 200ns + W_design 1ms + atomic 200ns | 不作为硬保证 |
-| 饱和检测时序（W_test） | ≤12ms | HARD CONTRACT（测试阈值） | atomic 200ns + W_test 10ms + atomic 200ns + 余量 | CI max observed ≤ 12ms |
+| 饱和检测时序（T_saturation_detect_test） | ≤12ms | HARD CONTRACT（测试阈值，Design-R13） | atomic 200ns + W_pause_test 10ms + atomic 200ns + 余量 | CI max observed ≤ 12ms |
 | System Safety Recovery（W_design） | ≤1.1ms | DESIGN TARGET | ground truth 10us + bitmap 100ns + FSM 1ms | 不作为硬保证 |
-| System Safety Recovery（W_test） | ≤12ms | HARD CONTRACT（测试阈值） | 同上 + 余量 | CI max observed ≤ 12ms |
-| User-dependent convergence | T_user_release + t_drain | 不宣称 bounded | T_user_release 无界（用户可控）+ t_drain ≤1ms（DESIGN TARGET） | 不声称 deterministic bounded；FSM 在 RECOVERY 保持 P1∧P2 |
+| System Safety Recovery（T_system_recovery_test） | ≤12ms | HARD CONTRACT（测试阈值，Design-R13） | 同上 + 余量 | CI max observed ≤ 12ms |
+| User-dependent convergence | T_user_release + t_drain | 不宣称 bounded | T_user_release 无界（用户可控）+ t_drain ≤1ms（DESIGN TARGET） | **CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**；FSM 在 RECOVERY 保持 P1∧P2 |
 | releaseAllPressed total deadline | ≤100ms | HARD CONTRACT（requirement inherited） | spec.md §4.2.5 FROZEN | total elapsed ≤ 100ms 可验证 |
 | 回调 ≤1ms | ≤1ms | HARD CONTRACT（requirement inherited） | CF0 §4.6.4 FROZEN / spec.md §4.1.1 FROZEN | 回调耗时测量 ≤1ms |
 | CGEventSourceFlagsState 查询 | ≤10us | DESIGN TARGET | macOS API 工程目标，非硬保证 | CI 测量 P50/P99/max |
 | FSM 状态转移 | ≤1ms | DESIGN TARGET | CF0 design §4.1.9 工程目标 | CI 测量 P50/P99/max |
 | std::atomic 写 | ≤100ns | DESIGN TARGET | x86-64 / arm64 单次 atomic store 工程目标 | CI 测量 P50/P99/max |
 
-### 2.4.8 SPSC RingBuffer Drop Oldest 并发 ownership 证明（Design-R7 修复）
+### 2.4.8 SPSC RingBuffer Drop Oldest 并发 ownership 证明（Design-R7 新增 / Design-R11 修正逻辑错误）
 
-**问题**：v1 §2.2.2 `SpscRingBuffer.tryPushDropOldest()` 中 Producer 为 Drop Oldest 移动 Consumer-owned tail，破坏 SPSC ownership（head=Producer, tail=Consumer）。SPSC 要求 head 仅 Producer 写、tail 仅 Consumer 写，Producer 移动 tail 违反 ownership invariant。
+**v1.1 Design-R7 缺陷（Design-R11 修正）**：v1.1 §2.4.8 "最终冻结"方案声称 "Producer-only head advance + Consumer 容忍 stale" 实现 Drop Oldest，但存在不可调和的逻辑矛盾：
+- SPSC ownership 要求 `head` = Producer-only 写、`tail` = Consumer-only 写，Producer 不得写 `tail`。
+- Producer 推进 `head` 只增加队列元素数量，不改变 Consumer 的 `tail`，旧事件未被 Drop（Consumer 仍按 `tail` 读取，会读到 "被跳过的最旧"）。
+- 若 Producer 推进 `head` 超过 capacity，`head - tail > capacity` 违反不变量。
+- v1.1 §2.4.8 自承认 "这不是严格 Drop Oldest，而是 Drop Oldest with Consumer-side stale tolerance"，sentinel 槽位修复仍让 Consumer 读到被跳过的旧事件。
+- **根本矛盾**：要丢掉 oldest 必须改变 consumer-visible read boundary（`tail`），但 Producer 不得修改 Consumer-owned `tail`。
 
-**Design-R7 修复方案**：采用 **Producer-only overwrite**，Producer 不移动 Consumer-owned tail，仅在 Producer-owned head 域内操作。
+**Design-R11 修正方案 A**：引入 **Producer-owned `publishedTail`（discard cursor / published read boundary）**，独立于 Consumer-owned `consumedTail`。Producer 通过推进 `publishedTail` 声告 "已丢弃的最旧下界"，Consumer 读 `publishedTail`（acquire 只读）跳过被丢弃的槽位。这是经典 bounded SPSC with producer-side discard 模式，不破坏 SPSC ownership（Producer 拥有 head + publishedTail，Consumer 拥有 consumedTail）。
 
-**精确 ownership 与 memory-order proof**：
+**方案 A 状态变量与 ownership**：
 
-**SPSC RingBuffer ownership invariant**：
-- `head`：Producer-only 写，Consumer-only 读（Producer 写用 `memory_order_release`，Consumer 读用 `memory_order_acquire`）。
-- `tail`：Consumer-only 写，Producer-only 读（Consumer 写用 `memory_order_release`，Producer 读用 `memory_order_acquire`）。
-- `buffer[head % Capacity]`：Producer-only 写（在 head 推进前）。
-- `buffer[tail % Capacity]`：Consumer-only 读（在 tail 推进前）。
+| 变量 | 类型 | Owner（写） | 其他线程（读） | 语义 |
+|------|------|------------|---------------|------|
+| `head` | `std::atomic<uint64_t>` | Producer | Consumer (acquire) | Producer 推进的写入位置（下一个要写的槽位编号） |
+| `publishedTail` | `std::atomic<uint64_t>` | **Producer**（Design-R11 新增 discard cursor） | Consumer (acquire) | Producer 宣告的 "已丢弃下界 / discard boundary"；Consumer 可读范围上界 = head，下界 = publishedTail |
+| `consumedTail` | `std::atomic<uint64_t>` | Consumer | Producer (acquire) | Consumer 推进的消费位置（已读到哪） |
+| `buffer[i % Capacity]` | slot | Producer（写 head 槽位，在 head 推进前） | Consumer（读 consumedTail 槽位，在 consumedTail 推进前） | 环形缓冲槽位 |
 
-**tryPush（满返回 false，不丢）**：
+**方案 A 不变量**：
+- **INV1**：`publishedTail ≤ consumedTail ≤ head`（discard boundary ≤ 消费位置 ≤ 写入位置；Consumer 不得落后于 discard boundary，不得越过 head）。
+- **INV2**：`head - publishedTail ≤ Capacity - 1`（published 范围 bounded；预留 1 sentinel 槽位避免 Producer 写与 Consumer 读同槽竞争，经典 SPSC 满判定）。
+- **INV3**：`consumedTail` 单调递增；`publishedTail` 单调递增；`head` 单调递增（uint64 不回绕，ABA 不发生，见下文）。
+
+**tryPush（不满，正常 enqueue）**：
 ```
 Producer:
-  h = head.load(memory_order_relaxed)
-  t = tail.load(memory_order_acquire)        // 读 Consumer-owned tail
-  if (h - t == Capacity) return false        // 满
-  buffer[h % Capacity] = item                // Producer-owned slot
-  head.store(h + 1, memory_order_release)    // 推进 Producer-owned head
+  h  = head.load(memory_order_relaxed)
+  pt = publishedTail.load(memory_order_relaxed)        // Producer-owned, relaxed
+  if (h - pt == Capacity - 1) return false             // 满（预留 sentinel）
+  buffer[h % Capacity] = item                          // Producer-owned slot
+  head.store(h + 1, memory_order_release)             // 推进 Producer-owned head
   return true
 ```
-**ownership 保持**：Producer 仅写 `head` 与 `buffer[h % Capacity]`，不写 `tail`。✓
+**ownership 保持**：Producer 仅写 `head` 与 `buffer[h % Capacity]`，不写 `consumedTail`，不写 `publishedTail`（正常 enqueue 不丢弃）。✓
 
-**tryPushDropOldest（Design-R7 Producer-only overwrite）**：
+**tryPushDropOldest（Design-R11 方案 A：Producer 推进 publishedTail 丢弃最旧 + 正常 enqueue）**：
 ```
 Producer:
-  h = head.load(memory_order_relaxed)
-  t = tail.load(memory_order_acquire)        // 读 Consumer-owned tail
-  if (h - t < Capacity) {
+  h  = head.load(memory_order_relaxed)
+  pt = publishedTail.load(memory_order_relaxed)        // Producer-owned, relaxed
+  if (h - pt < Capacity - 1) {
     // 不满，正常 enqueue
     buffer[h % Capacity] = item
     head.store(h + 1, memory_order_release)
     return true
   }
-  // 满，Drop Oldest：Producer-only overwrite，不移动 tail
-  // 覆盖最旧槽位 buffer[t % Capacity]（Consumer 即将读的位置）
-  // 但这会与 Consumer 读竞争 → 仍违反 ownership
-```
-
-**问题**：上述 naive Drop Oldest 仍需写 `buffer[t % Capacity]`，而该槽位属 Consumer 读域，Producer 写会与 Consumer 读竞争。
-
-**Design-R7 正确方案：Drop Oldest via head advance + slot skip**：
-```
-Producer:
-  h = head.load(memory_order_relaxed)
-  t = tail.load(memory_order_acquire)
-  if (h - t < Capacity) {
-    buffer[h % Capacity] = item
-    head.store(h + 1, memory_order_release)
-    return true  // 入队成功
-  }
-  // 满，Drop Oldest：推进 head 跳过最旧槽位，再写入新事件
-  // 等价于 "丢弃 buffer[t % Capacity]，新事件写入 buffer[(h+1) % Capacity]"
-  // 但 Consumer 仍按 tail 读取，会读到 "被丢弃的旧事件" 一次，然后读到新事件
-  // 这违反 "Drop Oldest" 语义（Consumer 仍读到旧事件）
-```
-
-**Design-R7 最终方案：MPMC-bounded fallback 或 SPSC-reserved slot**：
-
-经分析，**严格 SPSC RingBuffer + Drop Oldest 在不移动 Consumer tail 的前提下无法实现 "丢弃最旧 + Consumer 不读到旧事件"**（Producer 无法安全地让 Consumer 跳过最旧槽位，因为跳过 = 移动 tail = 违反 ownership）。
-
-**Design-R7 冻结方案**：SPSC_DATA 通道（Drop Oldest）采用 **Producer-only head advance + Consumer 主动 skip stale**：
-
-```
-Producer:
-  h = head.load(memory_order_relaxed)
-  t = tail.load(memory_order_acquire)
-  if (h - t < Capacity) {
-    buffer[h % Capacity] = item
-    head.store(h + 1, memory_order_release)
-    return true
-  }
-  // 满，Drop Oldest：Producer 推进 head 跳过最旧槽位（标记 stale），再写入
-  buffer[h % Capacity] = item                 // 覆盖当前 head 槽位（Producer-owned）
-  head.store(h + 1, memory_order_release)     // 推进 head，最旧槽位 buffer[t % Capacity] 被 "挤掉"
+  // 满（h - pt == Capacity - 1）：Drop Oldest
+  // Step 1: Producer 推进 publishedTail 丢弃最旧（discard boundary 上移，Consumer 可读下界上移，最旧被排除）
+  publishedTail.store(pt + 1, memory_order_release)    // Producer-owned discard cursor
+  // Step 2: 正常 enqueue 新事件（此时 h - (pt+1) == Capacity - 2，不满）
+  buffer[h % Capacity] = item                          // Producer-owned slot
+  head.store(h + 1, memory_order_release)             // 推进 Producer-owned head
   droppedOldestCount.fetch_add(1, memory_order_relaxed)
   return true
 ```
 
-**ownership 保持**：
-- Producer 仅写 `head` 与 `buffer[h % Capacity]`（h 是 Producer-owned head 值），**不写 `tail`，不写 `buffer[t % Capacity]`**。✓
-- "Drop Oldest" 语义实现：队列满时 Producer 不推进 head（h 不变），直接覆盖 `buffer[h % Capacity]`（注意：满时 h % Capacity == t % Capacity，因为 (h - t) == Capacity 且 Capacity 是 2 的幂次，h % Capacity == t % Capacity）。**但这会与 Consumer 读 `buffer[t % Capacity]` 竞争**。
-
-**最终冻结：SPSC_DATA Drop Oldest 改为 "Producer 推进 head + Consumer 容忍 stale"**：
-
+**Consumer 读取（消费，跳过被丢弃）**：
 ```
-Producer (tryPushDropOldest):
-  h = head.load(memory_order_relaxed)
-  t = tail.load(memory_order_acquire)
-  if (h - t < Capacity) {
-    buffer[h % Capacity] = item
-    head.store(h + 1, memory_order_release)
-    return true
-  }
-  // 满：Producer 推进 head 两步（跳过最旧 + 写入新），Consumer 会读到一次 "被跳过的最旧" 然后读到新事件
-  // 等价于 "Consumer 多读一次旧事件，但新事件不丢"
-  // 这不是严格 Drop Oldest，而是 "Drop Oldest with Consumer-side stale tolerance"
-  buffer[h % Capacity] = item                  // 写入新事件到当前 head 槽位
-  head.store(h + 1, memory_order_release)      // 推进 head
-  droppedOldestCount.fetch_add(1, memory_order_relaxed)  // 标记丢弃
-  return true
+Consumer:
+  ct = consumedTail.load(memory_order_relaxed)         // Consumer-owned, relaxed
+  pt = publishedTail.load(memory_order_acquire)        // 读 Producer-owned discard boundary
+  h  = head.load(memory_order_acquire)                 // 读 Producer-owned head
+  if (ct < pt) ct = pt                                 // 跳过被 Producer 丢弃的最旧（discard boundary 上移）
+  if (ct >= h) return empty                            // 无可读
+  item = buffer[ct % Capacity]                         // Consumer-owned read slot
+  consumedTail.store(ct + 1, memory_order_release)     // 推进 Consumer-owned consumedTail
+  return item
 ```
 
-**精确语义**：
-- 队列满时（h - t == Capacity），`buffer[h % Capacity]` 与 `buffer[t % Capacity]` 是同一槽位（因 Capacity 是 2 的幂次）。
-- Producer 写 `buffer[h % Capacity]` 会与 Consumer 读 `buffer[t % Capacity]` 竞争（同一槽位）。
-- **解决方案**：SPSC_DATA 容量预留 1 个 sentinel 構位（实际容量 Capacity-1），使满时 h % Capacity ≠ t % Capacity，Producer 写 `buffer[h % Capacity]` 不与 Consumer 读 `buffer[t % Capacity]` 竞争。
-- 这是经典 SPSC RingBuffer "满时 (h - t == Capacity - 1)" 实现，Capacity=256 实际可用 255，Drop Oldest 时 Producer 推进 head 覆盖最旧槽位（h % Capacity ≠ t % Capacity 因 (h - t) == Capacity - 1）。
+**ownership 保持证明**：
+- **Producer 写**：`head`（release）、`publishedTail`（release）、`buffer[head % Capacity]`（在 head 推进前）。Producer **不写 `consumedTail`**，**不写 `buffer[consumedTail % Capacity]`**。✓
+- **Consumer 写**：`consumedTail`（release）。Consumer **不写 `head`**，**不写 `publishedTail`**，**不写 `buffer[head % Capacity]`**。Consumer 读 `publishedTail` / `head` 为 acquire 只读，不违反 ownership。✓
+- **SPSC ownership invariant 保持**：每个变量有唯一 owner；跨线程读为 acquire 只读。✓
 
-**Design-R7 最终 Contract**：
-> SPSC_DATA `tryPushDropOldest()` 采用 "Capacity 预留 1 sentinel 槽位 + Producer-only head advance" 实现：
-> 1. 容量语义：`SPSC_DATA_CAPACITY = 256` 含 1 sentinel，实际可用 255（编译期 static_assert）。
-> 2. 满判定：`(h - t) == Capacity - 1`（预留 sentinel，h % Capacity ≠ t % Capacity）。
-> 3. Drop Oldest：Producer 推进 head 一步（跳过最旧槽位 t % Capacity），写入新事件到新 head 槽位（h+1 % Capacity ≠ t % Capacity）。
-> 4. **ownership 保持**：Producer 仅写 `head` 与 `buffer[h % Capacity]`，不写 `tail`，不写 `buffer[t % Capacity]`。✓
-> 5. **memory-order**：Producer head.store 用 `memory_order_release`，Consumer tail.load 用 `memory_order_acquire`，跨线程可见性保证。
-> 6. **Drop Oldest 语义**：最旧槽位 `buffer[t % Capacity]` 被 "挤掉"（Consumer 下次读到的是 `buffer[(t+1) % Capacity]`，最旧事件丢失），新事件保留。
+**memory-order proof**：
+- `head.store(release)` / `head.load(acquire)`：Producer 写 buffer 后 release head，Consumer acquire head 后读 buffer，happens-before 链保证 Consumer 读到 Producer 写入的 item。
+- `publishedTail.store(release)` / `publishedTail.load(acquire)`：Producer release publishedTail 后，Consumer acquire publishedTail 看到 discard boundary 上移，正确跳过被丢弃槽位。
+- `consumedTail.store(release)` / `consumedTail.load(acquire)`：Consumer release consumedTail 后，Producer acquire consumedTail（用于满判定，若需要）看到 Consumer 消费进度。
+- 跨线程可见性由 release/acquire 配对保证。✓
+
+**ABA 分析**：
+- `head` / `publishedTail` / `consumedTail` 均为 `uint64_t` 单调递增计数器（不回绕），槽位由 `% Capacity` 映射。
+- uint64 在实际系统生命周期内不会回绕（2^64 ≈ 1.8×10^19 次操作，即使每纳秒 1 次也需 ~585 年）。
+- **ABA 不发生**：槽位复用不会产生 ABA，因计数器单调递增，Consumer 通过 `consumedTail < head` 判定可读，不依赖槽位本身的版本标记。✓
+
+**overwrite race 分析（sentinel 槽位）**：
+- **满判定**：`head - publishedTail == Capacity - 1`（预留 1 sentinel，实际可用 Capacity - 1）。
+- **满时 Producer 写 `buffer[head % Capacity]`**，Consumer 读 `buffer[consumedTail % Capacity]`。
+- 由 INV1 `publishedTail ≤ consumedTail ≤ head` + INV2 `head - publishedTail ≤ Capacity - 1`：
+  - 满时 `head - publishedTail == Capacity - 1`，`consumedTail ∈ [publishedTail, head]`，故 `head - consumedTail ∈ [0, Capacity - 1]`。
+  - `head % Capacity == consumedTail % Capacity` 当且仅当 `(head - consumedTail) % Capacity == 0`，即 `head - consumedTail ∈ {0, Capacity, 2×Capacity, ...}`。
+  - 但 `head - consumedTail ∈ [0, Capacity - 1]`，故 `head - consumedTail == 0`（即 `consumedTail == head`，Consumer 已读到 head，无可读，不会读 buffer）。
+  - **Consumer 读 `buffer[consumedTail % Capacity]` 时 `consumedTail < head`，故 `head - consumedTail ∈ [1, Capacity - 1]`，`head % Capacity ≠ consumedTail % Capacity`**。
+- **Producer 写与 Consumer 读不同槽位，无 overwrite race**。✓
+- **Drop Oldest 时**：Producer 先推进 `publishedTail`（丢弃最旧，Consumer 下次读会跳到新 publishedTail），再写 `buffer[head % Capacity]`。被丢弃的最旧槽位 `buffer[publishedTail_old % Capacity]`：Consumer 若尚未读到该槽位（`consumedTail < publishedTail_old + 1`），下次读会跳到 `publishedTail_old + 1`（因 `ct < pt` → `ct = pt`），不读被丢弃槽位；若 Consumer 已读到该槽位（`consumedTail > publishedTail_old`），则该槽位已消费完，Producer 写不与 Consumer 竞争。✓
+
+**Drop Oldest 语义证明**：
+- 满时（`head - publishedTail == Capacity - 1`）队列中有 `Capacity - 1` 个已发布未消费的事件（`[publishedTail, head)`）。
+- Drop Oldest：Producer `publishedTail++`（discard boundary 上移，`[publishedTail_old, publishedTail_old + 1)` 即最旧 1 个事件被排除出可读范围）+ `buffer[head % Capacity] = item; head++`（新事件入队）。
+- 丢弃后可读范围 = `[publishedTail_old + 1, head_old + 1)` = 原 `[publishedTail_old + 1, head_old)`（去掉最旧）+ 新事件。**最旧事件被丢弃，新事件保留，Consumer 不读到被丢弃的最旧**。✓
+- **真正实现 Drop Oldest 语义**（非 v1.1 的 "Consumer 容忍 stale"），Consumer 通过 `ct < pt → ct = pt` 主动跳过被 Producer 丢弃的槽位。
+
+**Design-R11 最终 Contract**：
+> SPSC_DATA `tryPushDropOldest()` 采用 **方案 A — Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail`** 实现：
+> 1. **状态变量**：`head`（Producer-only 写）、`publishedTail`（**Producer-only 写，Design-R11 新增 discard cursor**）、`consumedTail`（Consumer-only 写）；`buffer[i % Capacity]` 槽位。
+> 2. **不变量**：`publishedTail ≤ consumedTail ≤ head`（INV1）；`head - publishedTail ≤ Capacity - 1`（INV2，预留 1 sentinel）；三计数器单调递增（INV3，ABA 不发生）。
+> 3. **满判定**：`head - publishedTail == Capacity - 1`（预留 sentinel，避免 Producer 写与 Consumer 读同槽竞争）。
+> 4. **Drop Oldest**：满时 Producer `publishedTail++`（丢弃最旧，discard boundary 上移）+ `buffer[head % Capacity] = item; head++`（新事件入队）+ `droppedOldestCount++`。
+> 5. **Consumer 跳过被丢弃**：Consumer 读 `publishedTail`（acquire），若 `consumedTail < publishedTail` 则 `consumedTail = publishedTail`（跳过被 Producer 丢弃的槽位），再读 `buffer[consumedTail % Capacity]`。
+> 6. **ownership 保持**：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`；Consumer 仅写 `consumedTail`；跨线程读为 acquire 只读。✓
+> 7. **memory-order**：`head` / `publishedTail` / `consumedTail` 的 store 用 `memory_order_release`，load 用 `memory_order_acquire`，跨线程可见性保证。
+> 8. **ABA 安全**：uint64 单调递增计数器，实际系统生命周期内不回绕。
+> 9. **overwrite race 安全**：满时 `head - consumedTail ∈ [1, Capacity - 1]`，`head % Capacity ≠ consumedTail % Capacity`，Producer 写与 Consumer 读不同槽位。
+> 10. **Drop Oldest 语义**：最旧事件被 `publishedTail++` 排除出可读范围，新事件保留，Consumer 主动跳过被丢弃槽位，**真正实现 Drop Oldest**（非 "Consumer 容忍 stale"）。
+> 11. **容量语义**：`SPSC_DATA_CAPACITY = 256` 含 1 sentinel，实际可用 255（编译期 `static_assert`）。
+
+**与 v1.1 Design-R7 的关系**：Design-R7 正确识别了 "Producer 不得移动 Consumer-owned tail" 的 ownership 问题，但其 "Producer-only head advance + Consumer 容忍 stale" 解法无法真正实现 Drop Oldest（Producer 推进 head 不改变 Consumer 可读边界，旧事件未被 Drop）。Design-R11 引入 Producer-owned `publishedTail` discard cursor，使 Producer 能合法地改变 consumer-visible read boundary（通过 `publishedTail` 而非 `consumedTail`），真正实现 Drop Oldest，同时保持 SPSC ownership。
 
 **可验证 invariant**：
-- SPSC_DATA RingBuffer 实现审查：Producer 仅写 head + buffer[h % Capacity]，不写 tail（HARD CONTRACT，源码审查）。
-- Drop Oldest 测试：队列满时 enqueue 新事件，验证最旧事件被丢弃 + 新事件保留 + droppedOldestCount++（HARD CONTRACT，CI 测试）。
-- memory-order 审查：head.store release / tail.load acquire / tail.store release / head.load acquire（HARD CONTRACT，源码审查）。
+- SPSC_DATA RingBuffer 实现审查：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`，不写 `consumedTail`；Consumer 仅写 `consumedTail`，不写 `head` / `publishedTail`（HARD CONTRACT，源码审查）。
+- 不变量审查：`publishedTail ≤ consumedTail ≤ head` + `head - publishedTail ≤ Capacity - 1`（HARD CONTRACT，源码审查 + 运行时断言）。
+- Drop Oldest 测试：队列满时 enqueue 新事件，验证最旧事件被丢弃（Consumer 不读到）+ 新事件保留 + `droppedOldestCount++`（HARD CONTRACT，CI 测试）。
+- Consumer 跳过被丢弃测试：Producer Drop Oldest 后 Consumer 读取，验证 Consumer 跳过被丢弃槽位（`consumedTail ≥ publishedTail`）（HARD CONTRACT，CI 测试）。
+- memory-order 审查：`head` / `publishedTail` / `consumedTail` 的 store release / load acquire（HARD CONTRACT，源码审查）。
+- ABA 测试：长时间运行（≥ 1 小时）`head` / `publishedTail` / `consumedTail` 单调递增不回绕（MEASUREMENT REQUIREMENT，CI 监控）。
 
 ### 2.4.9 SnapshotRequest SPSC ownership 明确（Design-R8 修复）
 
@@ -1683,11 +1698,11 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 3. **几何变更适应保证 Handoff 可恢复**：分辨率/显示器变更 ≤1s 内更新屏幕边界 + 通知 CF0，保证 Handoff 可恢复（CF2-S04-REQ-002）。
 4. **线程数受控保证可恢复**：CF2 不新增线程，复用 CF0 8 线程模型，线程数 ≤8，保证可恢复（CF2-S06-REQ-001）。
 5. **断线释放 bounded completion 保证 P3**：total deadline ≤100ms bounded completion，失败时 local safety degradation + FSM 进 RECOVERY，系统在 ≤100ms + ε 有限时间内回到满足 P1 ∧ P2 的状态（CF2-S03-REQ-002）。
-6. **饱和时 recovery 时序保证 P3（Design-R9 拆分）**：**System Safety Recovery** ≤1.1ms（DESIGN TARGET）/ ≤12ms（W_test HARD CONTRACT 限定为测试阈值）内系统进入 RECOVERY 态，FSM 停止捕获，保证 P1∧P2 不破坏（此为系统侧 bounded completion，不依赖用户行为）；**User-dependent convergence** 依赖 T_user_release（用户松手，无界），不宣称 deterministic bounded upper bound；系统在 RECOVERY 态期间保持 P1∧P2，用户松手后 ≤1ms（DESIGN TARGET）/ W_test（HARD CONTRACT 限定为测试阈值）回到 NORMAL。**P3 在 "系统侧安全降级有 bounded completion" 意义下可证；不声称 "总 recovery 有 deterministic bounded upper bound"**（§2.4.6）。
+6. **饱和时 recovery 时序保证 P3（Design-R9 拆分，P3 表述严格限定）**：**System Safety Recovery** ≤1.1ms（DESIGN TARGET）/ ≤12ms（T_system_recovery_test HARD CONTRACT 限定为测试阈值）内系统进入 RECOVERY 态，FSM 停止捕获，保证 P1∧P2 不破坏（此为系统侧 bounded completion，不依赖用户行为）；**User-dependent convergence** 依赖 T_user_release（用户松手，无界），不宣称 deterministic bounded upper bound；系统在 RECOVERY 态期间保持 P1∧P2，用户松手后 ≤1ms（DESIGN TARGET）/ T_system_recovery_test（HARD CONTRACT 限定为测试阈值）回到 NORMAL。**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.** 明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded，依赖 T_user_release eventual convergence），避免 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束（§2.4.6）。
 7. **权限恢复自动重试 ≤1s**：辅助功能权限恢复后自动重试启动捕获，≤1s 内回到正常态。
 8. **几何变更适应 ≤1s**：分辨率变更 ≤1s 内更新屏幕边界，回到正常态。
 
-**可验证**：CF0-ARCH-SAFETY-003（P3）在 CF2 阶段继续可验证通过（Design-R9 重新表述：系统侧安全降级 bounded completion 可验证；User-dependent convergence 不声称 deterministic bounded）。
+**可验证**：CF0-ARCH-SAFETY-003（P3）在 CF2 阶段继续可验证通过（Design-R9 重新表述 + P3 表述严格限定：系统侧安全降级 bounded completion 可验证；User-dependent convergence 不声称 deterministic bounded；**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**）。
 
 ## 2.6 CF2 Design Contract 回映 Verification Matrix
 
@@ -1755,22 +1770,26 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 | CF2-S06-REQ-002（路径隔离） | P1 No Split-Brain | §2.5.1 措施 5：路径隔离防止捕获/注入相互干扰 |
 | CF2-S02-REQ-003（双通道 + authoritative resync） | P2 No Void-Owner / P3 Recoverable | §2.5.2 措施 4/5 + §2.5.3 措施 6：reserved capacity + authoritative resynchronization + recovery 时序 |
 
-### 2.6.8 Design-R1～R10 修订回映（Amendment v1.1 新增）
+### 2.6.8 Design-R1～R13 + P3 表述 修订回映（Amendment v1.1 新增 R1～R10 / Amendment v1.2 新增 R11～R13 + P3 表述）
 
-本小节回映大G 项目经理 Design Gate 审查发现的 10 项 Contract 层问题在 design.md v1.1 中的修复位置与可验证证据。
+本小节回映大G 项目经理 Design Gate 审查发现的 Contract 层问题在 design.md 中的修复位置与可验证证据。v1.1 修复 R1～R10（10 项），v1.2 修复 R11～R13 + P3 表述严格限定（4 项）。
 
 | 修订项 | 类别 | 修复位置 | 可验证证据 |
 |--------|------|---------|-----------|
 | Design-R1（坐标域 u32/i64 矛盾） | 🔴 BLOCKER | §2.2.2 EdgeDetector 接口 + §2.3.2 类图 + §2.6.4 S04-REQ-001 | `EdgeDetector.detect(cursorX, cursorY)` 签名审查：cursorX/cursorY 为 i64；x < 0 左越界在 i64 域可正确触发；坐标域分层声明表存在 |
 | Design-R2（B_burst/B_1s 数学不自洽） | 🔴 BLOCKER | §2.4.1 + §2.4.2 重新定义 B_burst/B_rate/W_pause + 主定理 backlog_max ≤ B_burst + B_rate × W_pause | CI burst 测试 B_burst=6 不触发饱和；CI 稳态测试 B_rate=40 events/s 持续 10s 不触发饱和；v1 的 70→60 矛盾已消除 |
-| Design-R3（W_worst 假设非 Contract） | 🔴 BLOCKER | §2.4.3 三层分层 W_design/W_observed/W_test + 删除 GC 引用 | CI 产出 W_observed P50/P95/P99/P99.9/max 报告；CI 验收 max observed ≤ 10ms（测试阈值）；文档无 GC 引用 |
+| Design-R3（W_worst 假设非 Contract，v1.1 修复 / v1.2 Design-R13 命名正交） | 🔴 BLOCKER | §2.4.3 三层分层 W_design/W_observed/W_pause_test + 删除 GC 引用 | CI 产出 W_observed P50/P95/P99/P99.9/max 报告；CI 验收 max observed ≤ 10ms（W_pause_test 测试阈值）；文档无 GC 引用 |
 | Design-R4（API 数字 overclaim） | 🔴 BLOCKER | §2.4.0 三类分层框架 + §2.4.5/§2.4.6/§2.4.7 重新分类所有时序数字 | 所有时序数字标注类别（HARD CONTRACT / DESIGN TARGET / MEASUREMENT REQUIREMENT）；HARD CONTRACT 有充分依据引用 |
 | Design-R5（callback extraction 与 Normalizer 未分开） | 🟠 P1 | §2.1.1 上下文图 + §2.1.2 组件图 + §2.1.3.1 时序图 + §2.2.1 接口表 + §2.6.1 S01-REQ-002 | 源码审查：`MacEventFieldExtractor` 仅在 callback 内，`CGEventNormalizer` 仅在 Capture thread 内，不跨越 callback 边界 |
 | Design-R6（SPSC_STATE reliable 语义需收紧） | 🟠 P1 | §2.4.1 + §2.1.3.2 + §2.1.3.5 + §2.5.2 措施 4 | 文档语义为 "normal-bound reliable, saturation → safety degradation"，不声称 absolute reliable；饱和时安全降级 Contract 明确 |
-| Design-R7（Drop Oldest 缺并发证明） | 🔴 BLOCKER | §2.4.8 新增 Drop Oldest 并发 ownership 证明 | 源码审查：Producer 仅写 head + buffer[h % Capacity]，不写 tail；Capacity 预留 1 sentinel 槽位；memory-order release/acquire 正确 |
+| Design-R7（Drop Oldest 缺并发证明，v1.1 新增 / v1.2 Design-R11 修正逻辑错误） | 🔴 BLOCKER | §2.4.8 方案 A Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail` | 源码审查：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`，不写 `consumedTail`；不变量 `publishedTail ≤ consumedTail ≤ head` + `head - publishedTail ≤ Capacity - 1`；memory-order release/acquire 正确；Drop Oldest 真正实现（Consumer 跳过被丢弃槽位，非 "Consumer 容忍 stale"） |
 | Design-R8（SnapshotRequest SPSC ownership） | 🟠 P1 | §2.4.9 新增 SnapshotRequest SPSC ownership 明确 + §2.1.3.5 流程图修正 | 源码审查：SnapshotRequest Producer = FSM thread 唯一；SnapshotPublisher Consumer = Capture thread 唯一；Injection 不直接发起 SnapshotRequest |
-| Design-R9（Recovery P3 overclaim） | 🟠 P1 | §2.4.6 拆分 System Safety Recovery + User-dependent convergence + §2.5.3 措施 6 | 文档不声称 "总 recovery 有 deterministic bounded upper bound"；P3 在 "系统侧安全降级有 bounded completion" 意义下可证；T_user_release 标注无界 |
+| Design-R9（Recovery P3 overclaim，v1.1 修复 / v1.2 P3 表述严格限定） | 🟠 P1 | §2.4.6 拆分 System Safety Recovery + User-dependent convergence + §2.5.3 措施 6 | 文档不声称 "总 recovery 有 deterministic bounded upper bound"；**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**；T_user_release 标注无界 |
 | Design-R10（CF0 Frozen Boundary Amendment） | 🟠 P1 | §2.7 新增 CF0 Frozen Boundary Amendment / Compatibility Contract | CF0/CF1 Frozen 文档 git diff 验证未修改；`onEdgeOverflow()` + `PressedStateSnapshot` bitmap extension 均为 additive；CF0 FSM 状态机未修改 |
+| Design-R11（SPSC_DATA Drop-Oldest producer-only head advance 逻辑错误，v1.2 修正） | 🔴 BLOCKER | §2.4.8 重写为方案 A — Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail` | 源码审查：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`，不写 `consumedTail`；不变量 `publishedTail ≤ consumedTail ≤ head` + `head - publishedTail ≤ Capacity - 1`；Drop Oldest 测试最旧被丢弃（Consumer 不读到）+ 新事件保留 + `droppedOldestCount++`；Consumer 跳过被丢弃槽位（`consumedTail ≥ publishedTail`）；memory-order release/acquire；ABA uint64 单调递增不回绕；overwrite race 满时 `head % Capacity ≠ consumedTail % Capacity` |
+| Design-R12（B_burst/B_rate 误标 HARD CONTRACT，v1.2 修正） | 🔴 BLOCKER | §2.4.0 三类分层表新增 WORKLOAD MODEL / TEST PROFILE 类别 + §2.4.1/§2.4.2/§2.4.7 B_burst/B_rate 降级为 WORKLOAD MODEL | 文档 B_burst=6 / B_rate=40 标注为 WORKLOAD MODEL（声明值，非 deterministic system upper bound）；backlog bound 明确限定 "在声明 workload envelope 内成立"；SPSC_STATE=64 标注为 "在指定 workload envelope 下经过验证的工程容量"；超 envelope 输入触发饱和安全降级（非违反 HARD CONTRACT）；CI 超 envelope 测试验证降级机制 |
+| Design-R13（W_test 10ms/12ms 口径歧义，v1.2 修正） | 🟠 P1 | §2.4.3 W_pause_test=10ms + §2.4.5 T_saturation_detect_test=12ms + §2.4.6 T_system_recovery_test=12ms + §2.4.7 表格 + §2.5.3 措施 6 同步 | 文档无单一 W_test 歧义；三个测试阈值命名正交（W_pause_test / T_saturation_detect_test / T_system_recovery_test）；各章节引用一致 |
+| P3 表述严格限定（v1.2 修正） | 🟠 P1 | §2.4.6 P3 严格表述 + §2.5.3 措施 6 + §2.6.8 R9 行 | 文档统一采用 "**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**"；不写 "P3 可证" 避免歧义；明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded）；防止 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束 |
 
 ## 2.7 CF0 Frozen Boundary Amendment / Compatibility Contract（Design-R10 新增）
 
@@ -1840,4 +1859,6 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 > **本次生成（v1）**：需求与存量功能关系分析（CF0/CF1 基线对比 + 匹配度评估 + 存量功能详细分析）；增量设计方案（上下文视图 + 总体架构 + Callback Boundary 时序 + 双通道 SPSC 流程 + SPSC_STATE 饱和安全降级状态机 + releaseAllPressed bounded completion 流程 + bitmap ownership SPSC snapshot publication 流程）；接口设计（CF0 平台抽象实现 + CF2 内部组件接口）；数据模型（KeyCodeBitmap 256-bit + MouseButtonBitmap 8-bit + PressedStateSnapshot + EdgeOverflowEvent + DualChannelSpsc 类图）；工程边界量化（SPSC_STATE=64 capacity / burst 上界 / consumer 最坏暂停窗口 / 异常过载判定阈值 / 饱和检测时序 / recovery 时序）；CF0 Safety Invariant 保障（P1/P2/P3 逐条论证）；Verification Matrix 回映。
 > **Amendment v1.1（受控修订，不推倒 1442 行 v1 主体）**：修复大G 项目经理 Design Gate 审查发现的 10 项 Contract 层问题（4 BLOCKER + 6 P1）—— Design-R1 坐标域 u32/i64 矛盾（§2.2.2/§2.3.2）；Design-R2 B_burst/B_1s 数学不自洽（§2.4.1/§2.4.2 重新定义 B_burst/B_rate/W_pause + 主定理）；Design-R3 W_worst 假设非 Contract（§2.4.3 三层分层 W_design/W_observed/W_test + 删除 GC）；Design-R4 API 数字 overclaim（§2.4.0 三类分层 HARD CONTRACT/DESIGN TARGET/MEASUREMENT REQUIREMENT）；Design-R5 callback extraction 与 CGEventNormalizer 未分开（§2.1.1/§2.1.2/§2.1.3.1 严格命名 MacEventFieldExtractor vs CGEventNormalizer）；Design-R6 SPSC_STATE reliable 语义收紧（§2.4.1/§2.1.3.2/§2.5.2 "normal-bound reliable, saturation → safety degradation"）；Design-R7 SPSC RingBuffer Drop Oldest 缺并发证明（§2.4.8 Producer-only overwrite + memory-order proof）；Design-R8 SnapshotRequest SPSC ownership（§2.4.9 唯一 Producer = FSM thread）；Design-R9 Recovery P3 overclaim（§2.4.6/§2.5.3 拆分 System Safety Recovery + User-dependent convergence）；Design-R10 CF0 Frozen Boundary Amendment Contract（§2.7 新增）。新增 §2.6.8 Design-R1～R10 修订回映。
 > **保持不变**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM（仅提供越界事件信号供 FSM 消费）；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）全部保持不变。
-> 待用户审查确认后，本文档状态由 DRAFT v1.1 转为 FROZEN 并授权进入下一阶段。
+> **Amendment v1.2（受控修订，不推倒 1843 行 v1.1 主体）**：修复大G 项目经理 Design Gate 复审发现的 3 项问题 + P3 表述严格限定 —— Design-R11 SPSC_DATA Drop-Oldest producer-only head advance 逻辑错误（§2.4.8 重写为方案 A Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail`，真正实现 Drop Oldest，完整证明 Producer ownership / Consumer ownership / slot lifetime / memory ordering / ABA / overwrite race）；Design-R12 B_burst=6/B_rate=40 误标 HARD CONTRACT（§2.4.0/§2.4.1/§2.4.2/§2.4.7 降级为 WORKLOAD MODEL / TEST PROFILE，backlog bound 限定在声明 workload envelope 内，SPSC_STATE=64 标注为在指定 workload envelope 下经过验证的工程容量）；Design-R13 W_test 10ms/12ms 口径歧义（§2.4.3 W_pause_test=10ms + §2.4.5 T_saturation_detect_test=12ms + §2.4.6 T_system_recovery_test=12ms 命名正交）；P3 表述严格限定（§2.4.6/§2.5.3/§2.6.8 统一为 "CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL."，避免 Coding Agent 把 RECOVERY→NORMAL 实现成硬约束）。新增 §2.6.8 R11～R13 + P3 表述 修订回映。
+> **保持不变（v1.2）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM（仅提供越界事件信号供 FSM 消费）；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R3/R4/R5/R6/R8/R9/R10 已修复内容全部保持不变。
+> 待用户审查确认后，本文档状态由 DRAFT v1.2 转为 FROZEN 并授权进入下一阶段。
