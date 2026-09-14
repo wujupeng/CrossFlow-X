@@ -5,7 +5,7 @@
 > **CF0 冻结基线引用**：`.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）+ `.codeartsdoer/specs/cf0_arch_freeze/design.md`（v3，3449 行），本设计严格遵循 CF0 冻结的全部架构基线（C++20 技术栈、Driverless User-Mode、Handoff 六态 FSM、7 核心契约、CF0 Architecture Safety Invariant P1/P2/P3、8 线程模型、双平面隔离、Coordinate Space RelativeDelta/AbsolutePosition 双语义、无锁 SPSC 队列 §2.7.3）。
 > **CF1 冻结基线引用**：`.codeartsdoer/specs/cf1_endpoint_disc/spec.md`（v2，1432 行）+ `.codeartsdoer/specs/cf1_endpoint_disc/design.md`（v4，2972 行），本设计复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）作为捕获事件源端标识，不修改身份与发现机制。
 > **第一原则**：Driverless User-Mode Architecture —— macOS 输入捕获与注入必须完全在用户态完成，不引入内核扩展（kext）或驱动。
-> **文档状态**：DRAFT v1.2（Amendment，受控修订，不推倒 1843 行 v1.1 主体）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
+> **文档状态**：DRAFT v1.3（Amendment，受控修订，不推倒 1864 行 v1.2 主体）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
 > **设计范围**：仅覆盖 CF2-S01～CF2-S06 六个 macOS 输入捕获地基的增量设计方案 + 大G项目经理特别要求的工程边界量化（SPSC_STATE=64 capacity / burst 上界 / consumer 最坏暂停窗口 / 异常过载判定阈值 / 饱和检测时序 / recovery 时序）+ CF0 Safety Invariant 保障 + Verification Matrix 回映。
 > **执行纪律遵循**：严格遵守大G项目经理执行纪律（不修改 CF0/CF1 Frozen / 不重新设计 Handoff FSM / 不引入 Coordinator election / Raft / Paxos / 不改变 NodeID/Topology Authority 语义 / Input/Control 双平面隔离 / Evidence-First / Gate Review 后再编码）。
 
@@ -32,6 +32,12 @@
 > - **Design-R13 (🟠 P1)**：W_test 10ms/12ms 两套口径歧义。问题：v1.1 不同位置出现 W_test=10ms（§2.4.3 consumer pause）和 saturation detection W_test=12ms（§2.4.5）/ System Safety Recovery W_test=12ms（§2.4.6），命名不正交。修正：§2.4.3 命名为 **W_pause_test=10ms**（consumer pause test threshold）；§2.4.5 命名为 **T_saturation_detect_test=12ms**（saturation detection test threshold）；§2.4.6 命名为 **T_system_recovery_test=12ms**（system recovery test threshold）；§2.4.7 表格 + §2.5.3 措施 6 同步，消除单一 W_test 歧义。
 > - **P3 表述严格限定（🟠 P1）**：v1.1 §2.4.6/§2.5.3/§2.6.8 写 "P3 在 '系统侧安全降级有 bounded completion' 意义下可证"，仍可能被 Coding Agent 误解为 "RECOVERY→NORMAL 必须在 X ms 内完成" 的硬约束。修正：统一改为 "**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**" 明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded，依赖 T_user_release eventual convergence），避免 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束。
 > **未变更项（v1.2）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R3/R4/R5/R6/R8/R9/R10 已修复内容全部保持不变。
+
+> **Amendment v1.3 变更记录（受控修订，不删除重写，不推倒 1864 行 v1.2 主体）**
+> **修订背景**：大G 项目经理对 Design v1.2 的 Design Gate 终审裁决 = CONDITIONAL FAIL / REVISION REQUIRED。v1.2 已正确修复 Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13（11 项 PASS），但 Design-R7/R11 引入的 "方案 A — Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail`" 存在 SPSC Drop-Oldest Linearizability 未闭环的唯一 BLOCKER（Design-R14）。本次 Amendment 仅修复 R14 一项，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标 / Requirements v1.4 FROZEN / R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13 已修复内容，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding。
+> **修订项**：
+> - **Design-R14 (🔴 BLOCKER)**：SPSC Drop-Oldest Linearizability 未闭环。问题：v1.2 方案 A 的 `publishedTail`（Producer-owned discard cursor）与 Consumer 对该 slot 的"读取资格"之间无可证明的原子线性化点。存在合法竞态窗口：Consumer 读 `consumedTail=100` 被挂起 → Producer `publishedTail=101`（宣布 [100] dropped）+ 写新事件 → Consumer 恢复后仍持有 stale `pt=100`，执行 `item=buffer[100]` 读取已被宣布 dropped 的事件。v1.2 仅证明 "Consumer 在观察到新 publishedTail 后会跳过"，未证明 "一旦 Producer 宣布 Drop，Consumer 绝不会随后消费该 item"。此外 `tryPushDropOldest()` 仅用 `h - publishedTail == Capacity - 1` 判满，未利用 `consumedTail`，Consumer 已消费但 publishedTail 未同步时 Producer 仍按旧 boundary 判满并额外丢弃。修正：§2.4.8 重写为**方案 A+ — Seqlock-validated Slot（epoch-tagged slot + Consumer-side seq 校验）**，废弃 `publishedTail`，给每个 slot 增加 `seq`（generation）计数器，**linearization point = `slot.seq` 的原子读**。Producer 写 slot 时 `seq = h + 1`（release）；Consumer 读 slot 时先读 `seq`（acquire），仅当 `seq == ct + 1` 才接受 item，否则该 slot 已被覆写（Drop Oldest），Consumer 推进 `tail` 跳过。满判定改用 `consumedTail`（`h - tail == Capacity`），消除 publishedTail 未同步导致的过早丢弃。完整给出 Producer/Consumer 时序图、Drop 与 Consume 全部 interleaving、linearization point、slot lifetime proof、overwrite race proof、memory-order proof、"Producer 宣布 dropped 后 Consumer 不能返回该 item"形式化结论、四种边界情况、并发压力测试设计。§2.3.2 类图 `SpscRingBuffer` 同步更新为 `Slot<T>` 结构 + `uint64_t` head/tail。
+> **未变更项（v1.3）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13 已修复内容全部保持不变。`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变，仅内部实现从 publishedTail/consumedTail 双 cursor 改为 seqlock-validated slot。
 
 ---
 
@@ -900,7 +906,7 @@ public:
 };
 ```
 
-- **业务说明**：环形缓冲 + `std::atomic<size_t>` head/tail；编译期固定容量（2 的幂次）；无锁无竞争。
+- **业务说明**：环形缓冲 + epoch-tagged `Slot<T>{item, seq}` + `std::atomic<uint64_t>` head/tail；编译期固定容量（2 的幂次）；无锁无竞争。**内部并发实现与 Drop-Oldest linearizability 证明详见 §2.4.8（Design-R14 方案 A+ Seqlock-validated Slot）**。
 - **前置条件**：单生产者单消费者。
 - **后置条件**：无锁原子读写；无堆分配。
 
@@ -1140,17 +1146,24 @@ note right of ScreenBoundary
 end note
 
 class SpscRingBuffer<T, Capacity> {
-    - buffer : std::array<T, Capacity>
-    - head : std::atomic<size_t>
-    - tail : std::atomic<size_t>
+    - buffer : std::array<Slot<T>, Capacity>
+    - head : std::atomic<uint64_t>
+    - tail : std::atomic<uint64_t>
     + tryPush(item : T) : bool
     + tryPop(out : T) : bool
     + tryPushDropOldest(item : T) : bool
 }
+class Slot<T> {
+    - item : T
+    - seq : std::atomic<uint64_t>
+}
 note right of SpscRingBuffer
   无锁 SPSC 环形缓冲
   编译期固定容量 (2 的幂次)
-  std::atomic<size_t> head/tail
+  Seqlock-validated Slot (Design-R14)
+  slot.seq = epoch/generation
+  linearization point = slot.seq 原子读
+  详见 §2.4.8
   无锁无竞争
 end note
 
@@ -1463,7 +1476,7 @@ SpscRingBuffer --> RawInputEvent : 存储
 | FSM 状态转移 | ≤1ms | DESIGN TARGET | CF0 design §4.1.9 工程目标 | CI 测量 P50/P99/max |
 | std::atomic 写 | ≤100ns | DESIGN TARGET | x86-64 / arm64 单次 atomic store 工程目标 | CI 测量 P50/P99/max |
 
-### 2.4.8 SPSC RingBuffer Drop Oldest 并发 ownership 证明（Design-R7 新增 / Design-R11 修正逻辑错误）
+### 2.4.8 SPSC RingBuffer Drop Oldest 并发 linearizability 证明（Design-R7 新增 / Design-R11 修正逻辑错误 / Design-R14 修正 linearizability 未闭环）
 
 **v1.1 Design-R7 缺陷（Design-R11 修正）**：v1.1 §2.4.8 "最终冻结"方案声称 "Producer-only head advance + Consumer 容忍 stale" 实现 Drop Oldest，但存在不可调和的逻辑矛盾：
 - SPSC ownership 要求 `head` = Producer-only 写、`tail` = Consumer-only 写，Producer 不得写 `tail`。
@@ -1472,124 +1485,234 @@ SpscRingBuffer --> RawInputEvent : 存储
 - v1.1 §2.4.8 自承认 "这不是严格 Drop Oldest，而是 Drop Oldest with Consumer-side stale tolerance"，sentinel 槽位修复仍让 Consumer 读到被跳过的旧事件。
 - **根本矛盾**：要丢掉 oldest 必须改变 consumer-visible read boundary（`tail`），但 Producer 不得修改 Consumer-owned `tail`。
 
-**Design-R11 修正方案 A**：引入 **Producer-owned `publishedTail`（discard cursor / published read boundary）**，独立于 Consumer-owned `consumedTail`。Producer 通过推进 `publishedTail` 声告 "已丢弃的最旧下界"，Consumer 读 `publishedTail`（acquire 只读）跳过被丢弃的槽位。这是经典 bounded SPSC with producer-side discard 模式，不破坏 SPSC ownership（Producer 拥有 head + publishedTail，Consumer 拥有 consumedTail）。
+**v1.2 方案 A 缺陷（Design-R14 修正）**：v1.2 §2.4.8 引入 **Producer-owned `publishedTail`（discard cursor）+ Consumer-owned `consumedTail`**，但存在 **Drop-Oldest Linearizability 未闭环** 的唯一 BLOCKER：
+- `publishedTail++`（Producer 的 discard 声明）没有与 Consumer 对该 slot 的"读取资格"建立可证明的原子线性化点。
+- **合法竞态窗口**：① 假设 `publishedTail=100, consumedTail=100, head=355`（满，Capacity=256）；② Consumer 读 `consumedTail=100` 被挂起（尚未读 `publishedTail`）；③ Producer 执行 `publishedTail=101`（宣布 [100] dropped）+ 写新事件 `buffer[355], head=356`；④ Consumer 恢复后仍持有 stale `pt=100`，`if (ct < pt)` 不成立（100 < 100 = false），执行 `item = buffer[100]` 读取**已被宣布 dropped 的事件**。
+- v1.2 仅证明 "Consumer 在观察到新 `publishedTail` 后会跳过"，未证明 "一旦 Producer 宣布 Drop，Consumer 绝不会随后消费该 item"——因为 Consumer 可能持有 stale `pt` 局部副本，不会重新读 `publishedTail`。
+- **满判定缺陷**：`tryPushDropOldest()` 仅用 `h - publishedTail == Capacity - 1` 判满，未利用 `consumedTail`。Consumer 已消费到 150（`consumedTail=150`）但 `publishedTail` 仍=100 时，`h - pt = 255` 判定满，Producer 不必要地 Drop（slot 100 早已消费，实际未满 205/256）。语义不精确：丢的不是"最旧未消费事件"而是"publishedTail 指向事件"。
 
-**方案 A 状态变量与 ownership**：
+**Design-R14 修正方案 A+ — Seqlock-validated Slot（epoch-tagged slot + Consumer-side seq 校验）**：废弃 `publishedTail`，给每个 slot 增加 `seq`（generation / epoch）计数器。**linearization point = `slot.seq` 的原子读**：Producer 写 slot 时 `seq = h + 1`（release）；Consumer 读 slot 时先读 `seq`（acquire），仅当 `seq == ct + 1` 才接受 item，否则该 slot 已被覆写（Drop Oldest 生效），Consumer 推进 `tail` 跳过。满判定改用 `consumedTail`（`h - tail == Capacity`），消除 `publishedTail` 未同步导致的过早丢弃。这是经典 bounded SPSC with seqlock slot validation 模式（cf. Dmitry Vyukov bounded MPMC queue、Linux kfifo sequence check），不破坏 SPSC ownership（Producer 拥有 head + slot 写，Consumer 拥有 tail + slot 读校验）。
+
+**方案 A+ 状态变量与 ownership**：
 
 | 变量 | 类型 | Owner（写） | 其他线程（读） | 语义 |
 |------|------|------------|---------------|------|
-| `head` | `std::atomic<uint64_t>` | Producer | Consumer (acquire) | Producer 推进的写入位置（下一个要写的槽位编号） |
-| `publishedTail` | `std::atomic<uint64_t>` | **Producer**（Design-R11 新增 discard cursor） | Consumer (acquire) | Producer 宣告的 "已丢弃下界 / discard boundary"；Consumer 可读范围上界 = head，下界 = publishedTail |
-| `consumedTail` | `std::atomic<uint64_t>` | Consumer | Producer (acquire) | Consumer 推进的消费位置（已读到哪） |
-| `buffer[i % Capacity]` | slot | Producer（写 head 槽位，在 head 推进前） | Consumer（读 consumedTail 槽位，在 consumedTail 推进前） | 环形缓冲槽位 |
+| `head` | `std::atomic<uint64_t>` | Producer | Consumer (acquire) | Producer 推进的写入位置（下一个要写的槽位编号，单调递增） |
+| `tail` | `std::atomic<uint64_t>` | Consumer | Producer (acquire) | Consumer 推进的消费位置（下一个要读的槽位编号，单调递增） |
+| `buffer[i]` | `Slot<T> { T item; std::atomic<uint64_t> seq; }` | Producer（写 item + seq，在 head 推进前） | Consumer（读 seq 校验，校验通过读 item） | epoch-tagged 环形缓冲槽位 |
 
-**方案 A 不变量**：
-- **INV1**：`publishedTail ≤ consumedTail ≤ head`（discard boundary ≤ 消费位置 ≤ 写入位置；Consumer 不得落后于 discard boundary，不得越过 head）。
-- **INV2**：`head - publishedTail ≤ Capacity - 1`（published 范围 bounded；预留 1 sentinel 槽位避免 Producer 写与 Consumer 读同槽竞争，经典 SPSC 满判定）。
-- **INV3**：`consumedTail` 单调递增；`publishedTail` 单调递增；`head` 单调递增（uint64 不回绕，ABA 不发生，见下文）。
+> **废弃变量（v1.2 方案 A → v1.3 方案 A+）**：`publishedTail`（Producer-owned discard cursor）废弃，其 discard 语义由 `slot.seq` 覆写自然实现；`consumedTail` 重命名为 `tail`（Consumer-only 写，语义不变）。
 
-**tryPush（不满，正常 enqueue）**：
+**方案 A+ 不变量**：
+- **INV1**：`tail ≤ head`（消费位置 ≤ 写入位置；Consumer 不得越过 Producer 已写位置）。
+- **INV2**：`head - tail ≤ Capacity`（队列占用 bounded；Drop Oldest 路径不判满，覆写最旧，head 可超过 tail + Capacity，但 Consumer 通过 seq 校验跳过被覆写 slot，effective 队列长度 ≤ Capacity）。
+- **INV3**：`head` 单调递增；`tail` 单调递增（uint64 不回绕，ABA 不发生，见下文）。
+- **INV4（slot epoch invariant）**：`buffer[i].seq` 在 Producer 第 `k` 次写 slot `i` 后 = `k × Capacity + i + 1`。Consumer 读 slot `i` 期望 `ct + 1`，仅当 `buffer[i].seq == ct + 1` 时该 slot 内容属于第 `ct` 次写入（有效）；`buffer[i].seq > ct + 1` 表示已被后续覆写（Drop Oldest 生效）；`buffer[i].seq < ct + 1` 不可能（seq 单调，ct ≤ head）。
+
+**Slot 初始化**：
+```
+构造时: for (i = 0; i < Capacity; ++i) buffer[i].seq.store(i, memory_order_relaxed);
+        head.store(0, memory_order_relaxed);
+        tail.store(0, memory_order_relaxed);
+// 初始 buffer[i].seq = i，使第一次写 slot i 时 seq = i + 1（与 head=0..Capacity-1 对应）
+```
+
+**tryPush（非 Drop Oldest 路径，用于 SPSC_STATE reserved capacity）**：
 ```
 Producer:
   h  = head.load(memory_order_relaxed)
-  pt = publishedTail.load(memory_order_relaxed)        // Producer-owned, relaxed
-  if (h - pt == Capacity - 1) return false             // 满（预留 sentinel）
-  buffer[h % Capacity] = item                          // Producer-owned slot
-  head.store(h + 1, memory_order_release)             // 推进 Producer-owned head
+  ct = tail.load(memory_order_acquire)                 // 读 Consumer-owned tail（满判定用真实消费进度）
+  if (h - ct == Capacity) return false                 // 满，不丢，返回 false（调用方走安全降级）
+  i  = h % Capacity
+  buffer[i].item = item                                // Producer-owned slot 写 item
+  buffer[i].seq.store(h + 1, memory_order_release)     // Producer-owned slot 写 epoch = h + 1（release）
+  head.store(h + 1, memory_order_release)              // 推进 Producer-owned head（release）
   return true
 ```
-**ownership 保持**：Producer 仅写 `head` 与 `buffer[h % Capacity]`，不写 `consumedTail`，不写 `publishedTail`（正常 enqueue 不丢弃）。✓
+**ownership 保持**：Producer 仅写 `head` + `buffer[i].item` + `buffer[i].seq`，不写 `tail`。✓
 
-**tryPushDropOldest（Design-R11 方案 A：Producer 推进 publishedTail 丢弃最旧 + 正常 enqueue）**：
+**tryPushDropOldest（Design-R14 方案 A+：Drop Oldest 路径，用于 SPSC_DATA，不判满，覆写最旧）**：
 ```
 Producer:
   h  = head.load(memory_order_relaxed)
-  pt = publishedTail.load(memory_order_relaxed)        // Producer-owned, relaxed
-  if (h - pt < Capacity - 1) {
-    // 不满，正常 enqueue
-    buffer[h % Capacity] = item
-    head.store(h + 1, memory_order_release)
-    return true
-  }
-  // 满（h - pt == Capacity - 1）：Drop Oldest
-  // Step 1: Producer 推进 publishedTail 丢弃最旧（discard boundary 上移，Consumer 可读下界上移，最旧被排除）
-  publishedTail.store(pt + 1, memory_order_release)    // Producer-owned discard cursor
-  // Step 2: 正常 enqueue 新事件（此时 h - (pt+1) == Capacity - 2，不满）
-  buffer[h % Capacity] = item                          // Producer-owned slot
-  head.store(h + 1, memory_order_release)             // 推进 Producer-owned head
-  droppedOldestCount.fetch_add(1, memory_order_relaxed)
+  i  = h % Capacity
+  buffer[i].item = item                                // 覆写 slot（可能覆写 Consumer 尚未读的最旧）
+  buffer[i].seq.store(h + 1, memory_order_release)     // 写新 epoch = h + 1（release），旧 epoch 的 Consumer 校验将失败
+  head.store(h + 1, memory_order_release)              // 推进 head（release）
+  // 丢弃统计（best-effort，不参与正确性）
+  if (h - tail.load(memory_order_acquire) >= Capacity)
+      droppedOldestCount.fetch_add(1, memory_order_relaxed)
   return true
 ```
+> **关键**：Drop Oldest 路径**不判满、不推进任何 tail**。丢弃通过"覆写 slot + 推进 head"自然实现：被覆写 slot 的 `seq` 变为新 epoch，Consumer 读到旧 `ct` 位置时 `seq != ct + 1`，校验失败，跳过。**linearization point = Consumer 读 `slot.seq` 的瞬间**（见下文证明）。
 
-**Consumer 读取（消费，跳过被丢弃）**：
+**Consumer tryPop（seq 校验，跳过被覆写 slot）**：
 ```
 Consumer:
-  ct = consumedTail.load(memory_order_relaxed)         // Consumer-owned, relaxed
-  pt = publishedTail.load(memory_order_acquire)        // 读 Producer-owned discard boundary
-  h  = head.load(memory_order_acquire)                 // 读 Producer-owned head
-  if (ct < pt) ct = pt                                 // 跳过被 Producer 丢弃的最旧（discard boundary 上移）
+  ct = tail.load(memory_order_relaxed)                 // Consumer-owned, relaxed
+  h  = head.load(memory_order_acquire)                 // 读 Producer-owned head（acquire）
   if (ct >= h) return empty                            // 无可读
-  item = buffer[ct % Capacity]                         // Consumer-owned read slot
-  consumedTail.store(ct + 1, memory_order_release)     // 推进 Consumer-owned consumedTail
+  i  = ct % Capacity
+  s  = buffer[i].seq.load(memory_order_acquire)        // ★ linearization point：原子读 slot.seq
+  if (s != ct + 1) {
+      // slot 已被 Producer 覆写（s > ct + 1，Drop Oldest 生效）或尚未写入（s < ct + 1，不可能因 ct < h）
+      tail.store(ct + 1, memory_order_release)         // 推进 tail，跳过被丢弃 slot
+      continue                                        // 重试读下一个 slot（循环回到开头）
+  }
+  // s == ct + 1：slot 内容属于第 ct 次写入，有效
+  item = buffer[i].item                                // 读 item（此时该 slot 本轮写入已完成，无 data race，见 overwrite race proof）
+  tail.store(ct + 1, memory_order_release)             // 推进 Consumer-owned tail
   return item
 ```
 
-**ownership 保持证明**：
-- **Producer 写**：`head`（release）、`publishedTail`（release）、`buffer[head % Capacity]`（在 head 推进前）。Producer **不写 `consumedTail`**，**不写 `buffer[consumedTail % Capacity]`**。✓
-- **Consumer 写**：`consumedTail`（release）。Consumer **不写 `head`**，**不写 `publishedTail`**，**不写 `buffer[head % Capacity]`**。Consumer 读 `publishedTail` / `head` 为 acquire 只读，不违反 ownership。✓
-- **SPSC ownership invariant 保持**：每个变量有唯一 owner；跨线程读为 acquire 只读。✓
+**Producer/Consumer 完整时序图（Design-R14 方案 A+）**：
+
+```plantuml
+@startuml
+title SPSC Seqlock-validated Slot: tryPushDropOldest 与 tryPop 时序
+participant "Producer\n(callback)" as P
+participant "buffer[i]\n{item, seq}" as B
+participant "Consumer\n(Capture thread)" as C
+
+P -> B: buffer[i].item = newItem\n(i = h % Capacity)
+P -> B: buffer[i].seq.store(h+1, release)\n★ epoch 写入（release）
+P -> P: head.store(h+1, release)
+
+C -> C: ct = tail.load(relaxed)
+C -> P: h = head.load(acquire)\n(acquire 配对 head release)
+C -> B: s = buffer[i].seq.load(acquire)\n★ LINEARIZATION POINT\n(原子读 slot.seq)
+alt s == ct + 1
+  C -> B: item = buffer[i].item\n(seq 校验通过，本轮写入已完成\nhappens-before 成立，无 data race)
+  C -> C: tail.store(ct+1, release)
+  C --> C: return item（有效）
+else s != ct + 1 (s > ct + 1)
+  C -> C: tail.store(ct+1, release)\n(slot 已被覆写，Drop Oldest 生效)
+  C --> C: continue（跳过被丢弃 slot，重试）
+end
+@enduml
+```
+
+**linearization point（明确原子线性化点）**：
+
+> **定义**：`tryPop` 的 linearization point = Consumer 执行 `s = buffer[i].seq.load(memory_order_acquire)` 的瞬间（记为 `L`）。`tryPush`/`tryPushDropOldest` 的 linearization point = Producer 执行 `head.store(h+1, memory_order_release)` 的瞬间。
+
+- 在 `L` 瞬间，`buffer[i].seq` 是 `std::atomic<uint64_t>` 的原子读，返回一个确定的值 `s`。该值对应 Producer 某次写 slot `i` 的 epoch（由 release/acquire happens-before，若 Consumer 看到 `s`，则 Producer 写 `seq = s` 的全部操作 happens-before Consumer 读 `seq`）。
+- **二元判定**：`s == ct + 1`（slot 属于第 `ct` 次写入，有效）或 `s != ct + 1`（必然 `s > ct + 1`，slot 已被第 `ct + Capacity` 次或更后的写入覆写，Drop Oldest 生效）。不存在中间态——`seq` 是原子量，读返回单一确定值。
+- **线性化点闭合**：`L` 之后的 Producer 操作不影响 `L` 时 `s` 的值（`L` 已完成原子读）。`L` 之前的 Producer 操作若已 `release`，则 `acquire` 可见。因此 `L` 将并发历史线性化为一个全序：`L` 时 slot 要么是第 `ct` 轮内容（有效），要么是更晚轮次内容（已 Drop），二者必居其一。✓
+
+**Drop 与 Consume 同时发生时的全部 interleaving 分析**：
+
+设 Producer 执行 `tryPushDropOldest`（写 slot `i`，epoch `e_new = h+1`，推进 head），Consumer 执行 `tryPop`（读 slot `i`，期望 epoch `e_old = ct+1`，`ct < h` 即 Consumer 尝试读 Producer 正在写的同一 slot）。按 Consumer 的 linearization point `L`（读 `seq`）相对于 Producer 写 `seq` 的时序，穷举所有 interleaving：
+
+| Interleaving | `L` 相对 Producer 写 seq | Consumer 读到 `s` | 校验 `s == ct+1`？ | Consumer 行为 | 正确性 |
+|-------------|----------------------|----------------|------------------|------------|--------|
+| **I1** | `L` 在 Producer 写 seq **之前** | `e_old`（旧 epoch，上一轮写入） | `e_old == ct+1` → **true** | 返回旧 item | ✓ 合法：线性化点在 Producer 覆写前，旧 item 尚未被 Drop，Consumer 返回它合法 |
+| **I2** | `L` 在 Producer 写 seq **之后** | `e_new`（新 epoch） | `e_new == ct+1`？因 `e_new = h+1`，`ct < h` 故 `ct+1 ≤ h < e_new`，**false** | 推进 tail 跳过，重试 | ✓ 合法：线性化点在 Producer 覆写后，slot 已 Drop，Consumer 跳过不返回旧 item |
+| **I3** | `L` 与 Producer 写 seq **并发** | 原子读返回 `e_old` 或 `e_new` 之一（原子性保证无撕裂） | 同 I1 或 I2 | 同 I1 或 I2 | ✓ 合法：原子读线性化为"先 Producer 写"或"先 Consumer 读"之一，归约到 I1/I2 |
+
+> **穷举完备性**：`seq` 是 `std::atomic<uint64_t>`，C++20 memory model 下原子读返回某个写入的完整值（无撕裂、无中间值）。`L` 与 Producer 写 seq 的时序关系只有"之前 / 之后 / 并发"三种，并发由原子性归约到之前或之后。故 I1/I2/I3 穷举全部 interleaving。**无一返回已被宣布 dropped 的 item**。✓
+
+**形式化结论（大G项目经理要求）**：
+
+> **定理（Drop-Oldest Linearizability）**：一旦 Producer 的 `tryPushDropOldest` 完成 linearization point（`head.store(h+1, release)` 全局可见，即 Producer 已"宣布 slot `h_old % Capacity` 的旧 epoch `h_old+1-Capacity` 内容 dropped"），此后任何 Consumer `tryPop` 调用**绝不会返回**该旧 epoch 的 item。
+>
+> **证明**：设 Producer 在时刻 `T_p` 完成 `head.store(h_old+1, release)`（覆写 slot `i = h_old % Capacity`，新 epoch `e_new = h_old + 1`，旧 epoch `e_old = h_old + 1 - Capacity`）。Consumer 在时刻 `T_c ≥ T_p` 执行 `tryPop`，其 linearization point `L` 读 `buffer[i].seq`。
+> - 若 Consumer 的 `ct` 对应旧 epoch（`ct + 1 == e_old`，即 `ct == h_old - Capacity`）：由 `T_c ≥ T_p` + release/acquire，Consumer `acquire` 读 `seq` 看到 `e_new`（Producer release 在前）。`e_new = h_old + 1 > e_old = ct + 1`，校验 `s != ct + 1` 失败，Consumer 跳过，**不返回旧 item**。✓
+> - 若 Consumer 的 `ct` 对应更早 epoch（`ct + 1 < e_old`）：同理 `s = e_new > ct + 1`，校验失败，跳过。✓
+> - 若 Consumer 的 `ct` 对应新 epoch 或更晚（`ct + 1 ≥ e_new`）：Consumer 读的是新内容或更后内容，不涉及旧 item。✓
+> - **不存在 Consumer 返回旧 epoch item 的 case**：返回 item 要求 `s == ct + 1`，即 `seq == e_old`。但 `T_c ≥ T_p` 后 `seq` 已是 `e_new > e_old`，Consumer acquire 读到 `e_new ≠ e_old`，校验失败。**QED**。✓
+
+**slot lifetime proof**：
+
+- slot `i` 的第 `k` 轮生命周期 = [Producer 第 `k×Capacity + i` 次 `tryPush` 开始写 item, Producer 第 `(k+1)×Capacity + i` 次 `tryPush` 开始写 item)。
+- 第 `k` 轮内 slot `i` 的 epoch = `k×Capacity + i + 1`（由 INV4）。
+- Consumer 读 slot `i` 期望 epoch `ct + 1`。`ct + 1 == k×Capacity + i + 1` 当且仅当 `ct == k×Capacity + i`（第 `k` 轮的第 `i` 槽）。
+- **lifetime 闭合**：若 slot `i` 处于第 `k` 轮生命周期（epoch = `k×Capacity + i + 1`）且 Consumer `ct == k×Capacity + i`，则 `seq == ct + 1`，Consumer 读到第 `k` 轮内容（有效）。若 slot `i` 已进入第 `k+1` 轮（epoch = `(k+1)×Capacity + i + 1 > ct + 1`），Consumer 校验失败，跳过——第 `k` 轮内容已过期（Drop Oldest），Consumer 不读。✓
+- **无跨轮读取**：Consumer 不会读到第 `k` 轮的 item 而以为它是第 `k'` 轮（`k' ≠ k`），因 epoch 不匹配会被校验拦截。✓
+
+**overwrite race proof（含 data race 分析）**：
+
+- **目标**：证明 Producer 写 `buffer[i].item`（非原子）与 Consumer 读 `buffer[i].item`（非原子）无 data race（C++20 memory model 下非原子并发读写 = UB）。
+- **关键时序约束**：Consumer 读 `buffer[i].item` **仅在 `seq` 校验通过后**（`s == ct + 1`）。校验通过时：
+  - Consumer 已 `acquire` 读 `head = h_c`，`ct < h_c`（否则 return empty 不读 slot）。
+  - Consumer 已 `acquire` 读 `seq = ct + 1`。由 release/acquire，Producer 写 `seq = ct + 1`（第 `ct` 次 `tryPush`）happens-before Consumer 读 `seq`。故 Producer 第 `ct` 次写 `item` 也 happens-before Consumer 读 `item`（同一 `tryPush` 内 item 写在 seq 写之前）。
+  - Producer 要覆写 slot `i`（第 `ct + Capacity` 次 `tryPush`），需先推进 `head` 到 `ct + Capacity`。但 Consumer 持有的 `h_c` 是 `acquire` 读，`ct < h_c`。若 `h_c < ct + Capacity`，Producer 尚未开始第 `ct + Capacity` 次写，Consumer 读 item 安全。若 `h_c ≥ ct + Capacity`，则 Consumer 读 `seq` 时会看到 `seq ≥ ct + Capacity + 1 > ct + 1`，校验失败，**不读 item**。
+  - **故 Consumer 读 item 时，Producer 不会并发写同一 slot 的 item**：要么 Producer 第 `ct` 轮写入已完成（happens-before，安全读），要么 Producer 第 `ct+Capacity` 轮覆写尚未开始（`h_c < ct + Capacity`，安全读）。无 data race。✓
+- **seq 校验失败时**：Consumer **不读 item**（直接 `tail++` 跳过），故即使 Producer 正在覆写 item，也无非原子读竞争。✓
+- **slot.seq 是 `std::atomic<uint64_t>`**：Producer 写 / Consumer 读 seq 均为原子操作，无 data race。✓
 
 **memory-order proof**：
-- `head.store(release)` / `head.load(acquire)`：Producer 写 buffer 后 release head，Consumer acquire head 后读 buffer，happens-before 链保证 Consumer 读到 Producer 写入的 item。
-- `publishedTail.store(release)` / `publishedTail.load(acquire)`：Producer release publishedTail 后，Consumer acquire publishedTail 看到 discard boundary 上移，正确跳过被丢弃槽位。
-- `consumedTail.store(release)` / `consumedTail.load(acquire)`：Consumer release consumedTail 后，Producer acquire consumedTail（用于满判定，若需要）看到 Consumer 消费进度。
-- 跨线程可见性由 release/acquire 配对保证。✓
+
+- `head.store(release)` / `head.load(acquire)`：Producer 写 `{item, seq}` 后 release head，Consumer acquire head 后读 seq/item，happens-before 链保证 Consumer 看到 Producer 该轮写入。✓
+- `buffer[i].seq.store(release)` / `buffer[i].seq.load(acquire)`：Producer 写 item 后 release seq，Consumer acquire seq 后（校验通过）读 item，happens-before 保证 item 可见。✓
+- `tail.store(release)` / `tail.load(acquire)`：Consumer release tail 后，Producer acquire tail（满判定）看到 Consumer 消费进度。✓
+- 跨线程可见性由 release/acquire 配对保证，无 weaker ordering 漏洞。✓
+
+**四种边界情况（大G项目经理要求）**：
+
+| 边界情况 | 状态 | Producer 行为 | Consumer 行为 | 正确性 |
+|---------|------|-------------|-------------|--------|
+| **B1 满** | `h - tail == Capacity`（tryPush 路径） | `tryPush` 返回 false（不丢，调用方走安全降级）；`tryPushDropOldest` 不判满，覆写最旧 | Consumer 正常 tryPop，seq 校验 | ✓ 满时 tryPush 拒绝、tryPushDropOldest 覆写，语义明确 |
+| **B2 非满** | `h - tail < Capacity` | `tryPush` 正常写入 slot + seq + head++ | Consumer tryPop 读到 seq 匹配的有效 item | ✓ 正常 SPSC 语义 |
+| **B3 Consumer 正在读 slot（seq 校验中）** | Consumer 已 `acquire` 读 `head=h_c`、`seq=s`，尚未推进 tail | Producer 可能 `tryPushDropOldest` 覆写同一 slot（推进 head 到 `h_c+Capacity`） | 若 `s == ct+1`（I1）：Consumer 返回旧 item，合法（线性化点在覆写前）；若 `s != ct+1`（I2）：Consumer 跳过 | ✓ 由 interleaving I1/I2 覆盖，linearization point 决定 |
+| **B4 Consumer 已读 item 但尚未推进 tail** | Consumer 已 `item = buffer[i].item`，尚未 `tail.store(ct+1)` | Producer 覆写该 slot（下一轮，需 head 推进 Capacity，此时 head ≥ ct+Capacity） | Consumer 已持有 item 副本（栈上），推进 tail；下次 tryPop 从 ct+1 开始 | ✓ Consumer 持有的是本轮 item 副本，Producer 覆写不影响已读出的副本；tail 推进后下次读 ct+1，若已被覆写则 seq 校验跳过 |
+
+**并发压力测试设计（至少一个，大G项目经理要求）**：
+
+> **TEST-R14-LIN：Drop-Oldest Linearizability 并发压力测试**
+> - **配置**：`Capacity = 256`；Producer 线程高频 `tryPushDropOldest`（每 100µs 一次，持续 60s，共 600k 次写入）；Consumer 线程高频 `tryPop`（每 50µs 一次，持续 60s）。
+> - **验证项**：
+>   1. **无 data race**：ThreadSanitizer (TSan) 运行 60s 无 data race 报告（HARD CONTRACT）。
+>   2. **seq 单调**：`head` / `tail` / 各 slot `seq` 单调递增，无回绕（运行时断言）。
+>   3. **Consumer 返回的每个 item 的 seq 严格递增**：Consumer 记录每次成功 tryPop 返回的 item 内嵌的写入序号（Producer 写入时打戳），验证序号严格递增（无重复、无回退），证明 Consumer 绝不返回已被覆写的旧 item。
+>   4. **Drop Oldest 语义**：统计 `droppedOldestCount`，验证 Consumer 返回的 item 数 + droppedOldestCount == Producer 写入数（无遗漏、无重复消费）。
+>   5. **线性化点闭合**：在 Producer 覆写 slot 后立即（同线程）检查 Consumer 未持有该 slot 旧 epoch 的 item（通过 item 内嵌 epoch 戳校验）。
+> - **判定**：5 项全部通过 = PASS；任一失败 = FAIL（Blocker）。
+> - **CI 集成**： nightly TSan + 60s 压力测试（MEASUREMENT REQUIREMENT）。
+
+**ownership 保持证明**：
+- **Producer 写**：`head`（release）、`buffer[i].item`（非原子，在 seq release 前）、`buffer[i].seq`（release）。Producer **不写 `tail`**。✓
+- **Consumer 写**：`tail`（release）。Consumer **不写 `head`**、**不写 `buffer[i].item`**、**不写 `buffer[i].seq`**。Consumer 读 `head` / `buffer[i].seq` 为 acquire 只读；读 `buffer[i].item` 仅在 seq 校验通过后（happens-before 成立，无 data race）。✓
+- **SPSC ownership invariant 保持**：每个变量有唯一 owner；跨线程读为 acquire 只读或 happens-before 保护的非原子读。✓
 
 **ABA 分析**：
-- `head` / `publishedTail` / `consumedTail` 均为 `uint64_t` 单调递增计数器（不回绕），槽位由 `% Capacity` 映射。
+- `head` / `tail` / 各 slot `seq` 均为 `uint64_t` 单调递增计数器（不回绕），槽位由 `% Capacity` 映射。
 - uint64 在实际系统生命周期内不会回绕（2^64 ≈ 1.8×10^19 次操作，即使每纳秒 1 次也需 ~585 年）。
-- **ABA 不发生**：槽位复用不会产生 ABA，因计数器单调递增，Consumer 通过 `consumedTail < head` 判定可读，不依赖槽位本身的版本标记。✓
-
-**overwrite race 分析（sentinel 槽位）**：
-- **满判定**：`head - publishedTail == Capacity - 1`（预留 1 sentinel，实际可用 Capacity - 1）。
-- **满时 Producer 写 `buffer[head % Capacity]`**，Consumer 读 `buffer[consumedTail % Capacity]`。
-- 由 INV1 `publishedTail ≤ consumedTail ≤ head` + INV2 `head - publishedTail ≤ Capacity - 1`：
-  - 满时 `head - publishedTail == Capacity - 1`，`consumedTail ∈ [publishedTail, head]`，故 `head - consumedTail ∈ [0, Capacity - 1]`。
-  - `head % Capacity == consumedTail % Capacity` 当且仅当 `(head - consumedTail) % Capacity == 0`，即 `head - consumedTail ∈ {0, Capacity, 2×Capacity, ...}`。
-  - 但 `head - consumedTail ∈ [0, Capacity - 1]`，故 `head - consumedTail == 0`（即 `consumedTail == head`，Consumer 已读到 head，无可读，不会读 buffer）。
-  - **Consumer 读 `buffer[consumedTail % Capacity]` 时 `consumedTail < head`，故 `head - consumedTail ∈ [1, Capacity - 1]`，`head % Capacity ≠ consumedTail % Capacity`**。
-- **Producer 写与 Consumer 读不同槽位，无 overwrite race**。✓
-- **Drop Oldest 时**：Producer 先推进 `publishedTail`（丢弃最旧，Consumer 下次读会跳到新 publishedTail），再写 `buffer[head % Capacity]`。被丢弃的最旧槽位 `buffer[publishedTail_old % Capacity]`：Consumer 若尚未读到该槽位（`consumedTail < publishedTail_old + 1`），下次读会跳到 `publishedTail_old + 1`（因 `ct < pt` → `ct = pt`），不读被丢弃槽位；若 Consumer 已读到该槽位（`consumedTail > publishedTail_old`），则该槽位已消费完，Producer 写不与 Consumer 竞争。✓
+- **ABA 不发生**：槽位复用不产生 ABA，因 Consumer 通过 `seq == ct + 1` 校验 slot 属于哪一轮，不依赖槽位本身的版本标记或指针比较。即使 slot `i` 被多轮覆写，Consumer 通过 epoch 精确判定当前内容属于哪一轮。✓
 
 **Drop Oldest 语义证明**：
-- 满时（`head - publishedTail == Capacity - 1`）队列中有 `Capacity - 1` 个已发布未消费的事件（`[publishedTail, head)`）。
-- Drop Oldest：Producer `publishedTail++`（discard boundary 上移，`[publishedTail_old, publishedTail_old + 1)` 即最旧 1 个事件被排除出可读范围）+ `buffer[head % Capacity] = item; head++`（新事件入队）。
-- 丢弃后可读范围 = `[publishedTail_old + 1, head_old + 1)` = 原 `[publishedTail_old + 1, head_old)`（去掉最旧）+ 新事件。**最旧事件被丢弃，新事件保留，Consumer 不读到被丢弃的最旧**。✓
-- **真正实现 Drop Oldest 语义**（非 v1.1 的 "Consumer 容忍 stale"），Consumer 通过 `ct < pt → ct = pt` 主动跳过被 Producer 丢弃的槽位。
+- `tryPushDropOldest` 不判满，总是覆写 slot `h % Capacity` + 推进 head。被覆写 slot 的旧 epoch 内容对持有对应 `ct` 的 Consumer 不再可读（seq 校验失败，跳过）。
+- **effective 队列** = Consumer 视角中 seq 校验通过的 slot 集合 = `[tail, head)` 中未被覆写的 slot。由于 Producer 写入速度 ≥ Consumer 消费速度时最旧 slot 被覆写，Consumer 跳过——**等效于丢弃最旧、保留最新**。
+- **与 v1.1 "Consumer 容忍 stale" 区别**：v1.1 Consumer 会读到被跳过的旧事件（stale）；方案 A+ Consumer 通过 seq 校验**主动拒绝**被覆写 slot，不返回 stale item。✓
+- **与 v1.2 "publishedTail discard cursor" 区别**：v1.2 依赖 Consumer 读到最新 `publishedTail` 才跳过，存在 stale `pt` 竞态窗口；方案 A+ 依赖 `slot.seq` 原子读校验，linearization point 闭合，无 stale 窗口。✓
 
-**Design-R11 最终 Contract**：
-> SPSC_DATA `tryPushDropOldest()` 采用 **方案 A — Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail`** 实现：
-> 1. **状态变量**：`head`（Producer-only 写）、`publishedTail`（**Producer-only 写，Design-R11 新增 discard cursor**）、`consumedTail`（Consumer-only 写）；`buffer[i % Capacity]` 槽位。
-> 2. **不变量**：`publishedTail ≤ consumedTail ≤ head`（INV1）；`head - publishedTail ≤ Capacity - 1`（INV2，预留 1 sentinel）；三计数器单调递增（INV3，ABA 不发生）。
-> 3. **满判定**：`head - publishedTail == Capacity - 1`（预留 sentinel，避免 Producer 写与 Consumer 读同槽竞争）。
-> 4. **Drop Oldest**：满时 Producer `publishedTail++`（丢弃最旧，discard boundary 上移）+ `buffer[head % Capacity] = item; head++`（新事件入队）+ `droppedOldestCount++`。
-> 5. **Consumer 跳过被丢弃**：Consumer 读 `publishedTail`（acquire），若 `consumedTail < publishedTail` 则 `consumedTail = publishedTail`（跳过被 Producer 丢弃的槽位），再读 `buffer[consumedTail % Capacity]`。
-> 6. **ownership 保持**：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`；Consumer 仅写 `consumedTail`；跨线程读为 acquire 只读。✓
-> 7. **memory-order**：`head` / `publishedTail` / `consumedTail` 的 store 用 `memory_order_release`，load 用 `memory_order_acquire`，跨线程可见性保证。
-> 8. **ABA 安全**：uint64 单调递增计数器，实际系统生命周期内不回绕。
-> 9. **overwrite race 安全**：满时 `head - consumedTail ∈ [1, Capacity - 1]`，`head % Capacity ≠ consumedTail % Capacity`，Producer 写与 Consumer 读不同槽位。
-> 10. **Drop Oldest 语义**：最旧事件被 `publishedTail++` 排除出可读范围，新事件保留，Consumer 主动跳过被丢弃槽位，**真正实现 Drop Oldest**（非 "Consumer 容忍 stale"）。
-> 11. **容量语义**：`SPSC_DATA_CAPACITY = 256` 含 1 sentinel，实际可用 255（编译期 `static_assert`）。
+**Design-R14 最终 Contract**：
+> SPSC_DATA `tryPushDropOldest()` 采用 **方案 A+ — Seqlock-validated Slot（epoch-tagged slot + Consumer-side seq 校验）** 实现：
+> 1. **状态变量**：`head`（Producer-only 写）、`tail`（Consumer-only 写）、`buffer[i] : Slot<T> { T item; std::atomic<uint64_t> seq; }`（Producer 写 item + seq，Consumer 读 seq 校验）。**废弃 `publishedTail`**。
+> 2. **不变量**：`tail ≤ head`（INV1）；`head - tail ≤ Capacity`（INV2）；`head`/`tail` 单调递增（INV3，ABA 不发生）；`buffer[i].seq == k×Capacity + i + 1`（INV4，slot epoch invariant）。
+> 3. **满判定**：`tryPush` 用 `h - tail == Capacity`（真实消费进度，非 publishedTail）；`tryPushDropOldest` 不判满，总是覆写。
+> 4. **Drop Oldest**：Producer 覆写 `buffer[h % Capacity] = { item, seq = h+1 }` + `head++`。旧 epoch 内容的 Consumer 校验失败，跳过。+ `droppedOldestCount++`（best-effort）。
+> 5. **Consumer seq 校验**：Consumer 读 `buffer[ct % Capacity].seq`（acquire），仅当 `seq == ct + 1` 接受 item，否则推进 `tail` 跳过。
+> 6. **linearization point**：`tryPop` 的 `buffer[i].seq.load(acquire)`；`tryPush`/`tryPushDropOldest` 的 `head.store(release)`。
+> 7. **ownership 保持**：Producer 仅写 `head` + `buffer[i].item` + `buffer[i].seq`；Consumer 仅写 `tail`；跨线程读为 acquire 只读或 happens-before 保护的非原子读。✓
+> 8. **memory-order**：`head` / `buffer[i].seq` / `tail` 的 store release / load acquire，跨线程可见性保证。
+> 9. **ABA 安全**：uint64 单调递增计数器，实际系统生命周期内不回绕。
+> 10. **overwrite race 安全**：Consumer 读 item 仅在 seq 校验通过后（happens-before 成立），无 data race；seq 校验失败不读 item。
+> 11. **Drop Oldest 语义**：被覆写 slot 的旧 epoch 内容对 Consumer 不可读（seq 校验失败），等效丢弃最旧、保留最新。**真正实现 Drop Oldest**（非 "Consumer 容忍 stale"，非 "stale publishedTail 竞态窗口"）。
+> 12. **Drop-Oldest Linearizability 闭环**：一旦 Producer `head.store(release)` 全局可见，此后 Consumer `tryPop` 绝不返回旧 epoch item（形式化结论已证）。
+> 13. **容量语义**：`SPSC_DATA_CAPACITY = 256`，effective 队列长度 ≤ 256（编译期 `static_assert`，2 的幂次）。
 
-**与 v1.1 Design-R7 的关系**：Design-R7 正确识别了 "Producer 不得移动 Consumer-owned tail" 的 ownership 问题，但其 "Producer-only head advance + Consumer 容忍 stale" 解法无法真正实现 Drop Oldest（Producer 推进 head 不改变 Consumer 可读边界，旧事件未被 Drop）。Design-R11 引入 Producer-owned `publishedTail` discard cursor，使 Producer 能合法地改变 consumer-visible read boundary（通过 `publishedTail` 而非 `consumedTail`），真正实现 Drop Oldest，同时保持 SPSC ownership。
+**与 v1.2 方案 A 的关系**：v1.2 方案 A 引入 `publishedTail` discard cursor 解决了 v1.1 "Producer 不得移动 Consumer-owned tail" 的 ownership 问题，但留下 linearizability 未闭环的 BLOCKER（Consumer 可能持有 stale `pt` 局部副本，读已被宣布 dropped 的 slot）。Design-R14 方案 A+ 用 `slot.seq` 原子读替代 `publishedTail` 局部副本，将 discard 信号绑定到 slot 本身的 epoch（Consumer 每次读 slot 都重新 acquire 读 seq，不缓存 stale boundary），linearization point 闭合。同时满判定改用 `tail`（真实消费进度），消除 `publishedTail` 未同步导致的过早丢弃。
+
+**与 v1.1 Design-R7 的关系**：Design-R7 正确识别了 "Producer 不得移动 Consumer-owned tail" 的 ownership 问题；Design-R11 方案 A 用 `publishedTail` 部分解决但留下 R14；Design-R14 方案 A+ 用 seqlock slot 彻底闭环。
 
 **可验证 invariant**：
-- SPSC_DATA RingBuffer 实现审查：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`，不写 `consumedTail`；Consumer 仅写 `consumedTail`，不写 `head` / `publishedTail`（HARD CONTRACT，源码审查）。
-- 不变量审查：`publishedTail ≤ consumedTail ≤ head` + `head - publishedTail ≤ Capacity - 1`（HARD CONTRACT，源码审查 + 运行时断言）。
-- Drop Oldest 测试：队列满时 enqueue 新事件，验证最旧事件被丢弃（Consumer 不读到）+ 新事件保留 + `droppedOldestCount++`（HARD CONTRACT，CI 测试）。
-- Consumer 跳过被丢弃测试：Producer Drop Oldest 后 Consumer 读取，验证 Consumer 跳过被丢弃槽位（`consumedTail ≥ publishedTail`）（HARD CONTRACT，CI 测试）。
-- memory-order 审查：`head` / `publishedTail` / `consumedTail` 的 store release / load acquire（HARD CONTRACT，源码审查）。
-- ABA 测试：长时间运行（≥ 1 小时）`head` / `publishedTail` / `consumedTail` 单调递增不回绕（MEASUREMENT REQUIREMENT，CI 监控）。
+- SPSC_DATA RingBuffer 实现审查：Producer 仅写 `head` + `buffer[i].item` + `buffer[i].seq`，不写 `tail`；Consumer 仅写 `tail`，不写 `head` / `buffer[i].seq` / `buffer[i].item`（HARD CONTRACT，源码审查）。
+- 不变量审查：`tail ≤ head` + `head - tail ≤ Capacity` + slot epoch invariant（HARD CONTRACT，源码审查 + 运行时断言）。
+- Drop Oldest 测试：队列满时 enqueue 新事件，验证最旧事件被覆写（Consumer seq 校验失败跳过）+ 新事件保留 + `droppedOldestCount++`（HARD CONTRACT，CI 测试）。
+- **Drop-Oldest Linearizability 测试（TEST-R14-LIN）**：60s 并发压力 + TSan 无 data race + Consumer 返回 item 序号严格递增 + droppedOldestCount 一致性（HARD CONTRACT，CI nightly 测试）。
+- memory-order 审查：`head` / `buffer[i].seq` / `tail` 的 store release / load acquire（HARD CONTRACT，源码审查）。
+- ABA 测试：长时间运行（≥ 1 小时）`head` / `tail` / 各 slot `seq` 单调递增不回绕（MEASUREMENT REQUIREMENT，CI 监控）。
 
 ### 2.4.9 SnapshotRequest SPSC ownership 明确（Design-R8 修复）
 
@@ -1782,11 +1905,12 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 | Design-R4（API 数字 overclaim） | 🔴 BLOCKER | §2.4.0 三类分层框架 + §2.4.5/§2.4.6/§2.4.7 重新分类所有时序数字 | 所有时序数字标注类别（HARD CONTRACT / DESIGN TARGET / MEASUREMENT REQUIREMENT）；HARD CONTRACT 有充分依据引用 |
 | Design-R5（callback extraction 与 Normalizer 未分开） | 🟠 P1 | §2.1.1 上下文图 + §2.1.2 组件图 + §2.1.3.1 时序图 + §2.2.1 接口表 + §2.6.1 S01-REQ-002 | 源码审查：`MacEventFieldExtractor` 仅在 callback 内，`CGEventNormalizer` 仅在 Capture thread 内，不跨越 callback 边界 |
 | Design-R6（SPSC_STATE reliable 语义需收紧） | 🟠 P1 | §2.4.1 + §2.1.3.2 + §2.1.3.5 + §2.5.2 措施 4 | 文档语义为 "normal-bound reliable, saturation → safety degradation"，不声称 absolute reliable；饱和时安全降级 Contract 明确 |
-| Design-R7（Drop Oldest 缺并发证明，v1.1 新增 / v1.2 Design-R11 修正逻辑错误） | 🔴 BLOCKER | §2.4.8 方案 A Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail` | 源码审查：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`，不写 `consumedTail`；不变量 `publishedTail ≤ consumedTail ≤ head` + `head - publishedTail ≤ Capacity - 1`；memory-order release/acquire 正确；Drop Oldest 真正实现（Consumer 跳过被丢弃槽位，非 "Consumer 容忍 stale"） |
+| Design-R7（Drop Oldest 缺并发证明，v1.1 新增 / v1.2 Design-R11 修正 / v1.3 Design-R14 修正 linearizability） | 🔴 BLOCKER | §2.4.8 方案 A+ Seqlock-validated Slot（epoch-tagged slot + Consumer-side seq 校验） | 源码审查：Producer 仅写 `head` + `buffer[i].item` + `buffer[i].seq`，不写 `tail`；不变量 `tail ≤ head` + `head - tail ≤ Capacity` + slot epoch invariant；memory-order release/acquire 正确；linearization point = `slot.seq` 原子读；Drop Oldest 真正实现（Consumer seq 校验跳过被覆写 slot，非 "Consumer 容忍 stale"，非 "stale publishedTail 竞态窗口"） |
 | Design-R8（SnapshotRequest SPSC ownership） | 🟠 P1 | §2.4.9 新增 SnapshotRequest SPSC ownership 明确 + §2.1.3.5 流程图修正 | 源码审查：SnapshotRequest Producer = FSM thread 唯一；SnapshotPublisher Consumer = Capture thread 唯一；Injection 不直接发起 SnapshotRequest |
 | Design-R9（Recovery P3 overclaim，v1.1 修复 / v1.2 P3 表述严格限定） | 🟠 P1 | §2.4.6 拆分 System Safety Recovery + User-dependent convergence + §2.5.3 措施 6 | 文档不声称 "总 recovery 有 deterministic bounded upper bound"；**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**；T_user_release 标注无界 |
 | Design-R10（CF0 Frozen Boundary Amendment） | 🟠 P1 | §2.7 新增 CF0 Frozen Boundary Amendment / Compatibility Contract | CF0/CF1 Frozen 文档 git diff 验证未修改；`onEdgeOverflow()` + `PressedStateSnapshot` bitmap extension 均为 additive；CF0 FSM 状态机未修改 |
-| Design-R11（SPSC_DATA Drop-Oldest producer-only head advance 逻辑错误，v1.2 修正） | 🔴 BLOCKER | §2.4.8 重写为方案 A — Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail` | 源码审查：Producer 仅写 `head` + `publishedTail` + `buffer[head % Capacity]`，不写 `consumedTail`；不变量 `publishedTail ≤ consumedTail ≤ head` + `head - publishedTail ≤ Capacity - 1`；Drop Oldest 测试最旧被丢弃（Consumer 不读到）+ 新事件保留 + `droppedOldestCount++`；Consumer 跳过被丢弃槽位（`consumedTail ≥ publishedTail`）；memory-order release/acquire；ABA uint64 单调递增不回绕；overwrite race 满时 `head % Capacity ≠ consumedTail % Capacity` |
+| Design-R11（SPSC_DATA Drop-Oldest producer-only head advance 逻辑错误，v1.2 修正 / v1.3 Design-R14 进一步修正 linearizability） | 🔴 BLOCKER | §2.4.8 方案 A+ Seqlock-validated Slot | 源码审查：Producer 仅写 `head` + `buffer[i].item` + `buffer[i].seq`，不写 `tail`；不变量 `tail ≤ head` + `head - tail ≤ Capacity`；Drop Oldest 测试最旧被覆写（Consumer seq 校验失败跳过）+ 新事件保留 + `droppedOldestCount++`；memory-order release/acquire；ABA uint64 单调递增不回绕；overwrite race Consumer 读 item 仅在 seq 校验通过后（happens-before，无 data race） |
+| Design-R14（SPSC Drop-Oldest Linearizability 未闭环，v1.3 修正） | 🔴 BLOCKER | §2.4.8 方案 A+ Seqlock-validated Slot（废弃 `publishedTail`，slot.seq 原子读作为 linearization point）+ §2.3.2 类图 Slot\<T\> 结构 + §2.2.2 接口注释 | 源码审查：无 `publishedTail`/`consumedTail` 残留变量；linearization point = `buffer[i].seq.load(acquire)` 明确定义；interleaving I1/I2/I3 穷举完备；形式化结论"Producer 宣布 dropped 后 Consumer 绝不返回该 item"已证；四种边界 B1/B2/B3/B4 覆盖；TEST-R14-LIN 60s TSan 压力测试 + Consumer 返回 item 序号严格递增 + droppedOldestCount 一致性（CI nightly）；满判定用 `tail`（真实消费进度）非 `publishedTail` |
 | Design-R12（B_burst/B_rate 误标 HARD CONTRACT，v1.2 修正） | 🔴 BLOCKER | §2.4.0 三类分层表新增 WORKLOAD MODEL / TEST PROFILE 类别 + §2.4.1/§2.4.2/§2.4.7 B_burst/B_rate 降级为 WORKLOAD MODEL | 文档 B_burst=6 / B_rate=40 标注为 WORKLOAD MODEL（声明值，非 deterministic system upper bound）；backlog bound 明确限定 "在声明 workload envelope 内成立"；SPSC_STATE=64 标注为 "在指定 workload envelope 下经过验证的工程容量"；超 envelope 输入触发饱和安全降级（非违反 HARD CONTRACT）；CI 超 envelope 测试验证降级机制 |
 | Design-R13（W_test 10ms/12ms 口径歧义，v1.2 修正） | 🟠 P1 | §2.4.3 W_pause_test=10ms + §2.4.5 T_saturation_detect_test=12ms + §2.4.6 T_system_recovery_test=12ms + §2.4.7 表格 + §2.5.3 措施 6 同步 | 文档无单一 W_test 歧义；三个测试阈值命名正交（W_pause_test / T_saturation_detect_test / T_system_recovery_test）；各章节引用一致 |
 | P3 表述严格限定（v1.2 修正） | 🟠 P1 | §2.4.6 P3 严格表述 + §2.5.3 措施 6 + §2.6.8 R9 行 | 文档统一采用 "**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**"；不写 "P3 可证" 避免歧义；明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded）；防止 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束 |
@@ -1861,4 +1985,6 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 > **保持不变**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM（仅提供越界事件信号供 FSM 消费）；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）全部保持不变。
 > **Amendment v1.2（受控修订，不推倒 1843 行 v1.1 主体）**：修复大G 项目经理 Design Gate 复审发现的 3 项问题 + P3 表述严格限定 —— Design-R11 SPSC_DATA Drop-Oldest producer-only head advance 逻辑错误（§2.4.8 重写为方案 A Producer-owned `publishedTail` discard cursor + Consumer-owned `consumedTail`，真正实现 Drop Oldest，完整证明 Producer ownership / Consumer ownership / slot lifetime / memory ordering / ABA / overwrite race）；Design-R12 B_burst=6/B_rate=40 误标 HARD CONTRACT（§2.4.0/§2.4.1/§2.4.2/§2.4.7 降级为 WORKLOAD MODEL / TEST PROFILE，backlog bound 限定在声明 workload envelope 内，SPSC_STATE=64 标注为在指定 workload envelope 下经过验证的工程容量）；Design-R13 W_test 10ms/12ms 口径歧义（§2.4.3 W_pause_test=10ms + §2.4.5 T_saturation_detect_test=12ms + §2.4.6 T_system_recovery_test=12ms 命名正交）；P3 表述严格限定（§2.4.6/§2.5.3/§2.6.8 统一为 "CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL."，避免 Coding Agent 把 RECOVERY→NORMAL 实现成硬约束）。新增 §2.6.8 R11～R13 + P3 表述 修订回映。
 > **保持不变（v1.2）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM（仅提供越界事件信号供 FSM 消费）；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R3/R4/R5/R6/R8/R9/R10 已修复内容全部保持不变。
+> **Amendment v1.3（受控修订，不推倒 1864 行 v1.2 主体）**：修复大G 项目经理 Design Gate 终审发现的唯一 BLOCKER —— Design-R14 SPSC Drop-Oldest Linearizability 未闭环（§2.4.8 重写为方案 A+ Seqlock-validated Slot，废弃 `publishedTail`，slot.seq 原子读作为 linearization point，完整给出 Producer/Consumer 时序图 + Drop 与 Consume 全部 interleaving I1/I2/I3 + linearization point 定义 + slot lifetime proof + overwrite race proof + memory-order proof + "Producer 宣布 dropped 后 Consumer 绝不返回该 item"形式化结论 + 四种边界 B1/B2/B3/B4 + TEST-R14-LIN 60s TSan 并发压力测试；满判定改用 `tail` 真实消费进度；§2.3.2 类图同步更新为 Slot<T> 结构；§2.2.2 接口注释引用 §2.4.8；§2.6.8 回映表新增 R14 行）。新增 §2.6.8 R14 修订回映。
+> **保持不变（v1.3）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13 已修复内容全部保持不变；`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变。
 > 待用户审查确认后，本文档状态由 DRAFT v1.2 转为 FROZEN 并授权进入下一阶段。
