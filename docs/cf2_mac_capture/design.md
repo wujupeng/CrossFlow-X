@@ -5,7 +5,7 @@
 > **CF0 冻结基线引用**：`.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）+ `.codeartsdoer/specs/cf0_arch_freeze/design.md`（v3，3449 行），本设计严格遵循 CF0 冻结的全部架构基线（C++20 技术栈、Driverless User-Mode、Handoff 六态 FSM、7 核心契约、CF0 Architecture Safety Invariant P1/P2/P3、8 线程模型、双平面隔离、Coordinate Space RelativeDelta/AbsolutePosition 双语义、无锁 SPSC 队列 §2.7.3）。
 > **CF1 冻结基线引用**：`.codeartsdoer/specs/cf1_endpoint_disc/spec.md`（v2，1432 行）+ `.codeartsdoer/specs/cf1_endpoint_disc/design.md`（v4，2972 行），本设计复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）作为捕获事件源端标识，不修改身份与发现机制。
 > **第一原则**：Driverless User-Mode Architecture —— macOS 输入捕获与注入必须完全在用户态完成，不引入内核扩展（kext）或驱动。
-> **文档状态**：DRAFT v1.4（Amendment，受控修订，不推倒 1990 行 v1.3 主体）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
+> **文档状态**：DRAFT v1.5（Amendment，受控修订，不推倒 2345 行 v1.4 主体）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
 > **设计范围**：仅覆盖 CF2-S01～CF2-S06 六个 macOS 输入捕获地基的增量设计方案 + 大G项目经理特别要求的工程边界量化（SPSC_STATE=64 capacity / burst 上界 / consumer 最坏暂停窗口 / 异常过载判定阈值 / 饱和检测时序 / recovery 时序）+ CF0 Safety Invariant 保障 + Verification Matrix 回映。
 > **执行纪律遵循**：严格遵守大G项目经理执行纪律（不修改 CF0/CF1 Frozen / 不重新设计 Handoff FSM / 不引入 Coordinator election / Raft / Paxos / 不改变 NodeID/Topology Authority 语义 / Input/Control 双平面隔离 / Evidence-First / Gate Review 后再编码）。
 
@@ -44,6 +44,14 @@
 > **修订项**：
 > - **Design-R15 (🔴 BLOCKER)**：Slot Read/Overwrite Lifetime Race — seq 校验通过后 item 读取仍存在 data race。**架构取舍声明（方向 B — 重新定义 payload lifetime）**：经严格证明，非阻塞 Producer + SPSC + producer-side Drop Oldest + **非原子多 word payload** + arbitrary consumer pause 在 C++20 strict memory model 下**不可同时满足**（不可能性证明见 §2.4.8）。CF2 做明确架构取舍：保留非阻塞 Producer（Input Plane 低延迟，callback ≤1ms）、SPSC、producer-side Drop Oldest、arbitrary consumer pause（OS 调度不可控），**放弃"非原子 payload"**，改为 **word-atomic payload + seqlock double-read validation**。**修正**：§2.4.8 新增方案 A++ — Epoch-tagged Slot with **Word-Atomic Payload** + **Seqlock Double-Read Validation**：(1) payload 存储从非原子 `T item` 改为 `AtomicPayload<T>`（内部 `std::atomic<uint64_t> words[N]`，N = ⌈sizeof(T)/8⌉，每 word 8 字节，`is_lock_free()` = true on x86-64/ARM64，不依赖大 atomic，与 R11 兼容）；(2) Consumer 读取改为 seqlock 双读——`s1 = slot.seq.load(acquire)` → epoch 校验 `s1 == ct+1` → 逐 word `atomic load` payload（无 data race）→ `s2 = slot.seq.load(acquire)` → 覆写校验 `s1 == s2`，两校验都通过才接受 item，否则丢弃跳过（Drop Oldest 生效）；(3) Producer 写入改为逐 word `atomic store` payload（relaxed）→ `seq.store(release)`，不阻塞。**关键性质**：所有 word + seq 均为 `std::atomic`，无 data race（C++20 strict 合规）；arbitrary consumer pause 下 double-seq 校验检测覆写，Consumer 丢弃被覆写 item；Producer 不需要知道 Consumer 读取状态（非阻塞）。完整给出不可能性证明 + 方案 A++ 状态变量/ownership/不变量/初始化/tryPush/tryPushDropOldest/tryPop + Producer/Consumer 完整时序图 + 全部 Consumer-pause interleaving（含 seq 已读 item 未读 Producer 覆写关键 interleaving）+ C++20 data-race proof + slot ownership/lifetime proof + linearization proof + arbitrary consumer pause safety proof + 核心问题回答 + 四种边界情况 + TEST-R15-LIFETIME 并发压力测试设计。§2.3.2 类图 `Slot<T>` 同步更新为 `AtomicPayload<T>` 结构。§2.2.2 接口注释引用 §2.4.8 R15。§2.6.8 回映表新增 R15 行。
 > **未变更项（v1.4）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14 已修复内容全部保持不变。`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变，仅内部实现从 v1.3 方案 A+（非原子 payload + 单次 seq 校验）改为方案 A++（word-atomic payload + seqlock double-read validation）。SPSC ownership（head=Producer, tail=Consumer）不变。epoch seq 语义不变（`seq = h + 1`）。满判定不变（`h - tail == Capacity`）。
+
+> **Amendment v1.5 变更记录（受控修订，不删除重写，不推倒 2345 行 v1.4 主体）**
+> **修订背景**：大G 项目经理对 Design v1.4 的 Design Gate 终审裁决 = CONDITIONAL FAIL / REVISION REQUIRED。v1.4 的 Design-R1～R15 全部 PASS（Seqlock double-read + word-atomic payload 方向已认可），但存在唯一 BLOCKER（Design-R16）+ 1 项 P1（AtomicPayload 平台契约）+ 1 项 P1（visibility/validity/linearization/lifetime proof 分离）。本次 Amendment 仅修复 R16 + AtomicPayload 平台契约 + proof 分离三项，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标 / Requirements v1.4 FROZEN / R1～R15 已修复内容，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding。
+> **修订项**：
+> - **Design-R16 (🔴 BLOCKER)：Drop-Oldest Queue Logical Boundary / Capacity Invariant Contradiction**。问题：v1.4 §2.4.8 方案 A++ 声明不变量 INV2: `head - tail ≤ Capacity`，同时 `tryPushDropOldest()` 不判满、总是覆写、head++、不检查 tail、不修改 tail。Producer 连续产生事件后 head-tail 可远超 Capacity（如 head=1256, tail=0, Capacity=256 → 1256 > 256），INV2 不成立。v1.4 在 INV2 描述中隐含承认了"head 可超过 tail + Capacity"，但仍写 `head - tail ≤ Capacity` 作为不变量——这是数学矛盾。**问题本质**：(1) seqlock double-read 解决了 slot 内 payload lifetime race（R15 已认可），但没有解决整个 bounded queue 的"有效逻辑范围"问题；(2) seq mismatch 让 Consumer 能 discard stale slot，但不能让 head-tail 自动恢复到 ≤ Capacity；(3) tail 在 Drop-Oldest 模式下不再单独表示"最旧有效元素"的边界。**架构方向选择（方向 A — 重新定义 Queue Invariant）**：保留 v1.4 方案 A++ 的 word-atomic payload + seqlock double-read validation（R15 成果不变），不恢复 v1.2 的 publishedTail（避免 R14 stale-boundary race 重现），而是**重新定义 Queue Invariant**：引入**派生量 `effectiveTail = max(tail, head - Capacity)`**（非存储的原子变量，由 Producer-owned `head` + Consumer-owned `tail` 无竞态地定义），作为 **logical oldest boundary**。**修正**：§2.4.8 方案 A++ 不变量废弃 INV2-OLD `head - tail ≤ Capacity`，引入新 INV2 `head - effectiveTail ≤ Capacity`（逻辑占用 bounded，恒成立）+ INV6 effectiveTail 定义 + INV7 droppedCount 恒等式 + INV8 统计恒等式（Producer 写入数 = drop 数 + consumer 成功数 + queue 中剩余数）。§2.4.8 Consumer tryPop 加入 effectiveTail 对齐步骤（Consumer 落后于 effective oldest boundary 时快速推进 tail，跳过已被 drop 的 slot）。§2.4.8 新增 R16 修复子节：核心数学问题回答（在"Producer 永不阻塞、Consumer 可任意暂停、Producer 可持续覆写、SPSC、bounded physical storage、Drop-Oldest"约束下，**logical oldest boundary 由 `effectiveTail = max(tail, head - Capacity)` 定义**，是派生量非存储变量，无 stale-boundary race）+ effectiveTail 无竞态证明 + Consumer-pause interleaving 补充（full / non-full / consumer paused / consumer validating / consumer after payload copy 五种状态）+ 统计恒等式证明 + droppedOldestCount 修正。§2.6.8 回映表新增 R16 行。
+> - **AtomicPayload 平台契约（P1）**：v1.4 要求 `std::atomic<uint64_t>::is_lock_free() == true` 作为整个 Input Plane 非阻塞设计基础，但仅 `static_assert` 然后宣称所有目标环境天然满足，未明确平台契约。**修正**：§2.4.8 新增 AtomicPayload 平台契约子节：明确 (1) CF2 supported architecture: x86_64, arm64；(2) AtomicPayload word: `uint64_t`，required `is_lock_free() == true`；(3) 编译期 `static_assert` + 运行时 platform check（CMake `target_compile_definitions` + `#ifdef` architecture guard）；(4) if platform does not satisfy: CF2 implementation is **unsupported**（build error，不静默降级，不 fallback 到 mutex-based atomic——因 mutex 违反 Input Plane 非阻塞设计原则）。§2.6.8 回映表新增 AtomicPayload 平台契约行。
+> - **visibility/validity/linearization/lifetime/atomicity proof 分离（P1）**：v1.4 将五个概念混在"在 seq release/acquire happens-before 伞下安全"一句带过。**修正**：§2.4.8 新增五概念分离证明子节：(1) **visibility**（可见性）— release/acquire happens-before 链；(2) **atomicity**（原子性）— 每 word `std::atomic<uint64_t>` 无撕裂；(3) **validity**（有效性）— `s1 == s2 == ct+1` 定义 item 有效；(4) **linearization**（线性化）— tryPop LP = s2 读瞬间，tryPush LP = seq.store(release) 瞬间；(5) **lifetime**（生命周期）— slot i 第 k 轮 lifetime 区间 + seqlock double-read 在 lifetime 内安全。§2.6.8 回映表新增五概念分离行。
+> **未变更项（v1.5）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14/R15 已修复内容全部保持不变。`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变。方案 A++ 的 word-atomic payload + seqlock double-read validation 核心算法不变（R15 成果保留）。SPSC ownership（head=Producer, tail=Consumer）不变。epoch seq 语义不变（`seq = h + 1`）。tryPush 满判定不变（`h - tail == Capacity`）。tryPushDropOldest 不判满、总是覆写不变。**R16 仅重新定义 Queue Invariant（废弃 INV2-OLD `head - tail ≤ Capacity`，引入 effectiveTail 派生量 + 新 INV2/INV6/INV7/INV8）+ Consumer tryPop 加入 effectiveTail 对齐步骤（优化 + 正确性补充），不改变 Producer 写入路径、不改变 seqlock double-read validation、不改变 word-atomic payload 存储。**
 
 ---
 
@@ -1725,7 +1733,7 @@ end
 - **与 v1.1 "Consumer 容忍 stale" 区别**：v1.1 Consumer 会读到被跳过的旧事件（stale）；方案 A+ Consumer 通过 seq 校验**主动拒绝**被覆写 slot，不返回 stale item。✓
 - **与 v1.2 "publishedTail discard cursor" 区别**：v1.2 依赖 Consumer 读到最新 `publishedTail` 才跳过，存在 stale `pt` 竞态窗口；方案 A+ 依赖 `slot.seq` 原子读校验，linearization point 闭合，无 stale 窗口。✓
 
-**Design-R14 最终 Contract（v1.3 方案 A+，⚠️ 已被 v1.4 Design-R15 方案 A++ 取代为最终方案，以下保留为历史记录）**：
+**Design-R14 最终 Contract（v1.3 方案 A+，⚠️ 已被 v1.4 Design-R15 方案 A++ 取代为最终方案，v1.5 Design-R16 进一步修正 invariant（effectiveTail），以下保留为历史记录）**：
 > SPSC_DATA `tryPushDropOldest()` 采用 **方案 A+ — Seqlock-validated Slot（epoch-tagged slot + Consumer-side seq 校验）** 实现：
 > 1. **状态变量**：`head`（Producer-only 写）、`tail`（Consumer-only 写）、`buffer[i] : Slot<T> { T item; std::atomic<uint64_t> seq; }`（Producer 写 item + seq，Consumer 读 seq 校验）。**废弃 `publishedTail`**。
 > 2. **不变量**：`tail ≤ head`（INV1）；`head - tail ≤ Capacity`（INV2）；`head`/`tail` 单调递增（INV3，ABA 不发生）；`buffer[i].seq == k×Capacity + i + 1`（INV4，slot epoch invariant）。
@@ -1799,12 +1807,19 @@ struct AtomicPayload {
 
 > **与 v1.3 方案 A+ 的区别**：A+ 的 `Slot<T> { T item; std::atomic<uint64_t> seq; }`（`item` 非原子）→ A++ 的 `Slot<T> { AtomicPayload<T> payload; std::atomic<uint64_t> seq; }`（`payload` word-atomic）。Consumer 读取从"单次 seq 校验 + 非原子 item 读"改为"seqlock double-read seq + word-atomic payload load"。**epoch seq 语义不变**（`seq = h + 1`），**SPSC ownership 不变**（head=Producer, tail=Consumer），**满判定不变**（`h - tail == Capacity`）。
 
-**方案 A++ 不变量**：
-- **INV1**：`tail ≤ head`（消费位置 ≤ 写入位置）。
-- **INV2**：`head - tail ≤ Capacity`（effective 队列 bounded；Drop Oldest 路径不判满，覆写最旧，Consumer 通过 seqlock double-read 校验跳过被覆写 slot）。
+**方案 A++ 不变量（v1.5 Design-R16 修正：废弃 INV2-OLD，引入 effectiveTail 派生量）**：
+
+> **⚠️ Design-R16 修正（v1.5）**：v1.4 的 INV2 `head - tail ≤ Capacity` 在 Drop-Oldest 模式下**不成立**（`tryPushDropOldest` 不判满、不推进 tail，Producer 连续写入后 `head - tail` 可远超 Capacity）。v1.5 废弃 INV2-OLD，引入**派生量 `effectiveTail`** 重新定义 Queue Invariant。**这是 invariant 重新定义，不是算法改变**——方案 A++ 的 word-atomic payload + seqlock double-read validation 核心算法不变，Producer 写入路径不变，R15 成果保留。
+
+- **INV1**：`tail ≤ head`（消费位置 ≤ 写入位置；Consumer 不得越过 Producer 已写位置）。
+- **~~INV2-OLD（v1.4，已废弃）~~**：~~`head - tail ≤ Capacity`~~（在 Drop-Oldest 模式下不成立：`tryPushDropOldest` 不推进 tail，Producer 连续写入后 `head - tail` 可远超 Capacity。如 head=1256, tail=0, Capacity=256 → 1256 > 256，矛盾）。
+- **INV2（v1.5 重新定义，Design-R16 核心修复）**：`head - effectiveTail ≤ Capacity`（**逻辑占用 bounded，恒成立**）。其中 `effectiveTail = max(tail, head - Capacity)` 为**派生量**（非存储的原子变量，由 Producer-owned `head` + Consumer-owned `tail` 数学关系定义）。**证明**：`effectiveTail = max(tail, head - Capacity) ≥ head - Capacity`，故 `head - effectiveTail ≤ head - (head - Capacity) = Capacity`。✓
 - **INV3**：`head` 单调递增；`tail` 单调递增（uint64 不回绕，见 ABA 分析）。
 - **INV4（slot epoch invariant）**：`buffer[i].seq` 在 Producer 第 `k` 次写 slot `i` 后 = `k × Capacity + i + 1`。
-- **INV5（word-atomic invariant，A++ 新增）**：`buffer[i].payload.words[k]` 均为 `std::atomic<uint64_t>`，所有读写为原子操作。无非原子并发访问。`is_lock_free() == true`（编译期 `static_assert`）。
+- **INV5（word-atomic invariant，A++ 新增）**：`buffer[i].payload.words[k]` 均为 `std::atomic<uint64_t>`，所有读写为原子操作。无非原子并发访问。`is_lock_free() == true`（编译期 `static_assert`，平台契约见 AtomicPayload 平台契约子节）。
+- **INV6（effectiveTail 定义，v1.5 Design-R16 新增）**：`effectiveTail = max(tail, head - Capacity)`。**语义**：logical oldest boundary（逻辑最旧有效边界）。当 `head - tail ≤ Capacity`（队列未超容量）时 `effectiveTail = tail`（无 drop，Consumer 从 tail 读）；当 `head - tail > Capacity`（队列超容量，Drop-Oldest 已生效）时 `effectiveTail = head - Capacity`（最旧 `Capacity` 个 slot 有效，更旧的已被覆写 drop）。**effectiveTail 是派生量非存储变量**——无"Consumer 持有 stale effectiveTail"问题（每次 tryPop 重新计算），无 stale-boundary race（不依赖 Producer 单独宣布的 discard cursor，避免 v1.2 publishedTail 的 R14 缺陷）。
+- **INV7（droppedCount 恒等式，v1.5 Design-R16 新增）**：`droppedCount = effectiveTail - tail = max(0, head - tail - Capacity)`。**语义**：已被 Drop-Oldest 丢弃但 Consumer 尚未跳过的 slot 数。当 `head - tail ≤ Capacity` 时 `droppedCount = 0`（无 drop）；当 `head - tail > Capacity` 时 `droppedCount = head - tail - Capacity`（超容量部分已被 drop）。
+- **INV8（统计恒等式，v1.5 Design-R16 新增）**：`head = droppedCount + tail + (head - effectiveTail)`，即 **Producer 写入数 = drop 数 + Consumer 成功消费数 + queue 中逻辑剩余数**。**证明**：`droppedCount + tail + (head - effectiveTail) = (effectiveTail - tail) + tail + (head - effectiveTail) = effectiveTail + head - effectiveTail = head`。✓ **此恒等式在任意时刻成立**，是 `droppedOldestCount` 统计的正确性基础。
 
 **Slot 初始化（A++）**：
 ```
@@ -1844,12 +1859,20 @@ Producer:
 ```
 > **关键**：Drop Oldest 路径**不判满、不推进任何 tail、不检查 Consumer 状态**。Producer **不需要知道 Consumer 是否正在读或已完成读**（非阻塞）。丢弃通过"覆写 slot payload + 推进 head + 写新 seq"自然实现：被覆写 slot 的 `seq` 变为新 epoch，Consumer 的 seqlock double-read 校验（s1 == s2 且 s1 == ct+1）将检测到 seq 变化，丢弃跳过。
 
-**Consumer tryPop（A++：seqlock double-read validation — R15 核心修复）**：
+**Consumer tryPop（A++：seqlock double-read validation — R15 核心修复 + R16 effectiveTail 对齐）**：
 ```
 Consumer:
   ct = tail.load(memory_order_relaxed)                 // Consumer-owned, relaxed
   h  = head.load(memory_order_acquire)                 // 读 Producer-owned head（acquire）
-  if (ct >= h) return empty                            // 无可读
+  // ★★★ R16 核心修复：effectiveTail 对齐（logical oldest boundary）★★★
+  effectiveTail = max(ct, h - Capacity)                // ★ 派生量计算（INV6），无竞态（ct/h 均已原子读）
+  if (ct < effectiveTail) {
+      // Consumer 落后于 effective oldest boundary：[ct, effectiveTail) 区间的 slot 已被 Drop-Oldest 丢弃
+      // 快速推进 tail 到 effectiveTail，跳过已被 drop 的 slot（避免逐个 seq 校验失败循环）
+      tail.store(effectiveTail, memory_order_release)  // 推进 Consumer-owned tail
+      ct = effectiveTail                               // 对齐到 logical oldest boundary
+  }
+  if (ct >= h) return empty                            // 无可读（对齐后 ct == h）
   i  = ct % Capacity
   // ★★★ Seqlock Double-Read Validation（R15 核心修复）★★★
   s1 = buffer[i].seq.load(memory_order_acquire)        // ★ 第一次读 seq（acquire）
@@ -1872,6 +1895,8 @@ Consumer:
   tail.store(ct + 1, memory_order_release)             // 推进 Consumer-owned tail
   return item                                         // 返回有效 item（栈上副本，后续 Producer 覆写不影响）
 ```
+
+> **R16 核心修复点**：v1.4 的 Consumer tryPop 从 `ct = tail` 直接开始 seqlock double-read，当 Consumer 持有 stale ct（如 ct=100，但 head=1256, Capacity=256, effectiveTail=1000）时，Consumer 会从 slot 100 开始逐个 seq 校验失败、推进 tail、continue 循环 900 次才到达有效 slot——**正确但低效**，且 v1.4 的 INV2 `head - tail ≤ Capacity` 在此状态下不成立（1256 - 100 = 1156 > 256）。v1.5 的 Consumer tryPop 在进入 seqlock double-read 前**先计算 effectiveTail = max(ct, h - Capacity) 并对齐**：若 ct < effectiveTail，直接推进 tail 到 effectiveTail（一次性跳过所有已被 Drop-Oldest 丢弃的 slot），然后从 effectiveTail 开始 seqlock double-read。**这既是效率优化（避免逐个循环），更是 invariant 正确性补充**：对齐后 `ct ≥ effectiveTail`，`head - ct ≤ head - effectiveTail ≤ Capacity`（INV2 成立）。**seqlock double-read validation 逻辑不变**（R15 成果保留），effectiveTail 对齐只在进入 double-read 前增加一步"跳过已 drop 的 slot"。
 
 > **R15 核心修复点**：v1.3 方案 A+ 的 Consumer 读取 = `s = seq.load(acquire); if (s == ct+1) item = slot.item;`（**单次 seq 校验 + 非原子 item 读**，data race under pause）。方案 A++ 的 Consumer 读取 = `s1 = seq.load(acquire); if (s1 == ct+1) { item = payload.load(relaxed); s2 = seq.load(acquire); if (s1 == s2) return item; }`（**seqlock double-read + word-atomic payload load**，无 data race）。**关键区别**：(1) payload load 是逐 word atomic（无 data race）；(2) double-seq 校验（s1 == s2）检测 payload load 期间是否被覆写，若覆写则丢弃。这是 Linux kernel seqlock 的标准技术（`read_seqcount_begin` / `read_seqcount_retry`），在 C++20 strict 下合法（所有访问均 `std::atomic`）。
 
@@ -2037,10 +2062,10 @@ end
 **Design-R15 最终 Contract**：
 > SPSC_DATA `tryPushDropOldest()` 采用 **方案 A++ — Epoch-tagged Slot with Word-Atomic Payload + Seqlock Double-Read Validation** 实现：
 > 1. **状态变量**：`head`（Producer-only 写）、`tail`（Consumer-only 写）、`buffer[i] : Slot<T> { AtomicPayload<T> payload; std::atomic<uint64_t> seq; }`（`AtomicPayload<T>` = `std::atomic<uint64_t> words[N]`，N = ⌈sizeof(T)/8⌉，每 word 8 字节 lock-free）。**废弃非原子 `T item`**（v1.3 方案 A+ 的 data race 根源）。
-> 2. **不变量**：`tail ≤ head`（INV1）；`head - tail ≤ Capacity`（INV2）；`head`/`tail` 单调递增（INV3，ABA 不发生）；`buffer[i].seq == k×Capacity + i + 1`（INV4，slot epoch invariant）；`buffer[i].payload.words[k]` 均为 `std::atomic<uint64_t>` 且 `is_lock_free()` = true（INV5，word-atomic invariant，A++ 新增）。
+> 2. **不变量（v1.5 Design-R16 修正）**：`tail ≤ head`（INV1）；~~`head - tail ≤ Capacity`（INV2-OLD，v1.4 已废弃，Drop-Oldest 模式下不成立）~~；`head - effectiveTail ≤ Capacity`（INV2，v1.5 重新定义，`effectiveTail = max(tail, head - Capacity)`，逻辑占用 bounded 恒成立）；`head`/`tail` 单调递增（INV3，ABA 不发生）；`buffer[i].seq == k×Capacity + i + 1`（INV4，slot epoch invariant）；`buffer[i].payload.words[k]` 均为 `std::atomic<uint64_t>` 且 `is_lock_free()` = true（INV5，word-atomic invariant，A++ 新增）；`effectiveTail = max(tail, head - Capacity)`（INV6，logical oldest boundary 派生量，v1.5 Design-R16 新增）；`droppedCount = effectiveTail - tail = max(0, head - tail - Capacity)`（INV7，v1.5 Design-R16 新增）；`head = droppedCount + tail + (head - effectiveTail)`（INV8，统计恒等式：Producer 写入数 = drop 数 + consumer 成功数 + queue 中逻辑剩余数，v1.5 Design-R16 新增）。
 > 3. **满判定**：`tryPush` 用 `h - tail == Capacity`；`tryPushDropOldest` 不判满，总是覆写。
 > 4. **Producer 写**：`buffer[i].payload.store(item, relaxed)`（逐 word atomic）→ `buffer[i].seq.store(h+1, release)` → `head.store(h+1, release)`。**不检查 Consumer 状态，非阻塞**。
-> 5. **Consumer seqlock double-read**：`s1 = seq.load(acquire)` → epoch 校验 `s1 == ct+1` → `item = payload.load(relaxed)`（逐 word atomic）→ `s2 = seq.load(acquire)` → 覆写校验 `s1 == s2`，两校验都通过才接受 item，否则丢弃跳过。
+> 5. **Consumer tryPop（v1.5 Design-R16 effectiveTail 对齐 + R15 seqlock double-read）**：`ct = tail.load(relaxed)` → `h = head.load(acquire)` → `effectiveTail = max(ct, h - Capacity)`（INV6 派生量计算）→ 若 `ct < effectiveTail` 推进 `tail` 到 `effectiveTail`（R16 对齐，跳过已被 Drop-Oldest 丢弃的 slot）→ `s1 = seq.load(acquire)` → epoch 校验 `s1 == ct+1` → `item = payload.load(relaxed)`（逐 word atomic）→ `s2 = seq.load(acquire)` → 覆写校验 `s1 == s2`，两校验都通过才接受 item，否则丢弃跳过。
 > 6. **linearization point**：`tryPop` 的第二次 `seq.load(acquire)`（`s2`）；`tryPush`/`tryPushDropOldest` 的 `seq.store(release)`。
 > 7. **ownership 保持**：Producer 仅写 `head` + `buffer[i].payload`（逐 word atomic）+ `buffer[i].seq`；Consumer 仅写 `tail`；**跨线程访问均为 atomic，无非原子跨线程访问**。✓
 > 8. **memory-order**：`head` / `buffer[i].seq` / `tail` 的 store release / load acquire；`buffer[i].payload.words[k]` 的 relaxed（在 seq release/acquire happens-before 伞下安全）。
@@ -2049,22 +2074,203 @@ end
 > 11. **★ arbitrary consumer pause safe（R15 核心修复）**：Consumer 在任意点暂停，恢复后 double-seq 覆写校验检测覆写（`s1 != s2` → 丢弃），word-atomic payload load 无 data race。Producer 不需要知道 Consumer 状态（非阻塞）。
 > 12. **Drop Oldest 语义**：被覆写 slot 的旧 epoch 内容对 Consumer 不可读（epoch 校验或覆写校验失败），等效丢弃最旧、保留最新。**真正实现 Drop Oldest**。
 > 13. **Drop-Oldest Linearizability 闭环**：一旦 Producer `seq.store(release)` 全局可见，此后 Consumer `tryPop` 绝不返回旧 epoch item（epoch 校验或覆写校验拦截）。
-> 14. **容量语义**：`SPSC_DATA_CAPACITY = 256`，effective 队列长度 ≤ 256（编译期 `static_assert`，2 的幂次）。
+> 14. **容量语义（v1.5 Design-R16 修正）**：`SPSC_DATA_CAPACITY = 256`，**逻辑占用 `head - effectiveTail ≤ 256`**（INV2，恒成立）；物理占用 `head - tail` 在 Drop-Oldest 模式下**可超过 256**（tail 不跟随 head 推进，Producer 连续写入后 `head - tail` 可远超 Capacity，但 `head - effectiveTail ≤ Capacity` 恒成立）；编译期 `static_assert`，2 的幂次。
 > 15. **与 R11 兼容**：使用 `std::atomic<uint64_t>[N]`（每元素 8 字节 lock-free），不使用 `std::atomic<T>`（大 atomic），不依赖平台大 atomic lock-free 保证。
 
 **与 v1.3 方案 A+ 的关系**：v1.3 方案 A+（R14）正确解决了 v1.2 的 linearizability 未闭环问题（废弃 `publishedTail`，slot.seq 原子读作为 linearization point），但留下 R15（Slot Read/Overwrite Lifetime Race）：非原子 payload + 单次 seq 校验在 arbitrary consumer pause 下 data race。Design-R15 方案 A++ 继承 A+ 的 epoch seq 语义 + SPSC ownership + 满判定 + linearization point 框架，**根本性改变 payload 存储方式**（非原子 `T item` → word-atomic `AtomicPayload<T>`）和 **Consumer 读取协议**（单次 seq 校验 + 非原子 item 读 → seqlock double-read + word-atomic payload load）。这不是"在 seq 上打补丁"，而是重新定义 payload lifetime：payload 有效当且仅当 seqlock double-read 校验通过（`s1 == s2 == ct+1`），payload 读期间（`[s1, s2]` 区间）无 Producer 覆写。
 
-**与 v1.1/v1.2 的关系链**：Design-R7（v1.1）识别 "Producer 不得移动 Consumer-owned tail" → Design-R11（v1.2）用 `publishedTail` 部分解决但留下 R14 linearizability → Design-R14（v1.3）用 seqlock slot 闭环 linearizability 但留下 R15 lifetime race → **Design-R15（v1.4）用 word-atomic payload + seqlock double-read 彻底解决 data race**。
+**与 v1.1/v1.2 的关系链**：Design-R7（v1.1）识别 "Producer 不得移动 Consumer-owned tail" → Design-R11（v1.2）用 `publishedTail` 部分解决但留下 R14 linearizability → Design-R14（v1.3）用 seqlock slot 闭环 linearizability 但留下 R15 lifetime race → **Design-R15（v1.4）用 word-atomic payload + seqlock double-read 彻底解决 data race** → **Design-R16（v1.5）重新定义 Queue Invariant（effectiveTail 派生量）解决 Capacity Invariant Contradiction**。
+
+---
+
+**Design-R16 修复：Drop-Oldest Queue Logical Boundary / Capacity Invariant Contradiction（v1.5 新增）**：
+
+**核心数学问题回答（大G项目经理要求）**：
+
+> **问题**：在"Producer 永不阻塞、Consumer 可任意暂停、Producer 可持续覆写、SPSC、bounded physical storage、Drop-Oldest"约束下，什么变量真正定义 logical oldest boundary？
+>
+> **回答**：**`effectiveTail = max(tail, head - Capacity)`**。这是一个**派生量**（非直接存储的原子变量），由 Producer-owned `head` 和 Consumer-owned `tail` 的数学关系定义。
+>
+> **为什么 effectiveTail 是正确的 logical oldest boundary**：
+> 1. **不是 Producer 单独宣布的**：避免 v1.2 `publishedTail` 的 R14 stale-boundary race（Producer 宣布 discard 后 Consumer 持有 stale `publishedTail` 仍读被 drop 的 slot）。effectiveTail 由 `head` 和 `tail` 共同决定，Producer 推进 `head` 时 effectiveTail 自动跟进（`head - Capacity` 增大）。
+> 2. **不是 Consumer 单独决定的**：避免 Consumer 暂停时 logical oldest boundary 不前进（Consumer 暂停时 `tail` 不变，但 `head` 继续推进，`head - Capacity` 增大，effectiveTail = `head - Capacity` 跟进）。
+> 3. **无 stale-boundary race**：effectiveTail 是**每次 tryPop 重新计算的派生量**，不是存储的变量。Consumer 每次 tryPop 读 `head`（acquire）得到**当前最新** head，重新计算 effectiveTail。不存在"Consumer 持有 stale effectiveTail"的竞态窗口——effectiveTail 是局部变量，用完即弃。
+> 4. **数学上恒满足 `head - effectiveTail ≤ Capacity`**：`effectiveTail = max(tail, head - Capacity) ≥ head - Capacity`，故 `head - effectiveTail ≤ Capacity`。这是**恒等式**，不依赖任何时序假设。
+> 5. **与 seqlock double-read 正交**：effectiveTail 告诉 Consumer "应该从哪个 ct 开始读"（logical oldest boundary），seqlock double-read 告诉 Consumer "这个 slot 是否仍然有效"（slot-level validity）。两者职责分离，不冲突。
+
+**effectiveTail 无竞态证明**：
+
+- effectiveTail = `max(tail.load(relaxed), head.load(acquire) - Capacity)`，由两个原子读的结果计算。
+- `tail.load(relaxed)` 返回 Consumer-owned `tail` 的某个确定值（原子读，无撕裂）。
+- `head.load(acquire)` 返回 Producer-owned `head` 的某个确定值（原子读，无撕裂，且 acquire 保证看到 Producer 该 head 值之前的所有写入）。
+- 两个原子读各自返回确定值，`max` 运算是纯函数，effectiveTail 是确定值。**不存在"effectiveTail 被并发修改"的竞态**——它是局部计算结果，非共享变量。✓
+- **与 v1.2 publishedTail 的关键区别**：publishedTail 是**存储的共享原子变量**，Producer 写、Consumer 读，存在"Consumer 持有 stale publishedTail 局部副本"的竞态窗口。effectiveTail 是**派生的局部变量**，每次 tryPop 重新计算，不存在 stale 副本问题。✓
+
+**Consumer-pause interleaving 补充分析（R16，大G项目经理要求 — 五种状态完备）**：
+
+> v1.4 的 J1～J8 interleaving 分析的是 **slot-level** Consumer-pause（Consumer 在 seqlock double-read 的某个点暂停）。R16 补充 **queue-level** Consumer-pause 分析：Consumer 暂停期间 Producer 持续写入，`head` 推进远超 `tail`，effectiveTail 如何保持逻辑一致。
+
+设 Consumer 在某次 tryPop 中暂停 Δt（arbitrary pause），期间 Producer 执行 `m` 次 `tryPushDropOldest`（`head` 从 `h` 推进到 `h + m`）。暂停前后五种状态：
+
+| 状态 | 描述 | 暂停前 | 暂停期间 | 恢复后 | 正确性 |
+|------|------|--------|---------|--------|--------|
+| **Q1 Full（队列满，无 Consumer 消费）** | `head - tail == Capacity`，Consumer 暂停 | `effectiveTail = max(tail, h - Capacity) = tail`（因 `h - tail == Capacity` → `h - Capacity == tail`） | Producer 写入 m 次：`head = h + m`，`tail` 不变，`effectiveTail = max(tail, h + m - Capacity) = h + m - Capacity > tail`（Drop-Oldest 生效，最旧 m 个 slot 被 drop） | Consumer 恢复，重新读 `head = h + m`（acquire），计算 `effectiveTail = h + m - Capacity`，`ct = tail < effectiveTail` → 推进 `tail` 到 `effectiveTail`（R16 对齐，跳过 m 个已 drop slot）→ 从 `effectiveTail` 开始 seqlock double-read | ✓ **R16 对齐一次性跳过 m 个 drop slot**，避免逐个 seq 校验失败循环；INV2 `head - effectiveTail = Capacity` 恒成立 |
+| **Q2 Non-Full（队列未满，Consumer 暂停）** | `head - tail < Capacity`，Consumer 暂停 | `effectiveTail = tail`（因 `h - Capacity < tail`） | Producer 写入 m 次，若 `h + m - tail ≤ Capacity`（仍未满）：`effectiveTail = tail`（无 drop）；若 `h + m - tail > Capacity`（超容量）：`effectiveTail = h + m - Capacity > tail`（Drop-Oldest 生效） | Consumer 恢复，重新计算 effectiveTail；若 `ct < effectiveTail` 则对齐（R16），否则正常 seqlock double-read | ✓ 未满时 effectiveTail = tail，无 drop；超容量时 R16 对齐 |
+| **Q3 Consumer Paused（Consumer 长期暂停，Producer 持续写入）** | Consumer 暂停 Δt → ∞，Producer 持续写入 | 任意状态 | `head` 持续推进，`tail` 不变，`head - tail → ∞`，但 `head - effectiveTail = head - (head - Capacity) = Capacity`（INV2 恒成立） | Consumer 恢复，读 `head`（acquire），计算 `effectiveTail = head - Capacity`，对齐跳过所有已 drop slot，从最旧有效 slot 开始读 | ✓ **INV2 在 Consumer 任意暂停期间恒成立**（effectiveTail 跟随 head 推进）；恢复后 R16 对齐 |
+| **Q4 Consumer Validating（Consumer 在 seqlock double-read 中暂停）** | Consumer 已通过 effectiveTail 对齐，正在 seqlock double-read（s1 已读 / payload 读中 / s2 未读），暂停 | `ct ≥ effectiveTail`（已对齐） | Producer 覆写当前 slot（head 推进），`effectiveTail` 可能增大，但 Consumer 已持有 `ct`（对齐后的值），不重新计算 effectiveTail | Consumer 恢复，继续 seqlock double-read：若 payload 读期间被覆写，`s1 != s2` → 丢弃（J7/J8，R15 修复）；Consumer 下次 tryPop 重新计算 effectiveTail | ✓ **slot-level 暂停由 R15 J7/J8 覆盖**（word-atomic + double-seq 校验）；queue-level effectiveTail 在下次 tryPop 重新计算 |
+| **Q5 Consumer After Payload Copy（Consumer 已 copy item 到栈，尚未推进 tail）** | Consumer 已 `s1 == s2 == ct+1`，`item = payload.load()` 完成，尚未 `tail.store(ct+1)`，暂停 | item 在 Consumer 栈上 | Producer 覆写该 slot（下一轮），`head` 推进，`effectiveTail` 可能增大 | Consumer 恢复，`tail.store(ct+1, release)`（推进 tail），return item（栈上副本，不受 Producer 覆写影响）；下次 tryPop 重新计算 effectiveTail | ✓ Consumer 持有栈上副本，Producer 覆写不影响；tail 推进后下次 effectiveTail 可能 = `tail`（若未超容量）或 `head - Capacity`（若超容量） |
+
+> **五种状态完备性**：Consumer 在任意时刻处于以下状态之一：(a) 未开始 tryPop（Q1/Q2/Q3 的起点）、(b) effectiveTail 对齐中（Q1/Q2/Q3 恢复后）、(c) seqlock double-read 中（Q4）、(d) 已 copy item 待推进 tail（Q5）。Producer 在 Consumer 任意状态下均可推进 head（非阻塞）。**五种状态穷举全部 Consumer-pause × Producer-write interleaving**，INV2 `head - effectiveTail ≤ Capacity` 在所有状态下恒成立。✓
+
+**统计恒等式证明（droppedOldestCount，大G项目经理要求）**：
+
+> **定理（统计恒等式）**：在任意时刻，`Producer 写入数 = droppedCount + Consumer 成功消费数 + queue 中逻辑剩余数`。
+>
+> **定义**：
+> - Producer 写入数 = `head`（从 0 开始，每次 `tryPushDropOldest` head++）
+> - Consumer 成功消费数 = `tail`（从 0 开始，每次成功 tryPop tail++）
+> - queue 中逻辑剩余数 = `head - effectiveTail`（有效 slot 数，INV2 保证 ≤ Capacity）
+> - droppedCount = `effectiveTail - tail`（已被 Drop-Oldest 丢弃但 Consumer 尚未跳过的 slot 数，INV7）
+>
+> **证明**：
+> ```
+> droppedCount + Consumer 成功消费数 + queue 中逻辑剩余数
+> = (effectiveTail - tail) + tail + (head - effectiveTail)    // 代入定义
+> = effectiveTail + head - effectiveTail                       // tail 消去
+> = head                                                       // effectiveTail 消去
+> = Producer 写入数                                             // ✓
+> ```
+>
+> **droppedOldestCount 统计修正（v1.5）**：v1.4 的 `tryPushDropOldest` 中 `droppedOldestCount.fetch_add(1)` 在 `h - tail.load(acquire) >= Capacity` 时触发。v1.5 保留此 best-effort 统计，但明确其语义为** INV7 的 droppedCount 增量**：每次 `tryPushDropOldest` 在 `head - tail ≥ Capacity`（队列物理满或超容量）时 `droppedOldestCount++`，记录"Producer 此次写入丢弃了一个最旧 slot"。**统计恒等式** `head = droppedOldestCount + tail + (head - effectiveTail)` 在运行时成立（best-effort，因 `tail` 的 acquire 读可能看到稍旧的 Consumer 进度，但统计精度不影响正确性）。✓
+
+**visibility / atomicity / validity / linearization / lifetime 五概念分离证明（v1.5 新增，大G项目经理要求）**：
+
+> v1.4 将五个概念混在"在 seq release/acquire happens-before 伞下安全"一句带过。v1.5 分离证明：
+
+**1. visibility（可见性）**：
+- **目标**：Producer 写 payload + seq + head 后，Consumer 能看到该写入。
+- **proof**：Producer `buffer[i].payload.store(relaxed)` → `buffer[i].seq.store(h+1, release)` → `head.store(h+1, release)`。Consumer `head.load(acquire)` 看到 `h+1`（release/acquire 配对，happens-before 成立）→ Consumer 看到 Producer 该 head 值之前的所有写入（包括 `buffer[i].seq = h+1` 和 `buffer[i].payload`）。**可见性由 head 的 release/acquire 保证**。✓
+- **effectiveTail 可见性**：effectiveTail = `max(tail, head - Capacity)`，`head.load(acquire)` 保证 Consumer 看到最新 head，`tail.load(relaxed)` 返回 Consumer-owned tail（单线程读自己的写，无需同步）。effectiveTail 的可见性等价于 head 的可见性。✓
+
+**2. atomicity（原子性）**：
+- **目标**：每个 word 的读写无撕裂。
+- **proof**：`buffer[i].payload.words[k]` 类型为 `std::atomic<uint64_t>`，`store`/`load` 为原子操作（C++20 [atomics] §32.4）。`buffer[i].seq` 类型为 `std::atomic<uint64_t>`，`store`/`load` 为原子操作。`head`/`tail` 类型为 `std::atomic<uint64_t>`，`store`/`load` 为原子操作。**所有跨线程共享变量均为 `std::atomic`，无撕裂**。✓
+- **平台契约**：`std::atomic<uint64_t>::is_lock_free() == true` 在 x86_64/arm64 上成立（8 字节原子操作原生支持，见 AtomicPayload 平台契约子节）。✓
+
+**3. validity（有效性）**：
+- **目标**：定义"Consumer 接受的 item 是有效的"并证明。
+- **定义**：Consumer 接受 item 当且仅当 `s1 == s2 == ct + 1`（epoch 校验 `s1 == ct+1` + 覆写校验 `s1 == s2` 都通过）。
+- **proof**：
+  - `s1 == ct + 1`：slot `i` 在 Consumer 读 `s1` 瞬间属于第 `ct` 轮写入（INV4 slot epoch invariant）。
+  - `s1 == s2`：`[s1, s2]` 区间内 `seq` 未变，即 Consumer 读 payload 期间无 Producer 覆写。
+  - 两条件合取：slot `i` 在 `[s1, s2]` 区间内始终属于第 `ct` 轮，payload 是完整的第 `ct` 轮内容。**item 有效**。✓
+- **与 visibility/atomicity 的关系**：validity 是**逻辑层**概念（slot 属于哪一轮、是否被覆写），visibility 是**内存层**概念（Producer 写入对 Consumer 可见），atomicity 是**物理层**概念（无撕裂）。validity 依赖 visibility（Consumer 看到 seq 才能校验）+ atomicity（seq 无撕裂才能校验），但 validity ≠ visibility + atomicity——validity 还需要 epoch 语义 + 覆写校验。✓
+
+**4. linearization（线性化）**：
+- **目标**：定义并发历史的线性化点，使并发执行等价于某个顺序执行。
+- **定义**：
+  - `tryPop` 的 linearization point = Consumer 执行**第二次** `s2 = buffer[i].seq.load(acquire)` 的瞬间（`L2`）。
+  - `tryPush`/`tryPushDropOldest` 的 linearization point = Producer 执行 `buffer[i].seq.store(h+1, release)` 的瞬间（`Lp`）。
+  - effectiveTail 对齐的 linearization point = Consumer 执行 `tail.store(effectiveTail, release)` 的瞬间（`L_align`，若触发）。
+- **proof**：
+  - `L2` 时 `seq` 的值 `s2` 确定（原子读）。若 `s1 == s2 == ct+1`，线性化为"Consumer 在 Producer 第 ct 轮写完之后、第 ct+Capacity 轮覆写开始之前读取 slot"。若 `s1 != s2`，线性化为"Consumer 在覆写之后读取"，丢弃。✓
+  - `L_align` 线性化为"Consumer 跳过 [ct, effectiveTail) 区间的已 drop slot"，在 Producer 已 drop 这些 slot 之后（因 `effectiveTail = head - Capacity`，Producer 推进 head 到 `effectiveTail + Capacity` 之后这些 slot 才被 drop）。✓
+- **与 validity 的关系**：linearization 是**并发历史→顺序历史**的映射，validity 是**单个 item 是否有效**的判定。linearization point 闭合后，validity 在线性化历史中证明。✓
+
+**5. lifetime（生命周期）**：
+- **目标**：定义 slot 的生命周期，证明 Consumer 在 lifetime 内读 slot 安全。
+- **定义**：slot `i` 的第 `k` 轮生命周期 = [Producer 第 `k×Capacity + i` 次 `tryPush` 开始写 payload, Producer 第 `(k+1)×Capacity + i` 次 `tryPush` 开始写 payload)。
+- **proof**：
+  - 第 `k` 轮内 slot `i` 的 epoch = `k×Capacity + i + 1`（INV4）。
+  - Consumer 有效读取 slot `i` 第 `k` 轮内容的条件：`s1 == s2 == ct + 1 == k×Capacity + i + 1`（validity 定义）。
+  - 若 validity 通过：payload 读在 `[s1, s2]` 内，区间内 seq 未变 → 区间内无 Producer 写 slot → payload 读在 slot `i` 第 `k` 轮 lifetime 内 → 无 data race（word-atomic）+ 内容完整。✓
+  - 若 validity 失败（`s1 != ct+1` 或 `s1 != s2`）：slot 已进入下一轮 lifetime，Consumer 跳过/丢弃。✓
+- **与 linearization 的关系**：lifetime 是**物理时间区间**（slot 从被写到被覆写），linearization 是**逻辑顺序点**（并发历史映射到顺序历史）。linearization point 在 lifetime 内 → Consumer 读到有效内容；linearization point 在 lifetime 外 → Consumer 丢弃。✓
+
+> **五概念分离总结**：
+> | 概念 | 层次 | 目标 | 证明机制 |
+> |------|------|------|---------|
+> | visibility | 内存层 | Producer 写入对 Consumer 可见 | release/acquire happens-before |
+> | atomicity | 物理层 | 每 word 读写无撕裂 | `std::atomic<uint64_t>` + `is_lock_free()` |
+> | validity | 逻辑层 | Consumer 接受的 item 有效 | `s1 == s2 == ct+1`（epoch + 覆写校验） |
+> | linearization | 并发历史层 | 并发→顺序映射 | `L2`（tryPop）/ `Lp`（tryPush）/ `L_align`（effectiveTail 对齐） |
+> | lifetime | 物理时间层 | slot 生命周期内读安全 | slot 第 k 轮 lifetime 区间 + validity 保证读在 lifetime 内 |
+> **五概念正交分离，不混用"在 seq release/acquire happens-before 伞下安全"一句带过。** ✓
+
+---
+
+**AtomicPayload 平台契约（v1.5 新增，P1 修复）**：
+
+> v1.4 要求 `std::atomic<uint64_t>::is_lock_free() == true` 作为整个 Input Plane 非阻塞设计基础，但仅 `static_assert` 然后宣称所有目标环境天然满足，未明确平台契约。v1.5 明确平台契约。
+
+**CF2 Supported Architecture**：
+- **x86_64**（Intel/AMD 64-bit）：`std::atomic<uint64_t>::is_lock_free() == true`（8 字节原子操作原生支持，`CMPXCHG8B`/`MOV` aligned 8-byte）。✓
+- **arm64**（Apple Silicon M1/M2/M3/M4, ARMv8 64-bit）：`std::atomic<uint64_t>::is_lock_free() == true`（8 字节原子操作原生支持，`LDXR`/`STXR`/`LDP`/`STP` aligned 8-byte）。✓
+- **CF2 supported architecture list = {x86_64, arm64}**（macOS Input Capture 目标平台，覆盖当前全部 macOS 硬件）。
+
+**AtomicPayload Word Contract**：
+- **Word type**：`uint64_t`（8 字节）。
+- **Required property**：`std::atomic<uint64_t>::is_lock_free() == true`（编译期 `static_assert` + 运行时 platform check）。
+- **N（word 数）**：`N = ⌈sizeof(T)/8⌉`，对 `RawInputEvent`（sizeof ≈ 48 bytes）N = 6。
+
+**Platform Check 机制**：
+1. **编译期 `static_assert`**：
+   ```
+   static_assert(AtomicPayload<RawInputEvent>::words[0].is_lock_free(),
+                 "AtomicPayload requires std::atomic<uint64_t> lock-free on this platform");
+   ```
+2. **CMake architecture guard**：
+   ```
+   target_compile_definitions(cf2_mac_capture PRIVATE
+       $<$<OR:$<CXX_COMPILER_ID:GNU>,$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>>:
+           CF2_ARCH_CHECK>
+   )
+   # 源码中：
+   #if defined(CF2_ARCH_CHECK)
+       #if !defined(__x86_64__) && !defined(__aarch64__)
+           #error "CF2 macOS Input Capture requires x86_64 or arm64 architecture"
+       #endif
+   #endif
+   ```
+3. **运行时 check（防御性，正常情况下编译期已保证）**：
+   ```
+   if (!std::atomic<uint64_t>{}.is_lock_free()) {
+       // 不应到达此处（编译期 static_assert 应已拦截）
+       return CfxError{CFX-E-CAP-ARCH-UNSUPPORTED, "AtomicPayload word not lock-free"};
+   }
+   ```
+
+**Unsupported Platform 处理**：
+- **if platform does not satisfy `is_lock_free() == true`**：CF2 implementation is **unsupported**。
+- **处理方式**：**build error**（编译期 `static_assert` failure + CMake architecture guard `#error`）。
+- **不 fallback 到 mutex-based atomic**：因 mutex 违反 Input Plane 非阻塞设计原则（callback ≤1ms，不能阻塞在 mutex 上）。
+- **不静默降级**：因 `is_lock_free() == false` 意味着 `std::atomic<uint64_t>` 可能使用内部 mutex（platform 不原生支持 8 字节原子操作），这会导致 callback 在某些情况下阻塞，违反 CF0 §4.6.4 热路径禁锁清单。
+- **明确错误码**：`CFX-E-CAP-ARCH-UNSUPPORTED`（新增错误码，"CF2 macOS Input Capture requires x86_64 or arm64 with std::atomic<uint64_t> lock-free"）。
+
+**与 R11 兼容性（再次确认）**：R11 冻结"不依赖 `std::atomic<256-bit>` 的平台 lock-free 保证"。AtomicPayload 平台契约要求 `std::atomic<uint64_t>`（8 字节）lock-free，**不要求** `std::atomic<RawInputEvent>`（48 字节）或 `std::atomic<256-bit>` lock-free。8 字节原子操作在 x86_64/arm64 上原生支持，不依赖大 atomic 平台特性。✓
+
+**可验证 invariant**：
+- 编译期 `static_assert(AtomicPayload<RawInputEvent>::words[0].is_lock_free())`（HARD CONTRACT，编译期断言）。
+- CMake architecture guard：`#if !defined(__x86_64__) && !defined(__aarch64__) #error`（HARD CONTRACT，编译期拦截）。
+- CI build matrix：x86_64 + arm64 双架构 build 通过（HARD CONTRACT，CI build）。
+- 非 x86_64/arm64 架构 build 失败 + 错误信息含 `CFX-E-CAP-ARCH-UNSUPPORTED`（HARD CONTRACT，CI negative test）。
+
+---
 
 **可验证 invariant（A++）**：
 - SPSC_DATA RingBuffer 实现审查：Producer 仅写 `head` + `buffer[i].payload`（逐 word atomic）+ `buffer[i].seq`，不写 `tail`；Consumer 仅写 `tail`，不写 `head` / `buffer[i].seq` / `buffer[i].payload`（HARD CONTRACT，源码审查）。
 - **word-atomic 审查**：`buffer[i].payload` 类型为 `AtomicPayload<T>`，内部 `std::atomic<uint64_t> words[N]`，编译期 `static_assert(words[0].is_lock_free())`（HARD CONTRACT，源码审查 + 编译期断言）。
 - **无非原子跨线程访问审查**：源码中无非原子变量被跨线程读写（HARD CONTRACT，源码审查 + TSan）。
-- 不变量审查：`tail ≤ head` + `head - tail ≤ Capacity` + slot epoch invariant + word-atomic invariant（HARD CONTRACT，源码审查 + 运行时断言）。
+- 不变量审查：`tail ≤ head`（INV1）+ `head - effectiveTail ≤ Capacity`（INV2，v1.5 Design-R16）+ `effectiveTail = max(tail, head - Capacity)`（INV6）+ `droppedCount = effectiveTail - tail`（INV7）+ `head = droppedCount + tail + (head - effectiveTail)`（INV8 统计恒等式）+ slot epoch invariant（INV4）+ word-atomic invariant（INV5）（HARD CONTRACT，源码审查 + 运行时断言）。
 - Drop Oldest 测试：队列满时 enqueue 新事件，验证最旧事件被覆写（Consumer seqlock double-read 校验失败跳过）+ 新事件保留 + `droppedOldestCount++`（HARD CONTRACT，CI 测试）。
 - **Slot Read/Overwrite Lifetime Race 测试（TEST-R15-LIFETIME）**：60s 并发压力 + TSan 无 data race + Consumer 暂停注入触发 J7/J8 + 覆写校验生效 + Consumer 返回 item 序号严格递增 + droppedOldestCount 一致性（HARD CONTRACT，CI nightly 测试）。
 - memory-order 审查：`head` / `buffer[i].seq` / `tail` 的 store release / load acquire；`buffer[i].payload.words[k]` 的 relaxed 在 seq release/acquire 伞下（HARD CONTRACT，源码审查）。
 - ABA 测试：长时间运行（≥ 1 小时）`head` / `tail` / 各 slot `seq` 单调递增不回绕（MEASUREMENT REQUIREMENT，CI 监控）。
+- **R16 effectiveTail 对齐测试（TEST-R16-EFFECTIVE-TAIL）**：Consumer 长期暂停（sleep 100ms）期间 Producer 高频写入 1000+ 事件（head 远超 tail + Capacity），Consumer 恢复后验证：(1) `effectiveTail = max(tail, head - Capacity)` 正确计算；(2) Consumer 一次性对齐到 effectiveTail（非逐个 seq 校验失败循环）；(3) INV2 `head - effectiveTail ≤ Capacity` 恒成立；(4) INV8 统计恒等式 `head == droppedOldestCount + tail + (head - effectiveTail)` 成立（HARD CONTRACT，CI nightly 测试）。
+- **R16 INV2 恒成立运行时断言**：每次 tryPop 后断言 `head - effectiveTail <= Capacity`（运行时断言，DEBUG build）。
+- **R16 五种 Consumer-pause 状态测试**：Q1 Full / Q2 Non-Full / Q3 Consumer Paused / Q4 Consumer Validating / Q5 Consumer After Payload Copy 五种状态各设计专门测试用例，验证 INV2 恒成立 + effectiveTail 对齐正确（HARD CONTRACT，CI nightly 测试）。
+- **AtomicPayload 平台契约测试**：编译期 `static_assert(words[0].is_lock_free())` + CMake architecture guard `#if !defined(__x86_64__) && !defined(__aarch64__) #error` + CI x86_64/arm64 双架构 build + 非 x86_64/arm64 build 失败测试（HARD CONTRACT，CI build matrix）。
+- **五概念分离证明审查**：visibility（release/acquire happens-before）/ atomicity（`std::atomic<uint64_t>` + `is_lock_free()`）/ validity（`s1 == s2 == ct+1`）/ linearization（`L2`/`Lp`/`L_align`）/ lifetime（slot 第 k 轮区间）五个概念分别有独立证明段落，不混用"在 seq release/acquire happens-before 伞下安全"一句带过（HARD CONTRACT，源码审查 + 文档审查）。
 
 ### 2.4.9 SnapshotRequest SPSC ownership 明确（Design-R8 修复）
 
@@ -2257,13 +2463,16 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 | Design-R4（API 数字 overclaim） | 🔴 BLOCKER | §2.4.0 三类分层框架 + §2.4.5/§2.4.6/§2.4.7 重新分类所有时序数字 | 所有时序数字标注类别（HARD CONTRACT / DESIGN TARGET / MEASUREMENT REQUIREMENT）；HARD CONTRACT 有充分依据引用 |
 | Design-R5（callback extraction 与 Normalizer 未分开） | 🟠 P1 | §2.1.1 上下文图 + §2.1.2 组件图 + §2.1.3.1 时序图 + §2.2.1 接口表 + §2.6.1 S01-REQ-002 | 源码审查：`MacEventFieldExtractor` 仅在 callback 内，`CGEventNormalizer` 仅在 Capture thread 内，不跨越 callback 边界 |
 | Design-R6（SPSC_STATE reliable 语义需收紧） | 🟠 P1 | §2.4.1 + §2.1.3.2 + §2.1.3.5 + §2.5.2 措施 4 | 文档语义为 "normal-bound reliable, saturation → safety degradation"，不声称 absolute reliable；饱和时安全降级 Contract 明确 |
-| Design-R7（Drop Oldest 缺并发证明，v1.1 新增 / v1.2 Design-R11 修正 / v1.3 Design-R14 修正 linearizability / v1.4 Design-R15 修正 Slot Lifetime Race） | 🔴 BLOCKER | §2.4.8 方案 A++ Word-Atomic Payload + Seqlock Double-Read（v1.4 最终方案，v1.3 方案 A+ 已被 R15 取代） | 源码审查：Producer 仅写 `head` + `buffer[i].payload`（逐 word atomic）+ `buffer[i].seq`，不写 `tail`；不变量 `tail ≤ head` + `head - tail ≤ Capacity` + slot epoch invariant + word-atomic invariant；memory-order release/acquire 正确；linearization point = `slot.seq` 第二次原子读（s2）；Drop Oldest 真正实现（Consumer seqlock double-read 校验跳过被覆写 slot）；C++20 data-race free（所有 word+seq 均原子）；详见 §2.4.8 方案 A++ |
+| Design-R7（Drop Oldest 缺并发证明，v1.1 新增 / v1.2 Design-R11 修正 / v1.3 Design-R14 修正 linearizability / v1.4 Design-R15 修正 Slot Lifetime Race / v1.5 Design-R16 修正 Capacity Invariant） | 🔴 BLOCKER | §2.4.8 方案 A++ Word-Atomic Payload + Seqlock Double-Read（v1.4 最终方案，v1.3 方案 A+ 已被 R15 取代）+ v1.5 Design-R16 effectiveTail 派生量 | 源码审查：Producer 仅写 `head` + `buffer[i].payload`（逐 word atomic）+ `buffer[i].seq`，不写 `tail`；不变量 `tail ≤ head` + `head - effectiveTail ≤ Capacity`（INV2，v1.5 Design-R16）+ slot epoch invariant + word-atomic invariant；memory-order release/acquire 正确；linearization point = `slot.seq` 第二次原子读（s2）；Drop Oldest 真正实现（Consumer seqlock double-read 校验跳过被覆写 slot）；C++20 data-race free（所有 word+seq 均原子）；详见 §2.4.8 方案 A++ |
 | Design-R8（SnapshotRequest SPSC ownership） | 🟠 P1 | §2.4.9 新增 SnapshotRequest SPSC ownership 明确 + §2.1.3.5 流程图修正 | 源码审查：SnapshotRequest Producer = FSM thread 唯一；SnapshotPublisher Consumer = Capture thread 唯一；Injection 不直接发起 SnapshotRequest |
 | Design-R9（Recovery P3 overclaim，v1.1 修复 / v1.2 P3 表述严格限定） | 🟠 P1 | §2.4.6 拆分 System Safety Recovery + User-dependent convergence + §2.5.3 措施 6 | 文档不声称 "总 recovery 有 deterministic bounded upper bound"；**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**；T_user_release 标注无界 |
 | Design-R10（CF0 Frozen Boundary Amendment） | 🟠 P1 | §2.7 新增 CF0 Frozen Boundary Amendment / Compatibility Contract | CF0/CF1 Frozen 文档 git diff 验证未修改；`onEdgeOverflow()` + `PressedStateSnapshot` bitmap extension 均为 additive；CF0 FSM 状态机未修改 |
-| Design-R11（SPSC_DATA Drop-Oldest producer-only head advance 逻辑错误，v1.2 修正 / v1.3 Design-R14 进一步修正 linearizability / v1.4 Design-R15 修正 Slot Lifetime Race） | 🔴 BLOCKER | §2.4.8 方案 A++ Word-Atomic Payload + Seqlock Double-Read（v1.4 最终方案） | 源码审查：Producer 仅写 `head` + `buffer[i].payload`（逐 word atomic）+ `buffer[i].seq`，不写 `tail`；不变量 `tail ≤ head` + `head - tail ≤ Capacity`；Drop Oldest 测试最旧被覆写（Consumer seqlock double-read 校验失败跳过）+ 新事件保留 + `droppedOldestCount++`；memory-order release/acquire；ABA uint64 单调递增不回绕；overwrite race Consumer 读 payload 为逐 word atomic load（无 data race）+ double-seq 覆写校验；详见 §2.4.8 方案 A++ |
-| Design-R14（SPSC Drop-Oldest Linearizability 未闭环，v1.3 修正 / v1.4 R15 进一步修正 Slot Lifetime Race） | 🔴 BLOCKER | §2.4.8 方案 A+ Seqlock-validated Slot（废弃 `publishedTail`，slot.seq 原子读作为 linearization point）+ §2.3.2 类图 Slot\<T\> 结构 + §2.2.2 接口注释 | 源码审查：无 `publishedTail`/`consumedTail` 残留变量；linearization point = `buffer[i].seq.load(acquire)` 明确定义；interleaving I1/I2/I3 穷举完备；形式化结论"Producer 宣布 dropped 后 Consumer 绝不返回该 item"已证；四种边界 B1/B2/B3/B4 覆盖；TEST-R14-LIN 60s TSan 压力测试 + Consumer 返回 item 序号严格递增 + droppedOldestCount 一致性（CI nightly）；满判定用 `tail`（真实消费进度）非 `publishedTail` |
-| Design-R15（Slot Read/Overwrite Lifetime Race — seq 校验通过后 item 读取仍存在 data race，v1.4 修正） | 🔴 BLOCKER | §2.4.8 方案 A++ Word-Atomic Payload + Seqlock Double-Read Validation（`AtomicPayload<T>` = `std::atomic<uint64_t>[N]` + Consumer `s1→payload.load→s2` double-seq 校验）+ 不可能性证明（非阻塞+SPSC+Drop Oldest+非原子 payload+arbitrary pause 不可同时满足）+ §2.3.2 类图 Slot\<T\> 更新 + §2.2.2 接口注释 | 源码审查：`buffer[i].payload` 类型为 `AtomicPayload<T>`（`std::atomic<uint64_t> words[N]`），无非原子跨线程访问；编译期 `static_assert(words[0].is_lock_free())`；Consumer tryPop 为 seqlock double-read（`s1 = seq.load(acquire)` → epoch 校验 → `payload.load(relaxed)` → `s2 = seq.load(acquire)` → 覆写校验 `s1==s2`）；interleaving J1～J8 穷举完备（含 J7 seq 已读 item 未读 Producer 覆写 + J8 payload 读中途暂停）；C++20 data-race proof（所有 word+seq 均原子，race-free）；arbitrary consumer pause safety proof（word-atomic + double-seq 检测覆写）；核心问题回答（Producer 可覆写，Consumer 自检测，非阻塞）；四种边界 B1/B2/B3-A/B3-B/B4 覆盖；TEST-R15-LIFETIME 60s TSan + Consumer 暂停注入 + 覆写校验生效 + item 序号严格递增（CI nightly）；与 R11 兼容（`std::atomic<uint64_t>[N]` 非大 atomic） |
+| Design-R11（SPSC_DATA Drop-Oldest producer-only head advance 逻辑错误，v1.2 修正 / v1.3 Design-R14 进一步修正 linearizability / v1.4 Design-R15 修正 Slot Lifetime Race / v1.5 Design-R16 修正 Capacity Invariant） | 🔴 BLOCKER | §2.4.8 方案 A++ Word-Atomic Payload + Seqlock Double-Read（v1.4 最终方案）+ v1.5 Design-R16 effectiveTail 派生量 | 源码审查：Producer 仅写 `head` + `buffer[i].payload`（逐 word atomic）+ `buffer[i].seq`，不写 `tail`；不变量 `tail ≤ head` + `head - effectiveTail ≤ Capacity`（INV2，v1.5 Design-R16）；Drop Oldest 测试最旧被覆写（Consumer seqlock double-read 校验失败跳过）+ 新事件保留 + `droppedOldestCount++`；memory-order release/acquire；ABA uint64 单调递增不回绕；overwrite race Consumer 读 payload 为逐 word atomic load（无 data race）+ double-seq 覆写校验；详见 §2.4.8 方案 A++ |
+| Design-R14（SPSC Drop-Oldest Linearizability 未闭环，v1.3 修正 / v1.4 R15 进一步修正 Slot Lifetime Race / v1.5 R16 进一步修正 Capacity Invariant） | 🔴 BLOCKER | §2.4.8 方案 A+ Seqlock-validated Slot（废弃 `publishedTail`，slot.seq 原子读作为 linearization point）+ §2.3.2 类图 Slot\<T\> 结构 + §2.2.2 接口注释 | 源码审查：无 `publishedTail`/`consumedTail` 残留变量；linearization point = `buffer[i].seq.load(acquire)` 明确定义；interleaving I1/I2/I3 穷举完备；形式化结论"Producer 宣布 dropped 后 Consumer 绝不返回该 item"已证；四种边界 B1/B2/B3/B4 覆盖；TEST-R14-LIN 60s TSan 压力测试 + Consumer 返回 item 序号严格递增 + droppedOldestCount 一致性（CI nightly）；满判定用 `tail`（真实消费进度）非 `publishedTail` |
+| Design-R15（Slot Read/Overwrite Lifetime Race — seq 校验通过后 item 读取仍存在 data race，v1.4 修正 / v1.5 R16 进一步修正 Capacity Invariant） | 🔴 BLOCKER | §2.4.8 方案 A++ Word-Atomic Payload + Seqlock Double-Read Validation（`AtomicPayload<T>` = `std::atomic<uint64_t>[N]` + Consumer `s1→payload.load→s2` double-seq 校验）+ 不可能性证明（非阻塞+SPSC+Drop Oldest+非原子 payload+arbitrary pause 不可同时满足）+ §2.3.2 类图 Slot\<T\> 更新 + §2.2.2 接口注释 | 源码审查：`buffer[i].payload` 类型为 `AtomicPayload<T>`（`std::atomic<uint64_t> words[N]`），无非原子跨线程访问；编译期 `static_assert(words[0].is_lock_free())`；Consumer tryPop 为 seqlock double-read（`s1 = seq.load(acquire)` → epoch 校验 → `payload.load(relaxed)` → `s2 = seq.load(acquire)` → 覆写校验 `s1==s2`）；interleaving J1～J8 穷举完备（含 J7 seq 已读 item 未读 Producer 覆写 + J8 payload 读中途暂停）；C++20 data-race proof（所有 word+seq 均原子，race-free）；arbitrary consumer pause safety proof（word-atomic + double-seq 检测覆写）；核心问题回答（Producer 可覆写，Consumer 自检测，非阻塞）；四种边界 B1/B2/B3-A/B3-B/B4 覆盖；TEST-R15-LIFETIME 60s TSan + Consumer 暂停注入 + 覆写校验生效 + item 序号严格递增（CI nightly）；与 R11 兼容（`std::atomic<uint64_t>[N]` 非大 atomic） |
+| Design-R16（Drop-Oldest Queue Logical Boundary / Capacity Invariant Contradiction — INV2 `head - tail ≤ Capacity` 在 Drop-Oldest 模式下不成立，v1.5 修正） | 🔴 BLOCKER | §2.4.8 方案 A++ 不变量废弃 INV2-OLD + 引入 effectiveTail 派生量（`max(tail, head - Capacity)`）+ 新 INV2/INV6/INV7/INV8 + Consumer tryPop 加入 effectiveTail 对齐步骤 + R16 修复子节（核心数学问题回答 + effectiveTail 无竞态证明 + 五种 Consumer-pause 状态 Q1～Q5 + 统计恒等式证明） | 源码审查：INV2-OLD `head - tail ≤ Capacity` 已废弃标注；新 INV2 `head - effectiveTail ≤ Capacity` 恒成立（数学恒等式）；INV6 `effectiveTail = max(tail, head - Capacity)` 派生量定义；INV7 `droppedCount = effectiveTail - tail`；INV8 统计恒等式 `head = droppedCount + tail + (head - effectiveTail)`；Consumer tryPop 含 effectiveTail 对齐步骤（`ct < effectiveTail` 时 `tail.store(effectiveTail)`）；effectiveTail 为派生量非存储变量（无 stale-boundary race）；五种 Consumer-pause 状态 Q1～Q5 穷举完备；TEST-R16-EFFECTIVE-TAIL Consumer 长期暂停 + Producer 高频写入 + 恢复后 effectiveTail 对齐 + INV2 恒成立 + INV8 统计恒等式（CI nightly）；R16 INV2 运行时断言（DEBUG build） |
+| AtomicPayload 平台契约（v1.5 新增，P1 修复） | 🟠 P1 | §2.4.8 AtomicPayload 平台契约子节（CF2 supported architecture = {x86_64, arm64} + word `uint64_t` required `is_lock_free()` + 编译期 `static_assert` + CMake architecture guard + 运行时 check + unsupported → build error 不 fallback） | 编译期 `static_assert(AtomicPayload<RawInputEvent>::words[0].is_lock_free())`；CMake architecture guard `#if !defined(__x86_64__) && !defined(__aarch64__) #error`；CI x86_64/arm64 双架构 build 通过；非 x86_64/arm64 build 失败 + 错误信息含 `CFX-E-CAP-ARCH-UNSUPPORTED`；不 fallback 到 mutex-based atomic（违反 Input Plane 非阻塞）；与 R11 兼容（8 字节 atomic 非大 atomic） |
+| visibility/validity/linearization/lifetime/atomicity proof 分离（v1.5 新增，P1 修复） | 🟠 P1 | §2.4.8 五概念分离证明子节（visibility release/acquire + atomicity `std::atomic<uint64_t>` + validity `s1==s2==ct+1` + linearization `L2`/`Lp`/`L_align` + lifetime slot 第 k 轮区间） | 文档审查：五个概念分别有独立证明段落（visibility/atomicity/validity/linearization/lifetime），不混用"在 seq release/acquire happens-before 伞下安全"一句带过；五概念层次分离（内存层/物理层/逻辑层/并发历史层/物理时间层）；五概念正交关系明确（validity 依赖 visibility+atomicity，linearization 闭合后 validity 在线性化历史中证明，lifetime 由 validity 保证读在 lifetime 内） |
 | Design-R12（B_burst/B_rate 误标 HARD CONTRACT，v1.2 修正） | 🔴 BLOCKER | §2.4.0 三类分层表新增 WORKLOAD MODEL / TEST PROFILE 类别 + §2.4.1/§2.4.2/§2.4.7 B_burst/B_rate 降级为 WORKLOAD MODEL | 文档 B_burst=6 / B_rate=40 标注为 WORKLOAD MODEL（声明值，非 deterministic system upper bound）；backlog bound 明确限定 "在声明 workload envelope 内成立"；SPSC_STATE=64 标注为 "在指定 workload envelope 下经过验证的工程容量"；超 envelope 输入触发饱和安全降级（非违反 HARD CONTRACT）；CI 超 envelope 测试验证降级机制 |
 | Design-R13（W_test 10ms/12ms 口径歧义，v1.2 修正） | 🟠 P1 | §2.4.3 W_pause_test=10ms + §2.4.5 T_saturation_detect_test=12ms + §2.4.6 T_system_recovery_test=12ms + §2.4.7 表格 + §2.5.3 措施 6 同步 | 文档无单一 W_test 歧义；三个测试阈值命名正交（W_pause_test / T_saturation_detect_test / T_system_recovery_test）；各章节引用一致 |
 | P3 表述严格限定（v1.2 修正） | 🟠 P1 | §2.4.6 P3 严格表述 + §2.5.3 措施 6 + §2.6.8 R9 行 | 文档统一采用 "**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**"；不写 "P3 可证" 避免歧义；明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded）；防止 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束 |
@@ -2342,4 +2551,6 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 > **保持不变（v1.3）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13 已修复内容全部保持不变；`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变。
 > **Amendment v1.4（受控修订，不推倒 1990 行 v1.3 主体）**：修复大G 项目经理 Design Gate 终审发现的唯一 BLOCKER —— Design-R15 Slot Read/Overwrite Lifetime Race（§2.4.8 新增方案 A++ Word-Atomic Payload + Seqlock Double-Read Validation：payload 从非原子 `T item` 改为 `AtomicPayload<T>`（`std::atomic<uint64_t>[N]`，每 word 8 字节 lock-free，与 R11 兼容）；Consumer 读取从单次 seq 校验 + 非原子 item 读改为 seqlock double-read `s1→payload.load→s2` + 覆写校验 `s1==s2`；完整给出不可能性证明（非阻塞+SPSC+Drop Oldest+非原子 payload+arbitrary pause 不可同时满足）+ 方案 A++ 状态变量/ownership/不变量/tryPush/tryPushDropOldest/tryPop + Producer/Consumer 完整时序图 + Consumer-pause interleaving J1～J8（含 J7 seq 已读 item 未读 Producer 覆写 + J8 payload 读中途暂停）+ C++20 data-race proof（所有 word+seq 均原子，race-free）+ slot ownership/lifetime proof + arbitrary consumer pause safety proof + 核心问题回答（Producer 可覆写，Consumer 自检测，非阻塞）+ memory-order proof + 四种边界 B1/B2/B3-A/B3-B/B4 + TEST-R15-LIFETIME 60s TSan + Consumer 暂停注入并发压力测试；§2.3.2 类图 Slot\<T\> 同步更新为 `AtomicPayload<T>` 结构；§2.2.2 接口注释引用 §2.4.8 R15；§2.6.8 回映表新增 R15 行）。新增 §2.6.8 R15 修订回映。
 > **保持不变（v1.4）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14 已修复内容全部保持不变；`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变，仅内部实现从 v1.3 方案 A+（非原子 payload + 单次 seq 校验）改为方案 A++（word-atomic payload + seqlock double-read validation）；SPSC ownership（head=Producer, tail=Consumer）不变；epoch seq 语义不变（`seq = h + 1`）；满判定不变（`h - tail == Capacity`）。
-> 待用户审查确认后，本文档状态由 DRAFT v1.4 转为 FROZEN 并授权进入下一阶段。
+> **Amendment v1.5（受控修订，不推倒 2345 行 v1.4 主体）**：修复大G 项目经理 Design Gate 终审发现的唯一 BLOCKER + 2 项 P1 —— Design-R16 Drop-Oldest Queue Logical Boundary / Capacity Invariant Contradiction（§2.4.8 方案 A++ 不变量废弃 INV2-OLD `head - tail ≤ Capacity`，引入 effectiveTail 派生量 `max(tail, head - Capacity)` 作为 logical oldest boundary，新 INV2 `head - effectiveTail ≤ Capacity` 恒成立 + INV6 effectiveTail 定义 + INV7 droppedCount 恒等式 + INV8 统计恒等式 `head = droppedCount + tail + (head - effectiveTail)`；Consumer tryPop 加入 effectiveTail 对齐步骤；新增 R16 修复子节：核心数学问题回答（effectiveTail 是派生量非存储变量，无 stale-boundary race）+ effectiveTail 无竞态证明 + 五种 Consumer-pause 状态 Q1～Q5 穷举完备 + 统计恒等式证明 + droppedOldestCount 修正）；AtomicPayload 平台契约（§2.4.8 新增 AtomicPayload 平台契约子节：CF2 supported architecture = {x86_64, arm64} + word `uint64_t` required `is_lock_free()` + 编译期 `static_assert` + CMake architecture guard + unsupported → build error 不 fallback 到 mutex）；visibility/validity/linearization/lifetime/atomicity proof 分离（§2.4.8 新增五概念分离证明子节：visibility release/acquire + atomicity `std::atomic<uint64_t>` + validity `s1==s2==ct+1` + linearization `L2`/`Lp`/`L_align` + lifetime slot 第 k 轮区间，五概念正交分离不混用一句带过）；§2.6.8 回映表新增 R16 行 + AtomicPayload 平台契约行 + 五概念分离行）。新增 §2.6.8 R16 + AtomicPayload 平台契约 + 五概念分离 修订回映。
+> **保持不变（v1.5）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14/R15 已修复内容全部保持不变；`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变；方案 A++ 的 word-atomic payload + seqlock double-read validation 核心算法不变（R15 成果保留）；SPSC ownership（head=Producer, tail=Consumer）不变；epoch seq 语义不变（`seq = h + 1`）；tryPush 满判定不变（`h - tail == Capacity`）；tryPushDropOldest 不判满、总是覆写不变；**R16 仅重新定义 Queue Invariant（废弃 INV2-OLD，引入 effectiveTail 派生量 + 新 INV2/INV6/INV7/INV8）+ Consumer tryPop 加入 effectiveTail 对齐步骤，不改变 Producer 写入路径、不改变 seqlock double-read validation、不改变 word-atomic payload 存储**。
+> 待用户审查确认后，本文档状态由 DRAFT v1.5 转为 FROZEN 并授权进入下一阶段。
