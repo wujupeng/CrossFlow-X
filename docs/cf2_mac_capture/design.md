@@ -5,7 +5,7 @@
 > **CF0 冻结基线引用**：`.codeartsdoer/specs/cf0_arch_freeze/spec.md`（v2，892 行）+ `.codeartsdoer/specs/cf0_arch_freeze/design.md`（v3，3449 行），本设计严格遵循 CF0 冻结的全部架构基线（C++20 技术栈、Driverless User-Mode、Handoff 六态 FSM、7 核心契约、CF0 Architecture Safety Invariant P1/P2/P3、8 线程模型、双平面隔离、Coordinate Space RelativeDelta/AbsolutePosition 双语义、无锁 SPSC 队列 §2.7.3）。
 > **CF1 冻结基线引用**：`.codeartsdoer/specs/cf1_endpoint_disc/spec.md`（v2，1432 行）+ `.codeartsdoer/specs/cf1_endpoint_disc/design.md`（v4，2972 行），本设计复用 CF1 冻结的 Node Identity（Stable NodeID 七要素）作为捕获事件源端标识，不修改身份与发现机制。
 > **第一原则**：Driverless User-Mode Architecture —— macOS 输入捕获与注入必须完全在用户态完成，不引入内核扩展（kext）或驱动。
-> **文档状态**：DRAFT v1.5（Amendment，受控修订，不推倒 2345 行 v1.4 主体）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
+> **文档状态**：DRAFT v1.6（Amendment，受控修订，不推倒 2556 行 v1.5 主体）→ 待用户审查冻结（Evidence-First，先规格后实现；本设计仅覆盖 CF2-S01～S06 六个 macOS 输入捕获地基的增量设计方案 + 工程边界量化 + CF0 Safety Invariant 保障 + Verification Matrix 回映，不引入规格外能力，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding）
 > **设计范围**：仅覆盖 CF2-S01～CF2-S06 六个 macOS 输入捕获地基的增量设计方案 + 大G项目经理特别要求的工程边界量化（SPSC_STATE=64 capacity / burst 上界 / consumer 最坏暂停窗口 / 异常过载判定阈值 / 饱和检测时序 / recovery 时序）+ CF0 Safety Invariant 保障 + Verification Matrix 回映。
 > **执行纪律遵循**：严格遵守大G项目经理执行纪律（不修改 CF0/CF1 Frozen / 不重新设计 Handoff FSM / 不引入 Coordinator election / Raft / Paxos / 不改变 NodeID/Topology Authority 语义 / Input/Control 双平面隔离 / Evidence-First / Gate Review 后再编码）。
 
@@ -52,6 +52,14 @@
 > - **AtomicPayload 平台契约（P1）**：v1.4 要求 `std::atomic<uint64_t>::is_lock_free() == true` 作为整个 Input Plane 非阻塞设计基础，但仅 `static_assert` 然后宣称所有目标环境天然满足，未明确平台契约。**修正**：§2.4.8 新增 AtomicPayload 平台契约子节：明确 (1) CF2 supported architecture: x86_64, arm64；(2) AtomicPayload word: `uint64_t`，required `is_lock_free() == true`；(3) 编译期 `static_assert` + 运行时 platform check（CMake `target_compile_definitions` + `#ifdef` architecture guard）；(4) if platform does not satisfy: CF2 implementation is **unsupported**（build error，不静默降级，不 fallback 到 mutex-based atomic——因 mutex 违反 Input Plane 非阻塞设计原则）。§2.6.8 回映表新增 AtomicPayload 平台契约行。
 > - **visibility/validity/linearization/lifetime/atomicity proof 分离（P1）**：v1.4 将五个概念混在"在 seq release/acquire happens-before 伞下安全"一句带过。**修正**：§2.4.8 新增五概念分离证明子节：(1) **visibility**（可见性）— release/acquire happens-before 链；(2) **atomicity**（原子性）— 每 word `std::atomic<uint64_t>` 无撕裂；(3) **validity**（有效性）— `s1 == s2 == ct+1` 定义 item 有效；(4) **linearization**（线性化）— tryPop LP = s2 读瞬间，tryPush LP = seq.store(release) 瞬间；(5) **lifetime**（生命周期）— slot i 第 k 轮 lifetime 区间 + seqlock double-read 在 lifetime 内安全。§2.6.8 回映表新增五概念分离行。
 > **未变更项（v1.5）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14/R15 已修复内容全部保持不变。`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变。方案 A++ 的 word-atomic payload + seqlock double-read validation 核心算法不变（R15 成果保留）。SPSC ownership（head=Producer, tail=Consumer）不变。epoch seq 语义不变（`seq = h + 1`）。tryPush 满判定不变（`h - tail == Capacity`）。tryPushDropOldest 不判满、总是覆写不变。**R16 仅重新定义 Queue Invariant（废弃 INV2-OLD `head - tail ≤ Capacity`，引入 effectiveTail 派生量 + 新 INV2/INV6/INV7/INV8）+ Consumer tryPop 加入 effectiveTail 对齐步骤（优化 + 正确性补充），不改变 Producer 写入路径、不改变 seqlock double-read validation、不改变 word-atomic payload 存储。**
+
+> **Amendment v1.6 变更记录（受控修订，不删除重写，不推倒 2556 行 v1.5 主体）**
+> **修订背景**：大G 项目经理对 Design v1.5 的 Design Gate 终审裁决 = CONDITIONAL FAIL / REVISION REQUIRED。v1.5 的 Design-R1～R16 全部 PASS（R16 effectiveTail 派生量解决了 v1.4 的 `head - tail ≤ Capacity` 矛盾），但引入新的统计语义和线性化/语义边界问题：2 项 BLOCKER（R17 drop 概念混淆 + R18 线性化证明未闭合）+ 1 项 P1（AtomicPayload 平台契约强化）。本次 Amendment 仅修复 R17 + R18 + AtomicPayload 平台契约强化三项，不改变主体结构 / 六个模块 / CF0-CF1 边界 / Driverless 原则 / 安全目标 / Requirements v1.4 FROZEN / R1～R16 已修复内容，不修改 CF0/CF1 Frozen 文档，不进入 Task Design，不直接 Coding。
+> **修订项**：
+> - **Design-R17 (🔴 BLOCKER)：effectiveTail / Drop-Oldest logical semantics + accounting consistency**。问题：v1.5 定义 INV7 `droppedCount = effectiveTail - tail`，同时 Producer 实现是 `if (h - tail.load(acquire) >= Capacity) droppedOldestCount.fetch_add(1)`。存在两个不同概念被混为一个名字：(A) 派生的"当前尚未被 Consumer 对齐的 dropped prefix" = `effectiveTail - tail`（瞬时量，随 Consumer 推进 tail 而归零）；(B) 累计的 Producer drop counter = `droppedOldestCount`（累计量，单调递增不回退）。反例：Capacity=256, head=0, tail=0 → Producer 写 300 个 → head=300, tail=0, effectiveTail=44, droppedCount=44 → Consumer 消费 100 个 → tail=144, effectiveTail=144, droppedCount=0，但累计 droppedOldestCount 仍=44。INV7 `droppedCount = effectiveTail - tail` 不能同时描述累计 counter。INV8 `head = droppedCount + tail + (head - effectiveTail)` 只是代数恒等式，没有证明运行时累计计数器等于 `effectiveTail - tail`。**修正（R17-A 概念分离 + R17-B 区间分解）**：§2.4.8 新增 R17 修复子节——(1) 引入三个明确分离的命名：`logicalDropBoundary = max(tail, head - Capacity)`（逻辑丢弃边界，派生量，即 v1.5 的 effectiveTail 重命名以强调语义）、`pendingDropped = logicalDropBoundary - tail`（当前尚未被 Consumer 对齐的 dropped prefix 长度，瞬时量）、`cumulativeDropCount`（累计 Producer drop counter，单调递增，由 `droppedOldestCount.fetch_add(1)` 维护）；(2) 废弃 v1.5 INV7 `droppedCount = effectiveTail - tail` 的歧义命名，拆为 INV7a `pendingDropped = logicalDropBoundary - tail`（瞬时派生量）+ INV7b `cumulativeDropCount` 独立统计量（非 correctness invariant，降级为 observational metric）；(3) 废弃 v1.5 INV8 的"Producer writes = drop + consumed + remaining"代数恒等式表述，建立区间分解：`[0, head) = [0, logicalDropBoundary) ∪ [logicalDropBoundary, tail) ∪ [tail, head)`，其中 `[0, logicalDropBoundary)` = logically expired、`[logicalDropBoundary, tail)` = impossible/empty（因 logicalDropBoundary ≥ tail）、`[tail, head)` = current logical window（长度 ≤ Capacity）；(4) 明确 `tail ≤ logicalDropBoundary ≤ head` + `head - logicalDropBoundary ≤ Capacity`；(5) `cumulativeDropCount` 降级为 observational metric（不参与 correctness 证明，用途为监控告警/容量调优，与 `pendingDropped` 关系为 `cumulativeDropCount ≥ pendingDropped` 但两者不必相等）。§2.4.8 v1.5 INV7/INV8 原文保留并加 v1.6 修正注释（不删除）。§2.6.8 回映表新增 R17 行。
+> - **Design-R18 (🔴 BLOCKER)：Drop-Oldest linearization under derived effectiveTail + concurrent head advancement**。问题：v1.5 声称"effectiveTail 是派生量所以不存在 stale-boundary race"，但 **no stale variable race ≠ no semantic linearization race**。v1.5 仅给出 effectiveTail 无竞态证明（派生量非存储变量），未给出完整 Push/Pop 两操作线性化证明。同时 v1.5 混合了 Drop 发生时间的三个定义：(A) Producer 写入第 h+Capacity 个元素时 position h 立即被逻辑丢弃；(B) Consumer 下一次观察 head 时 effectiveTail > tail 才认为被丢弃；(C) Consumer 尝试读取旧 epoch 发现 seq != expected 才认为被丢弃。**修正**：§2.4.8 新增 R18 修复子节——(1) **Drop 发生时间统一定义**：选择**定义 A（Producer-side logical drop）**作为规范定义，定义 B/C 作为 Consumer 发现 drop 的机制（非 drop 发生定义）；(2) **完整 Push/Pop 线性化证明 P1～P8**：Producer LP = `seq.store(h+1, release)` 瞬间（`Lp`），Consumer LP = `s2 = seq.load(acquire)` 瞬间（`Lc`，第二次 seq 读），effectiveTail 对齐 LP = `tail.store(logicalDropBoundary, release)` 瞬间（`L_align`，若触发）；P1 Consumer Pop before Producer Push（`Lc < Lp` ⇒ old item may be returned legitimately）；P2 Producer Push before Consumer Pop（`Lp < Lc` ⇒ new item returned or overwrite detected）；P3 Consumer reads head, Producer pushes（Consumer 持有旧 h_c，Producer 写 slot h_c 不影响 Consumer 读 slot j < h_c）；P4 Consumer computes effectiveTail, Producer pushes（Consumer 持有基于旧 h_c 的 logicalDropBoundary，Producer 推进 head 不影响 Consumer 在 [ct, h_c) 内读）；P5 Consumer s1, Producer overwrite（`s1 != s2` → 丢弃，`Lp < Lc` ⇒ old item cannot be returned）；P6 Consumer payload read, Producer overwrite（逐 word atomic 无 data race，`s1 != s2` → 丢弃）；P7 Consumer s2, Producer overwrite（`s1 == s2 == ct+1` → 接受栈上副本，`Lc < Lp` ⇒ old item may be returned legitimately）；P8 Consumer arbitrary pause（暂停点 (a)～(f) 由 P3～P7 覆盖，恢复后重新读 head 或继续 seqlock double-read）；(3) **核心结论**：`Lp < Lc` ⇒ Producer 在 Consumer s2 读之前已 seq.store(new_epoch)，s2 = new_epoch > s1 → `s1 != s2` → 丢弃（old item cannot be returned）；`Lc < Lp` ⇒ Consumer 在 Producer 覆写前完成读取，读到旧 item（old item may be returned legitimately，线性化为 Consumer Pop < Producer Push）。§2.6.8 回映表新增 R18 行。
+> - **AtomicPayload 平台契约强化（🟡 P1）**：v1.5 已有 AtomicPayload 平台契约子节，但需强化为明确的 support matrix，且不得用 `static_assert(std::atomic<uint64_t>::is_always_lock_free)` 后声称"所有 C++20 平台都支持"。**修正**：§2.4.8 AtomicPayload 平台契约子节强化——(1) 明确 CF2 platform support matrix：`Supported: x86_64, arm64` / `Required: std::atomic<uint64_t>::is_lock_free() == true` / `Unsupported: any target where required atomic word is not lock-free` / `Failure: build/configuration failure before CF2 runtime activation`；(2) 明确不得使用 `is_always_lock_free` 后声称所有 C++20 平台支持（`is_always_lock_free` 在 32-bit ARM 等平台可能为 false，CF2 明确限定 supported architecture 不声称所有 C++20 平台支持）；(3) 使用 `is_lock_free()`（运行时检查）+ architecture guard（编译期 `#if !defined(__x86_64__) && !defined(__aarch64__) #error`）组合，而非 `is_always_lock_free`；(4) Failure 模式：build error 在 CF2 runtime activation 之前拦截，不静默降级，不 fallback 到 mutex。§2.6.8 回映表新增 AtomicPayload 平台契约强化行。
+> **未变更项（v1.6）**：六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14/R15/R16 已修复内容全部保持不变。`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变。方案 A++ 的 word-atomic payload + seqlock double-read validation 核心算法不变（R15 成果保留）。SPSC ownership（head=Producer, tail=Consumer）不变。epoch seq 语义不变（`seq = h + 1`）。tryPush 满判定不变（`h - tail == Capacity`）。tryPushDropOldest 不判满、总是覆写不变。**R17/R18 仅做语义闭合（drop 概念分离 + 区间分解 + 线性化证明 P1～P8 + Drop 定义统一），不改变 Producer 写入路径、不改变 seqlock double-read validation、不改变 word-atomic payload 存储、不改变 effectiveTail 对齐步骤、不重新引入 publishedTail、不让 Producer 写 Consumer-owned tail。**
 
 ---
 
@@ -1819,7 +1827,9 @@ struct AtomicPayload {
 - **INV5（word-atomic invariant，A++ 新增）**：`buffer[i].payload.words[k]` 均为 `std::atomic<uint64_t>`，所有读写为原子操作。无非原子并发访问。`is_lock_free() == true`（编译期 `static_assert`，平台契约见 AtomicPayload 平台契约子节）。
 - **INV6（effectiveTail 定义，v1.5 Design-R16 新增）**：`effectiveTail = max(tail, head - Capacity)`。**语义**：logical oldest boundary（逻辑最旧有效边界）。当 `head - tail ≤ Capacity`（队列未超容量）时 `effectiveTail = tail`（无 drop，Consumer 从 tail 读）；当 `head - tail > Capacity`（队列超容量，Drop-Oldest 已生效）时 `effectiveTail = head - Capacity`（最旧 `Capacity` 个 slot 有效，更旧的已被覆写 drop）。**effectiveTail 是派生量非存储变量**——无"Consumer 持有 stale effectiveTail"问题（每次 tryPop 重新计算），无 stale-boundary race（不依赖 Producer 单独宣布的 discard cursor，避免 v1.2 publishedTail 的 R14 缺陷）。
 - **INV7（droppedCount 恒等式，v1.5 Design-R16 新增）**：`droppedCount = effectiveTail - tail = max(0, head - tail - Capacity)`。**语义**：已被 Drop-Oldest 丢弃但 Consumer 尚未跳过的 slot 数。当 `head - tail ≤ Capacity` 时 `droppedCount = 0`（无 drop）；当 `head - tail > Capacity` 时 `droppedCount = head - tail - Capacity`（超容量部分已被 drop）。
+  - **⚠️ Design-R17 修正（v1.6）**：v1.5 的 INV7 命名 `droppedCount` 存在概念混淆——`effectiveTail - tail` 是**瞬时派生量**（随 Consumer 推进 tail 而归零），但 v1.5 同时用它代表累计 counter `droppedOldestCount`（单调递增不回退），两者不等价。v1.6 废弃 INV7 的歧义命名，拆为 **INV7a** `pendingDropped = logicalDropBoundary - tail`（瞬时派生量，`logicalDropBoundary` 即 v1.5 的 `effectiveTail` 重命名）+ **INV7b** `cumulativeDropCount` 独立统计量（降级为 observational metric，非 correctness invariant）。详见 §2.4.8 R17 修复子节。本 INV7 原文保留为历史记录，**最终语义以 INV7a/INV7b 为准**。
 - **INV8（统计恒等式，v1.5 Design-R16 新增）**：`head = droppedCount + tail + (head - effectiveTail)`，即 **Producer 写入数 = drop 数 + Consumer 成功消费数 + queue 中逻辑剩余数**。**证明**：`droppedCount + tail + (head - effectiveTail) = (effectiveTail - tail) + tail + (head - effectiveTail) = effectiveTail + head - effectiveTail = head`。✓ **此恒等式在任意时刻成立**，是 `droppedOldestCount` 统计的正确性基础。
+  - **⚠️ Design-R17 修正（v1.6）**：v1.5 的 INV8 是**代数恒等式**（`droppedCount + tail + (head - effectiveTail) = head` 纯代数展开），没有证明运行时累计计数器 `droppedOldestCount` 等于 `effectiveTail - tail`。反例：Capacity=256, Producer 写 300 个 → `droppedOldestCount=44`；Consumer 消费 100 个 → `effectiveTail - tail = 0`，但 `droppedOldestCount` 仍=44。v1.6 废弃 INV8 的"Producer writes = drop + consumed + remaining"表述，改为**区间分解**：`[0, head) = [0, logicalDropBoundary) ∪ [logicalDropBoundary, tail) ∪ [tail, head)`（logically expired / impossible-empty / current logical window），明确 `tail ≤ logicalDropBoundary ≤ head` + `head - logicalDropBoundary ≤ Capacity`。详见 §2.4.8 R17 修复子节。本 INV8 原文保留为历史记录，**最终语义以区间分解为准**。
 
 **Slot 初始化（A++）**：
 ```
@@ -2272,6 +2282,256 @@ end
 - **AtomicPayload 平台契约测试**：编译期 `static_assert(words[0].is_lock_free())` + CMake architecture guard `#if !defined(__x86_64__) && !defined(__aarch64__) #error` + CI x86_64/arm64 双架构 build + 非 x86_64/arm64 build 失败测试（HARD CONTRACT，CI build matrix）。
 - **五概念分离证明审查**：visibility（release/acquire happens-before）/ atomicity（`std::atomic<uint64_t>` + `is_lock_free()`）/ validity（`s1 == s2 == ct+1`）/ linearization（`L2`/`Lp`/`L_align`）/ lifetime（slot 第 k 轮区间）五个概念分别有独立证明段落，不混用"在 seq release/acquire happens-before 伞下安全"一句带过（HARD CONTRACT，源码审查 + 文档审查）。
 
+---
+
+**Design-R17 修复：effectiveTail / Drop-Oldest logical semantics + accounting consistency（v1.6 新增）**：
+
+> **问题回顾**：v1.5 定义 INV7 `droppedCount = effectiveTail - tail`，同时 Producer 实现是 `if (h - tail.load(acquire) >= Capacity) droppedOldestCount.fetch_add(1)`。存在两个不同概念被混为一个名字，导致统计语义不一致。
+
+**R17-A：drop 概念分离（三个明确命名的独立量）**：
+
+v1.6 引入三个明确分离的命名，替代 v1.5 的歧义 `droppedCount`：
+
+| 量 | 定义 | 类型 | 语义 | 随 tail 推进的行为 |
+|----|------|------|------|-------------------|
+| `logicalDropBoundary` | `max(tail, head - Capacity)` | 派生量（非存储） | 逻辑丢弃边界（即 v1.5 的 `effectiveTail` 重命名以强调语义） | 随 tail 推进而跟进（`max(tail, ...)` 的 tail 增大） |
+| `pendingDropped` | `logicalDropBoundary - tail` | 瞬时派生量 | 当前尚未被 Consumer 对齐的 dropped prefix 长度 | **随 tail 推进而归零**（Consumer 对齐后 `pendingDropped = 0`） |
+| `cumulativeDropCount` | `droppedOldestCount` 的运行时值 | 累计统计量（`std::atomic<u64>`，`fetch_add` 维护） | 自系统启动以来 Producer 总共丢弃的 slot 数 | **单调递增不回退**（不受 tail 推进影响） |
+
+**关键区分**：
+- `pendingDropped` 是**瞬时派生量**，描述"此刻 Consumer 还没跳过的 dropped slot 数"，随 Consumer 推进 `tail` 而减小，对齐后归零。
+- `cumulativeDropCount` 是**累计统计量**，描述"自系统启动以来 Producer 总共丢弃了多少个 slot"，单调递增不回退，不受 Consumer 行为影响。
+
+**反例分析（v1.5 概念混淆的具体表现）**：
+```
+初始: Capacity = 256, head = 0, tail = 0
+  logicalDropBoundary = max(0, 0-256) = 0
+  pendingDropped = 0 - 0 = 0
+  cumulativeDropCount = 0
+
+Producer 写 300 个 (tryPushDropOldest × 300):
+  head = 300, tail = 0 (Consumer 未消费)
+  logicalDropBoundary = max(0, 300-256) = 44
+  pendingDropped = 44 - 0 = 44          ← 瞬时量
+  cumulativeDropCount = 44              ← 累计量（Producer 在第 257～300 次写入时各 drop 一次）
+
+Consumer 消费 100 个 (tryPop × 100, 含 effectiveTail 对齐):
+  tail = 144 (对齐到 logicalDropBoundary=44 后再消费 100)
+  logicalDropBoundary = max(144, 300-256) = max(144, 44) = 144
+  pendingDropped = 144 - 144 = 0        ← 瞬时量归零（Consumer 已对齐）
+  cumulativeDropCount = 44              ← 累计量不变（仍=44）
+
+v1.5 错误: INV7 droppedCount = effectiveTail - tail = 0，但 droppedOldestCount = 44
+  → droppedCount 不能同时描述 pendingDropped (=0) 和 cumulativeDropCount (=44)
+```
+
+**R17-A 不变量（替代 v1.5 INV7）**：
+
+- **INV7a（pendingDropped 瞬时派生量，v1.6 Design-R17 新增）**：`pendingDropped = logicalDropBoundary - tail = max(0, head - tail - Capacity)`。**语义**：当前尚未被 Consumer 对齐的 dropped prefix 长度。当 `head - tail ≤ Capacity` 时 `pendingDropped = 0`（无 drop）；当 `head - tail > Capacity` 时 `pendingDropped = head - tail - Capacity`。**随 Consumer 推进 tail 而归零**（对齐后 `logicalDropBoundary = tail`，`pendingDropped = 0`）。
+- **INV7b（cumulativeDropCount 独立统计量，v1.6 Design-R17 新增）**：`cumulativeDropCount` 为 `std::atomic<uint64_t>`，由 Producer 在 `tryPushDropOldest` 中 `if (h - tail.load(acquire) >= Capacity) cumulativeDropCount.fetch_add(1, relaxed)` 维护。**语义**：自系统启动以来 Producer 观察到队列物理满或超容量而丢弃的 slot 累计数。**单调递增不回退**。**降级为 observational metric，非 correctness invariant**——其值依赖 Producer 读 `tail` 的时机（acquire 读可能看到稍旧的 Consumer 进度），不参与 correctness 证明。
+
+**INV7a 与 INV7b 的关系**：
+- `cumulativeDropCount ≥ pendingDropped`（累计 ≥ 瞬时），但两者不必相等。
+- `cumulativeDropCount = pendingDropped` 当且仅当 Consumer 从未对齐过（tail 从未推进到 logicalDropBoundary）。
+- Consumer 对齐后 `pendingDropped = 0`，但 `cumulativeDropCount` 保留历史累计值。
+
+**R17-B：区间分解（替代 v1.5 INV8 代数恒等式表述）**：
+
+v1.6 废弃 v1.5 INV8 的"Producer writes = drop + consumed + remaining"代数恒等式表述（该表述只是代数展开 `droppedCount + tail + (head - effectiveTail) = head`，没有证明运行时累计计数器等于 `effectiveTail - tail`）。改为**明确的区间分解**：
+
+```
+[0, head)  ← Producer 已写入的全部 slot（共 head 个）
+  ├── [0, logicalDropBoundary)          logically expired
+  │     已被 Drop-Oldest 逻辑丢弃的 slot（共 logicalDropBoundary 个）
+  │     Consumer 不应再读这些 slot（effectiveTail 对齐步骤跳过）
+  │
+  ├── [logicalDropBoundary, tail)       impossible / empty
+  │     此区间为空（因 logicalDropBoundary = max(tail, head - Capacity) ≥ tail）
+  │     不存在既未被 drop 又已被 Consumer 越过的 slot
+  │
+  └── [tail, head)                      current logical window
+        Consumer 可读的有效窗口（共 head - tail 个 slot）
+        其中 [tail, logicalDropBoundary) 已 drop（pendingDropped 个）
+        [logicalDropBoundary, head) 为有效未 drop（head - logicalDropBoundary 个，≤ Capacity）
+```
+
+**区间分解的性质**：
+1. **`tail ≤ logicalDropBoundary ≤ head`**：
+   - `logicalDropBoundary = max(tail, head - Capacity) ≥ tail` ✓（max 的下界）
+   - `logicalDropBoundary = max(tail, head - Capacity) ≤ max(head, head) = head`（因 `tail ≤ head` 且 `head - Capacity ≤ head`）✓
+2. **`head - logicalDropBoundary ≤ Capacity`**（逻辑窗口 bounded）：
+   - `logicalDropBoundary = max(tail, head - Capacity) ≥ head - Capacity`，故 `head - logicalDropBoundary ≤ head - (head - Capacity) = Capacity` ✓
+3. **`[logicalDropBoundary, tail)` 为空区间**：因 `logicalDropBoundary ≥ tail`，区间左端 ≥ 右端，为空 ✓
+4. **区间不重叠且覆盖 [0, head)**：`[0, logicalDropBoundary) ∪ [logicalDropBoundary, tail) ∪ [tail, head) = [0, head)`（中间区间为空，首尾区间衔接）✓
+
+**与 v1.5 INV8 的区别**：
+- v1.5 INV8 `head = droppedCount + tail + (head - effectiveTail)` 是**代数恒等式**，将 `droppedCount` 等同于 `effectiveTail - tail`（瞬时量），但又称其为 `droppedOldestCount` 的正确性基础（累计量），概念混淆。
+- v1.6 区间分解**不声称代数恒等式等于累计计数器**，而是明确描述 [0, head) 的逻辑划分：logically expired / impossible-empty / current logical window。`cumulativeDropCount` 作为独立 observational metric，不进入区间分解。
+
+**cumulativeDropCount 降级为 observational metric**：
+
+> **设计决策**：`cumulativeDropCount`（即 `droppedOldestCount`）**不作为 correctness invariant**，降级为 **observational metric**。
+
+- **不参与 correctness 证明**：`cumulativeDropCount` 的值依赖 Producer 读 `tail` 的时机（`tail.load(acquire)` 可能看到稍旧的 Consumer 进度），不是严格可证明的不变量。例如：Consumer 已推进 `tail` 但 Producer 的 acquire 读尚未看到，Producer 可能多计一次 drop。
+- **用途**：监控告警（drop rate 异常）、容量调优（SPSC_DATA capacity 是否足够）、DFX 指标。
+- **与 correctness 的关系**：correctness 由 seqlock double-read validation（R15）+ effectiveTail 对齐（R16）+ 区间分解（R17-B）保证，**不依赖 `cumulativeDropCount` 的精确值**。即使 `cumulativeDropCount` 多计或少计，Consumer 仍通过 seqlock double-read 正确跳过被覆写 slot。
+- **可观测性**：`cumulativeDropCount` 作为 `std::atomic<uint64_t>` 可被监控线程读取（relaxed），用于 DFX 指标上报。
+
+**R17 可验证 invariant**：
+- 源码审查：`pendingDropped` 为派生量（非存储变量，每次 tryPop 重新计算）；`cumulativeDropCount` 为 `std::atomic<uint64_t>`（`droppedOldestCount` 重命名）；两者不混用（HARD CONTRACT，源码审查）。
+- 源码审查：v1.5 INV7 `droppedCount = effectiveTail - tail` 已标注 v1.6 修正注释，拆为 INV7a/INV7b（HARD CONTRACT，源码审查 + 文档审查）。
+- 源码审查：v1.5 INV8 代数恒等式已标注 v1.6 修正注释，替换为区间分解（HARD CONTRACT，源码审查 + 文档审查）。
+- **R17 概念分离测试（TEST-R17-CONCEPT-SEPARATION）**：Capacity=256，Producer 写 300 个 → 验证 `pendingDropped = 44` + `cumulativeDropCount = 44`；Consumer 消费 100 个 → 验证 `pendingDropped = 0` + `cumulativeDropCount = 44`（不变）；再 Producer 写 200 个 → 验证 `pendingDropped` 与 `cumulativeDropCount` 独立变化（HARD CONTRACT，CI nightly 测试）。
+- **R17 区间分解测试（TEST-R17-INTERVAL-DECOMPOSITION）**：任意时刻验证 `tail ≤ logicalDropBoundary ≤ head` + `head - logicalDropBoundary ≤ Capacity` + `[logicalDropBoundary, tail)` 为空（HARD CONTRACT，CI nightly 测试 + DEBUG build 运行时断言）。
+
+---
+
+**Design-R18 修复：Drop-Oldest linearization under derived effectiveTail + concurrent head advancement（v1.6 新增）**：
+
+> **问题回顾**：v1.5 声称"effectiveTail 是派生量所以不存在 stale-boundary race"，但 **no stale variable race ≠ no semantic linearization race**。v1.5 仅给出 effectiveTail 无竞态证明（派生量非存储变量），未给出完整 Push/Pop 两操作线性化证明。同时 v1.5 混合了 Drop 发生时间的三个定义。
+
+**R18-1：Drop 发生时间统一定义**：
+
+v1.5 混合了三个 Drop 发生时间定义，v1.6 明确选择并统一：
+
+| 定义 | 描述 | v1.6 角色 |
+|------|------|-----------|
+| **定义 A（Producer-side logical drop）** | Producer 写入第 `h + Capacity` 个元素时 position `h` 立即被逻辑丢弃（`logicalDropBoundary` 推进到 `h + 1`） | **规范定义（v1.6 选择）** |
+| 定义 B（Consumer-observed drop via effectiveTail） | Consumer 下一次观察 head 时 `effectiveTail > tail` 才认为被丢弃 | Consumer 发现 drop 的机制 B（非 drop 发生定义） |
+| 定义 C（Consumer-observed drop via seq mismatch） | Consumer 尝试读取旧 epoch 发现 `seq != expected` 才认为被丢弃 | Consumer 发现 drop 的机制 C（非 drop 发生定义） |
+
+**统一选择定义 A 的理由**：
+1. **定义 A 是 Producer-side 的**，不依赖 Consumer 观察，是"逻辑丢弃"的本来语义。Drop 在 Producer 推进 `head` 到 `tail + Capacity` 之后立即发生，与 Consumer 是否观察到无关。
+2. **定义 B 和 C 是 Consumer-side 的观察**，是定义 A 的**后果**（Consumer 迟早会观察到 drop，但观察时机不定义 drop 发生时机）。机制 B（effectiveTail 对齐）和机制 C（seqlock double-read 校验）是 Consumer 发现已发生 drop 的两种途径，不定义 drop 何时发生。
+3. **定义 A 与 `logicalDropBoundary = max(tail, head - Capacity)` 一致**：当 `head` 推进到 `tail + Capacity` 之后，`logicalDropBoundary = head - Capacity > tail`，position `[tail, head - Capacity)` 被 drop（定义 A）。Consumer 通过机制 B（对齐）或机制 C（seq 校验）发现这些 drop。
+4. **机制 B 与机制 C 的关系**：机制 B 是 queue-level 的快速跳过（一次性对齐到 logicalDropBoundary，跳过整个 dropped prefix），机制 C 是 slot-level 的逐个校验（seqlock double-read 检测单个 slot 被覆写）。机制 B 优先执行（若 `tail < logicalDropBoundary`），机制 C 处理机制 B 之后的残余情况（slot 在 Consumer 读期间被覆写）。
+
+**R18-2：完整 Push/Pop 线性化证明 P1～P8**：
+
+> **线性化点定义**：
+> - **Producer LP** = Producer 执行 `buffer[i].seq.store(h+1, memory_order_release)` 的瞬间（记为 `Lp`）。这是 Producer 写入对 Consumer 可见的瞬间（release 屏障）。
+> - **Consumer LP** = Consumer 执行**第二次** `s2 = buffer[i].seq.load(memory_order_acquire)` 的瞬间（记为 `Lc`）。这是 Consumer 完成覆写校验的瞬间。
+> - **effectiveTail 对齐 LP** = Consumer 执行 `tail.store(logicalDropBoundary, memory_order_release)` 的瞬间（记为 `L_align`，若触发）。这是 Consumer 跳过 dropped prefix 的瞬间。
+
+设 Producer 执行 `tryPushDropOldest`（写 slot `i = h % Capacity`，新 epoch `e_new = h+1`），Consumer 执行 `tryPop`（读 slot `j = ct % Capacity`，期望 epoch `e_old = ct+1`）。按 Consumer 操作相对于 Producer 操作的时序，穷举所有 interleaving（含 arbitrary consumer pause）：
+
+| Case | 时序描述 | Producer LP | Consumer LP | Consumer 行为 | 正确性结论 |
+|------|---------|------------|------------|------------|-----------|
+| **P1** | Consumer Pop 完全在 Producer Push 之前（`Lc < Lp`） | `Lp`（seq.store 在 Consumer 之后） | `Lc`（s2 读在 Producer 之前） | Consumer 读 `head = h`（Producer 尚未推进），`ct = tail`，在 `[tail, h)` 内 seqlock double-read slot j。Producer 尚未写 slot i，Consumer 读到的是之前的 item。`s1 == s2 == ct+1`（无覆写）→ 返回旧 item | ✓ **`Lc < Lp` ⇒ old item may be returned legitimately**（线性化为 Consumer Pop < Producer Push） |
+| **P2** | Producer Push 完全在 Consumer Pop 之前（`Lp < Lc`） | `Lp`（seq.store 在 Consumer 之前） | `Lc`（s2 读在 Producer 之后） | Consumer 读 `head = h+1`（acquire，看到 Producer 写入），`ct = tail`。若 Consumer 读 slot i（j == i）：`s1 = h+1`，若 `ct == h` 则 `s1 == ct+1` ✓，`payload.load`，`s2 = h+1`（Producer 已写完不再覆写），`s1 == s2 == ct+1` → 返回新 item | ✓ **`Lp < Lc` ⇒ new item returned**（线性化为 Producer Push < Consumer Pop） |
+| **P3** | Consumer 读 head，Producer pushes | `Lp`（Producer 在 Consumer head.load 之后 seq.store） | `Lc`（Consumer s2 读） | Consumer `head.load(acquire)` → `h_c = h`（Producer 推进前），`ct = tail`，计算 `logicalDropBoundary = max(tail, h - Capacity)`（基于旧 h_c）。Producer 写 slot h（`i = h % Capacity`），`head = h+1`。Consumer 在 `[tail, h_c)` 内读 slot j < h_c。Producer 写的是 slot h，j ≠ h，不冲突。`s1 == s2 == j+1` → 返回 slot j 的 item | ✓ Consumer LP 基于 `h_c`，Producer LP 在 `h_c` 之后。Consumer 读 slot j（j < h_c），Producer 写 slot h_c，不冲突。**线性化为 Consumer Pop (slot j) < Producer Push (slot h_c)** |
+| **P4** | Consumer 计算 effectiveTail，Producer pushes | `Lp`（Producer 在 Consumer effectiveTail 计算之后 seq.store） | `Lc`（Consumer s2 读） | Consumer `head.load` → `h_c`，计算 `logicalDropBoundary = max(tail, h_c - Capacity)`（基于旧 h_c）。Producer 推进 `head` 到 `h_c + 1`。Consumer 对齐：若 `ct < logicalDropBoundary`，`tail.store(logicalDropBoundary)`，`ct = logicalDropBoundary`（`L_align`）。Consumer 在 `[ct, h_c)` 内 seqlock double-read slot j ∈ [ct, h_c)，j < h_c。Producer 写 slot h_c，j ≠ h_c，不冲突 | ✓ Consumer 持有基于旧 h_c 的 logicalDropBoundary，Producer 推进 head 不影响 Consumer 在 `[ct, h_c)` 内读。**线性化为 Consumer Pop (slot j < h_c) < Producer Push (slot h_c)**。`L_align` 线性化为 Consumer 跳过 `[tail, logicalDropBoundary)` 的已 drop slot（定义 A：这些 slot 在 Producer 推进 head 到 `logicalDropBoundary + Capacity` 之后已被 drop） |
+| **P5** | Consumer s1，Producer overwrite | `Lp`（Producer 在 Consumer s1 读之后覆写 seq.store） | `Lc`（Consumer s2 读在 Producer 之后） | Consumer `s1 = seq.load(acquire)` → `s1 = e_old`（旧 epoch）。Producer 覆写同一 slot：`payload.store` + `seq.store(e_new, release)`（`e_new > e_old`）。Consumer `payload.load`（逐 word atomic，无 data race，可能读到部分旧部分新）。Consumer `s2 = seq.load(acquire)` → `s2 = e_new`。`s1 != s2`（`e_old != e_new`）→ 丢弃 | ✓ **`Lp < Lc` ⇒ old item cannot be returned**（Producer 在 Consumer s2 读之前已 `seq.store(e_new)`，`s2 = e_new > s1`，`s1 != s2` → 丢弃）。线性化为 Producer Push < Consumer Pop（Consumer 检测到覆写，丢弃） |
+| **P6** | Consumer payload read，Producer overwrite | `Lp`（Producer 在 Consumer payload.load 中途覆写 seq.store） | `Lc`（Consumer s2 读在 Producer 之后） | Consumer `s1 = seq.load(acquire)` → `s1 = e_old == ct+1`（校验通过）。Consumer `payload.load(relaxed)` 中途暂停。Producer 覆写：`payload.store`（逐 word atomic）+ `seq.store(e_new, release)`。Consumer 恢复，`payload.load` 完成（读到部分旧部分新 word，但每 word atomic 无 data race）。Consumer `s2 = seq.load(acquire)` → `s2 = e_new`。`s1 != s2` → 丢弃（item 撕裂但不使用） | ✓ **`Lp < Lc` ⇒ old item cannot be returned**（覆写校验检测到覆写，撕裂 item 被丢弃）。**逐 word atomic 无 data race**（C++20 strict 合规）。线性化为 Producer Push < Consumer Pop |
+| **P7** | Consumer s2，Producer overwrite | `Lp`（Producer 在 Consumer s2 读之后覆写 seq.store） | `Lc`（Consumer s2 读在 Producer 之前） | Consumer `s1 → payload.load → s2 = seq.load(acquire)` → `s2 = e_old`（Producer 覆写前）。`s1 == s2 == ct+1`（校验通过）→ Consumer 接受 item（栈上副本）。Producer 之后覆写 slot（`seq.store(e_new, release)`），不影响 Consumer 栈上副本。Consumer `tail.store(ct+1, release)`，return item | ✓ **`Lc < Lp` ⇒ old item may be returned legitimately**（Consumer 在 Producer 覆写前完成读取，读到旧 item，合法）。线性化为 Consumer Pop < Producer Push（Consumer 读的是第 ct 轮，Producer 写的是第 ct+Capacity 轮，ct < ct+Capacity） |
+| **P8** | Consumer arbitrary pause | 取决于暂停点 | 取决于暂停点 | Consumer 在任意点暂停 Δt（arbitrary），期间 Producer 执行 m 次 `tryPushDropOldest`。暂停点穷举：(a) `head.load` 前、(b) `head.load` 后 effectiveTail 计算前、(c) effectiveTail 对齐后 s1 前、(d) s1 后 payload.load 前、(e) payload.load 后 s2 前、(f) s2 后 tail.store 前 | ✓ 每种暂停点由 P3～P7 覆盖：(a) 恢复后读 `head = h + m`（最新），重新计算 logicalDropBoundary；(b) Consumer 持有旧 h_c，由 P3 覆盖；(c)(d) effectiveTail 对齐后 Producer 覆写，由 P4/P5 覆盖；(e) payload 读中 Producer 覆写，由 P6 覆盖；(f) s2 后 Producer 覆写，由 P7 覆盖。**所有暂停点存在明确 LP，均合法** |
+
+**R18-3：核心结论（形式化）**：
+
+> **定理（线性化正确性）**：对于任意 Push/Pop 并发历史，存在线性化顺序使得并发执行等价于该顺序执行，且：
+> - **`Lp < Lc`（Producer LP < Consumer LP）⇒ old item cannot be returned**：Producer 在 Consumer `s2` 读之前已 `seq.store(e_new, release)`，Consumer `s2 = seq.load(acquire)` 看到 `e_new`（release/acquire happens-before）。若 Consumer `s1` 读的是旧 epoch `e_old`，则 `s1 = e_old != e_new = s2` → 丢弃。若 Consumer `s1` 读的也是新 epoch `e_new`（即 Consumer 完全在 Producer 之后），则 `s1 == s2 == e_new`，但 `e_new == ct+1` 仅当 `ct == h`（Consumer 期望的正是新 slot），返回新 item 合法。**无论如何，被覆写的旧 item 不会被返回。** ✓
+> - **`Lc < Lp`（Consumer LP < Producer LP）⇒ old item may be returned legitimately**：Consumer 在 Producer覆写前完成 `s2` 读，`s1 == s2 == e_old == ct+1`（Producer 尚未覆写，seq 未变）→ Consumer 接受旧 item（栈上副本）。线性化为 Consumer Pop < Producer Push。**旧 item 被返回是合法的**（Consumer 在 Producer 覆写前读取，符合顺序语义）。✓
+
+**R18-4：与 v1.5 effectiveTail 无竞态证明的关系**：
+
+v1.5 的 effectiveTail 无竞态证明（派生量非存储变量，无 stale 副本）解决的是**变量层竞态**（no stale variable race）。R18 的 P1～P8 线性化证明解决的是**语义层竞态**（no semantic linearization race）。两者层次不同：
+
+| 层次 | 问题 | v1.5 解决 | v1.6 补充 |
+|------|------|----------|----------|
+| 变量层 | effectiveTail 是否有 stale 副本竞态 | ✓ 派生量非存储变量，无 stale 副本 | （v1.5 已解决） |
+| 语义层 | Push/Pop 并发是否有线性化顺序 | ✗ 未给出完整证明 | ✓ P1～P8 完整线性化证明 |
+
+**no stale variable race ≠ no semantic linearization race**：v1.5 证明了 effectiveTail 无变量竞态，但未证明 Push/Pop 两操作的语义线性化。R18 补充完整语义线性化证明（P1～P8），闭合 v1.5 的证明缺口。
+
+**R18 可验证 invariant**：
+- 文档审查：R18-1 Drop 发生时间统一定义（定义 A 为规范定义，B/C 为 Consumer 发现机制）明确表述（HARD CONTRACT，文档审查）。
+- 文档审查：R18-2 P1～P8 八种 interleaving 穷举完备，每种明确 Producer LP / Consumer LP / 正确性结论（HARD CONTRACT，文档审查）。
+- 文档审查：R18-3 核心结论形式化（`Lp < Lc` ⇒ old item cannot be returned；`Lc < Lp` ⇒ old item may be returned legitimately）明确表述（HARD CONTRACT，文档审查）。
+- **R18 线性化测试（TEST-R18-LINEARIZATION）**：60s 并发压力 + TSan 无 data race + Consumer 暂停注入触发 P5/P6/P7 + 验证 `Lp < Lc` 时旧 item 不被返回 + `Lc < Lp` 时旧 item 可被返回 + Consumer 返回 item 序号严格递增（HARD CONTRACT，CI nightly 测试）。
+- **R18 Drop 定义一致性测试（TEST-R18-DROP-DEFINITION）**：验证定义 A（Producer-side logical drop）与机制 B（effectiveTail 对齐）+ 机制 C（seqlock double-read）一致——Producer 推进 head 到 `tail + Capacity` 后，Consumer 通过机制 B 或 C 发现 drop，不遗漏（HARD CONTRACT，CI nightly 测试）。
+
+---
+
+**AtomicPayload 平台契约强化（v1.6 新增，P1 修复）**：
+
+> **问题回顾**：v1.5 已有 AtomicPayload 平台契约子节，但需强化为明确的 support matrix，且不得用 `static_assert(std::atomic<uint64_t>::is_always_lock_free)` 后声称"所有 C++20 平台都支持"。
+
+**CF2 Platform Support Matrix（v1.6 强化）**：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  CF2 macOS Input Capture — Platform Support Matrix          │
+├─────────────────────────────────────────────────────────────┤
+│  Supported:  x86_64, arm64                                  │
+│  Required:   std::atomic<uint64_t>::is_lock_free() == true  │
+│  Unsupported: any target where required atomic word         │
+│               is not lock-free                              │
+│  Failure:    build/configuration failure BEFORE             │
+│              CF2 runtime activation                         │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**强化点（相对 v1.5）**：
+
+1. **明确 support matrix**：v1.5 列出 supported architecture = {x86_64, arm64}，但未以 support matrix 形式明确 Supported / Required / Unsupported / Failure 四要素。v1.6 以矩阵形式明确。
+2. **禁止 `is_always_lock_free` 误导**：不得用 `static_assert(std::atomic<uint64_t>::is_always_lock_free)` 后声称"所有 C++20 平台都支持"。
+   - `is_always_lock_free` 是编译期常量（`constexpr`），在某些平台（如 32-bit ARM、某些嵌入式平台）可能为 `false`。
+   - CF2 **明确限定** supported architecture = {x86_64, arm64}，**不声称所有 C++20 平台支持**。
+   - 使用 `is_lock_free()`（运行时检查，`bool` 返回值）+ architecture guard（编译期 `#if` 检查）组合，而非 `is_always_lock_free`。
+3. **Failure 模式明确**：build error 在 **CF2 runtime activation 之前**拦截（编译期 `static_assert` + CMake architecture guard `#error`），不静默降级，不 fallback 到 mutex-based atomic。
+   - 不 fallback 到 mutex：因 mutex 违反 Input Plane 非阻塞设计原则（callback ≤1ms，不能阻塞在 mutex 上）。
+   - 不静默降级：因 `is_lock_free() == false` 意味着 `std::atomic<uint64_t>` 可能使用内部 mutex，导致 callback 阻塞，违反 CF0 §4.6.4 热路径禁锁清单。
+
+**Platform Check 机制（v1.6 强化，使用 `is_lock_free()` 非 `is_always_lock_free`）**：
+
+1. **编译期 architecture guard（首选，最早拦截）**：
+   ```
+   #if !defined(__x86_64__) && !defined(__aarch64__)
+       #error "CF2 macOS Input Capture requires x86_64 or arm64 architecture (AtomicPayload word lock-free guarantee)"
+   #endif
+   ```
+2. **编译期 `static_assert`（辅助，验证 atomic word lock-free）**：
+   ```
+   static_assert(std::atomic<uint64_t>{}.is_lock_free(),
+                 "AtomicPayload requires std::atomic<uint64_t> lock-free on this platform");
+   ```
+   > **注意**：使用 `is_lock_free()`（运行时语义但在 `static_assert` 中编译期求值）而非 `is_always_lock_free`。在 supported architecture（x86_64/arm64）上 `is_lock_free()` == true 编译期可求值。**不使用 `is_always_lock_free`**——虽然 `is_always_lock_free` 在 x86_64/arm64 上也为 true，但使用它会暗示"所有平台都支持"，与 CF2 明确限定 supported architecture 的语义冲突。
+3. **运行时 check（防御性，正常情况下编译期已保证）**：
+   ```
+   if (!std::atomic<uint64_t>{}.is_lock_free()) {
+       // 不应到达此处（编译期 static_assert + architecture guard 应已拦截）
+       return CfxError{CFX-E-CAP-ARCH-UNSUPPORTED,
+           "AtomicPayload word not lock-free (CF2 requires x86_64 or arm64)"};
+   }
+   ```
+4. **CMake architecture guard（build 系统层）**：
+   ```
+   target_compile_definitions(cf2_mac_capture PRIVATE CF2_ARCH_CHECK)
+   # 源码中配合 #if defined(CF2_ARCH_CHECK) + architecture guard
+   ```
+
+**Unsupported Platform 处理（v1.6 强化）**：
+- **if platform does not satisfy support matrix**：CF2 implementation is **unsupported**。
+- **处理方式**：**build error**（编译期 architecture guard `#error` + `static_assert` failure），在 **CF2 runtime activation 之前**拦截。
+- **不 fallback 到 mutex-based atomic**：因 mutex 违反 Input Plane 非阻塞设计原则。
+- **不静默降级**：因 `is_lock_free() == false` 会导致 callback 阻塞，违反 CF0 §4.6.4 热路径禁锁清单。
+- **明确错误码**：`CFX-E-CAP-ARCH-UNSUPPORTED`（"CF2 macOS Input Capture requires x86_64 or arm64 with std::atomic<uint64_t> lock-free"）。
+
+**与 v1.5 的区别**：
+- v1.5 使用 `static_assert(AtomicPayload<RawInputEvent>::words[0].is_lock_free())`，但未明确禁止 `is_always_lock_free` 误导，未以 support matrix 形式明确四要素。
+- v1.6 明确 support matrix + 禁止 `is_always_lock_free` 误导 + 使用 `is_lock_free()` + architecture guard 组合 + Failure 在 runtime activation 之前拦截。
+
+**与 R11 兼容性（再次确认）**：R11 冻结"不依赖 `std::atomic<256-bit>` 的平台 lock-free 保证"。AtomicPayload 平台契约要求 `std::atomic<uint64_t>`（8 字节）lock-free，**不要求** `std::atomic<RawInputEvent>`（48 字节）或 `std::atomic<256-bit>` lock-free。8 字节原子操作在 x86_64/arm64 上原生支持，不依赖大 atomic 平台特性。✓
+
+**AtomicPayload 平台契约强化可验证 invariant**：
+- 编译期 architecture guard：`#if !defined(__x86_64__) && !defined(__aarch64__) #error`（HARD CONTRACT，编译期拦截）。
+- 编译期 `static_assert(std::atomic<uint64_t>{}.is_lock_free())`（HARD CONTRACT，编译期断言，使用 `is_lock_free()` 非 `is_always_lock_free`）。
+- 文档审查：support matrix 四要素（Supported / Required / Unsupported / Failure）明确表述（HARD CONTRACT，文档审查）。
+- 文档审查：不使用 `is_always_lock_free` 后声称"所有 C++20 平台支持"（HARD CONTRACT，文档审查 + 源码审查）。
+- CI build matrix：x86_64 + arm64 双架构 build 通过（HARD CONTRACT，CI build）。
+- 非 x86_64/arm64 架构 build 失败 + 错误信息含 `CFX-E-CAP-ARCH-UNSUPPORTED`（HARD CONTRACT，CI negative test）。
+- **AtomicPayload 平台契约强化测试（TEST-ATOMIC-PAYLOAD-MATRIX）**：验证 support matrix 四要素 + `is_lock_free()` 检查（非 `is_always_lock_free`）+ 非 supported 架构 build 失败（HARD CONTRACT，CI build matrix + negative test）。
+
 ### 2.4.9 SnapshotRequest SPSC ownership 明确（Design-R8 修复）
 
 **问题**：v1 §2.1.3.5 中 FSM→Capture 和 Injection→Capture 都可能请求 snapshot，多个 producer 破坏 SPSC 前提（Single Producer）。
@@ -2473,6 +2733,9 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 | Design-R16（Drop-Oldest Queue Logical Boundary / Capacity Invariant Contradiction — INV2 `head - tail ≤ Capacity` 在 Drop-Oldest 模式下不成立，v1.5 修正） | 🔴 BLOCKER | §2.4.8 方案 A++ 不变量废弃 INV2-OLD + 引入 effectiveTail 派生量（`max(tail, head - Capacity)`）+ 新 INV2/INV6/INV7/INV8 + Consumer tryPop 加入 effectiveTail 对齐步骤 + R16 修复子节（核心数学问题回答 + effectiveTail 无竞态证明 + 五种 Consumer-pause 状态 Q1～Q5 + 统计恒等式证明） | 源码审查：INV2-OLD `head - tail ≤ Capacity` 已废弃标注；新 INV2 `head - effectiveTail ≤ Capacity` 恒成立（数学恒等式）；INV6 `effectiveTail = max(tail, head - Capacity)` 派生量定义；INV7 `droppedCount = effectiveTail - tail`；INV8 统计恒等式 `head = droppedCount + tail + (head - effectiveTail)`；Consumer tryPop 含 effectiveTail 对齐步骤（`ct < effectiveTail` 时 `tail.store(effectiveTail)`）；effectiveTail 为派生量非存储变量（无 stale-boundary race）；五种 Consumer-pause 状态 Q1～Q5 穷举完备；TEST-R16-EFFECTIVE-TAIL Consumer 长期暂停 + Producer 高频写入 + 恢复后 effectiveTail 对齐 + INV2 恒成立 + INV8 统计恒等式（CI nightly）；R16 INV2 运行时断言（DEBUG build） |
 | AtomicPayload 平台契约（v1.5 新增，P1 修复） | 🟠 P1 | §2.4.8 AtomicPayload 平台契约子节（CF2 supported architecture = {x86_64, arm64} + word `uint64_t` required `is_lock_free()` + 编译期 `static_assert` + CMake architecture guard + 运行时 check + unsupported → build error 不 fallback） | 编译期 `static_assert(AtomicPayload<RawInputEvent>::words[0].is_lock_free())`；CMake architecture guard `#if !defined(__x86_64__) && !defined(__aarch64__) #error`；CI x86_64/arm64 双架构 build 通过；非 x86_64/arm64 build 失败 + 错误信息含 `CFX-E-CAP-ARCH-UNSUPPORTED`；不 fallback 到 mutex-based atomic（违反 Input Plane 非阻塞）；与 R11 兼容（8 字节 atomic 非大 atomic） |
 | visibility/validity/linearization/lifetime/atomicity proof 分离（v1.5 新增，P1 修复） | 🟠 P1 | §2.4.8 五概念分离证明子节（visibility release/acquire + atomicity `std::atomic<uint64_t>` + validity `s1==s2==ct+1` + linearization `L2`/`Lp`/`L_align` + lifetime slot 第 k 轮区间） | 文档审查：五个概念分别有独立证明段落（visibility/atomicity/validity/linearization/lifetime），不混用"在 seq release/acquire happens-before 伞下安全"一句带过；五概念层次分离（内存层/物理层/逻辑层/并发历史层/物理时间层）；五概念正交关系明确（validity 依赖 visibility+atomicity，linearization 闭合后 validity 在线性化历史中证明，lifetime 由 validity 保证读在 lifetime 内） |
+| Design-R17（effectiveTail / Drop-Oldest logical semantics + accounting consistency — v1.5 INV7/INV8 概念混淆，v1.6 修正） | 🔴 BLOCKER | §2.4.8 R17 修复子节（R17-A 概念分离：`logicalDropBoundary` / `pendingDropped` / `cumulativeDropCount` 三量分离 + INV7a/INV7b 替代 INV7 + R17-B 区间分解 `[0, head) = [0, logicalDropBoundary) ∪ [logicalDropBoundary, tail) ∪ [tail, head)` 替代 INV8 + `cumulativeDropCount` 降级为 observational metric）+ §2.4.8 INV7/INV8 v1.6 修正注释 | 源码审查：`pendingDropped` 为派生量（非存储）+ `cumulativeDropCount` 为 `std::atomic<uint64_t>`（`droppedOldestCount` 重命名）+ 两者不混用；v1.5 INV7 已标注 v1.6 修正（拆为 INV7a/INV7b）；v1.5 INV8 已标注 v1.6 修正（替换为区间分解）；`cumulativeDropCount` 不参与 correctness 证明（observational metric）；TEST-R17-CONCEPT-SEPARATION 反例验证（Producer 写 300 → pendingDropped=44, cumulativeDropCount=44；Consumer 消费 100 → pendingDropped=0, cumulativeDropCount=44 不变）；TEST-R17-INTERVAL-DECOMPOSITION 区间分解验证（`tail ≤ logicalDropBoundary ≤ head` + `head - logicalDropBoundary ≤ Capacity` + `[logicalDropBoundary, tail)` 为空）（CI nightly） |
+| Design-R18（Drop-Oldest linearization under derived effectiveTail + concurrent head advancement — v1.5 未给出完整线性化证明，v1.6 修正） | 🔴 BLOCKER | §2.4.8 R18 修复子节（R18-1 Drop 发生时间统一定义：定义 A Producer-side logical drop 为规范定义，B/C 为 Consumer 发现机制 + R18-2 完整 Push/Pop 线性化证明 P1～P8：Producer LP=`Lp`(seq.store release) / Consumer LP=`Lc`(s2 seq.load acquire) / effectiveTail 对齐 LP=`L_align` + R18-3 核心结论：`Lp < Lc` ⇒ old item cannot be returned；`Lc < Lp` ⇒ old item may be returned legitimately + R18-4 与 v1.5 effectiveTail 无竞态证明的关系：变量层 vs 语义层） | 文档审查：R18-1 Drop 定义统一（定义 A 规范，B/C 机制）明确；R18-2 P1～P8 八种 interleaving 穷举完备，每种明确 Producer LP / Consumer LP / 正确性结论；R18-3 核心结论形式化明确；R18-4 变量层（v1.5 已解决）vs 语义层（v1.6 补充）层次分离；TEST-R18-LINEARIZATION 60s TSan + Consumer 暂停注入触发 P5/P6/P7 + `Lp < Lc` 旧 item 不返回 + `Lc < Lp` 旧 item 可返回 + item 序号严格递增；TEST-R18-DROP-DEFINITION 定义 A 与机制 B/C 一致性验证（CI nightly） |
+| AtomicPayload 平台契约强化（v1.6 新增，P1 修复） | 🟠 P1 | §2.4.8 AtomicPayload 平台契约强化子节（CF2 platform support matrix：Supported={x86_64,arm64} / Required=`is_lock_free()==true` / Unsupported=非 lock-free / Failure=build error before runtime activation + 禁止 `is_always_lock_free` 误导 + 使用 `is_lock_free()` + architecture guard 组合 + 不 fallback 到 mutex） | 编译期 architecture guard `#if !defined(__x86_64__) && !defined(__aarch64__) #error`；编译期 `static_assert(std::atomic<uint64_t>{}.is_lock_free())`（使用 `is_lock_free()` 非 `is_always_lock_free`）；文档审查：support matrix 四要素明确 + 不声称"所有 C++20 平台支持"；CI x86_64/arm64 双架构 build 通过；非 x86_64/arm64 build 失败 + `CFX-E-CAP-ARCH-UNSUPPORTED`；TEST-ATOMIC-PAYLOAD-MATRIX support matrix + `is_lock_free()` 检查 + negative test（CI build matrix）；与 R11 兼容（8 字节 atomic 非大 atomic） |
 | Design-R12（B_burst/B_rate 误标 HARD CONTRACT，v1.2 修正） | 🔴 BLOCKER | §2.4.0 三类分层表新增 WORKLOAD MODEL / TEST PROFILE 类别 + §2.4.1/§2.4.2/§2.4.7 B_burst/B_rate 降级为 WORKLOAD MODEL | 文档 B_burst=6 / B_rate=40 标注为 WORKLOAD MODEL（声明值，非 deterministic system upper bound）；backlog bound 明确限定 "在声明 workload envelope 内成立"；SPSC_STATE=64 标注为 "在指定 workload envelope 下经过验证的工程容量"；超 envelope 输入触发饱和安全降级（非违反 HARD CONTRACT）；CI 超 envelope 测试验证降级机制 |
 | Design-R13（W_test 10ms/12ms 口径歧义，v1.2 修正） | 🟠 P1 | §2.4.3 W_pause_test=10ms + §2.4.5 T_saturation_detect_test=12ms + §2.4.6 T_system_recovery_test=12ms + §2.4.7 表格 + §2.5.3 措施 6 同步 | 文档无单一 W_test 歧义；三个测试阈值命名正交（W_pause_test / T_saturation_detect_test / T_system_recovery_test）；各章节引用一致 |
 | P3 表述严格限定（v1.2 修正） | 🟠 P1 | §2.4.6 P3 严格表述 + §2.5.3 措施 6 + §2.6.8 R9 行 | 文档统一采用 "**CF2 proves bounded safety degradation and preservation of P1∧P2. It does not prove deterministic bounded return to NORMAL.**"；不写 "P3 可证" 避免歧义；明确区分 "系统侧安全降级 bounded"（可证）与 "return to NORMAL"（不证 deterministic bounded）；防止 Coding Agent 把 RECOVERY→NORMAL 实现成 "必须在 X ms 内完成" 的错误硬约束 |
@@ -2553,4 +2816,6 @@ CF2 的全部机制必须不破坏 CF0 Architecture Safety Invariant（P1/P2/P3�
 > **保持不变（v1.4）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14 已修复内容全部保持不变；`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变，仅内部实现从 v1.3 方案 A+（非原子 payload + 单次 seq 校验）改为方案 A++（word-atomic payload + seqlock double-read validation）；SPSC ownership（head=Producer, tail=Consumer）不变；epoch seq 语义不变（`seq = h + 1`）；满判定不变（`h - tail == Capacity`）。
 > **Amendment v1.5（受控修订，不推倒 2345 行 v1.4 主体）**：修复大G 项目经理 Design Gate 终审发现的唯一 BLOCKER + 2 项 P1 —— Design-R16 Drop-Oldest Queue Logical Boundary / Capacity Invariant Contradiction（§2.4.8 方案 A++ 不变量废弃 INV2-OLD `head - tail ≤ Capacity`，引入 effectiveTail 派生量 `max(tail, head - Capacity)` 作为 logical oldest boundary，新 INV2 `head - effectiveTail ≤ Capacity` 恒成立 + INV6 effectiveTail 定义 + INV7 droppedCount 恒等式 + INV8 统计恒等式 `head = droppedCount + tail + (head - effectiveTail)`；Consumer tryPop 加入 effectiveTail 对齐步骤；新增 R16 修复子节：核心数学问题回答（effectiveTail 是派生量非存储变量，无 stale-boundary race）+ effectiveTail 无竞态证明 + 五种 Consumer-pause 状态 Q1～Q5 穷举完备 + 统计恒等式证明 + droppedOldestCount 修正）；AtomicPayload 平台契约（§2.4.8 新增 AtomicPayload 平台契约子节：CF2 supported architecture = {x86_64, arm64} + word `uint64_t` required `is_lock_free()` + 编译期 `static_assert` + CMake architecture guard + unsupported → build error 不 fallback 到 mutex）；visibility/validity/linearization/lifetime/atomicity proof 分离（§2.4.8 新增五概念分离证明子节：visibility release/acquire + atomicity `std::atomic<uint64_t>` + validity `s1==s2==ct+1` + linearization `L2`/`Lp`/`L_align` + lifetime slot 第 k 轮区间，五概念正交分离不混用一句带过）；§2.6.8 回映表新增 R16 行 + AtomicPayload 平台契约行 + 五概念分离行）。新增 §2.6.8 R16 + AtomicPayload 平台契约 + 五概念分离 修订回映。
 > **保持不变（v1.5）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14/R15 已修复内容全部保持不变；`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变；方案 A++ 的 word-atomic payload + seqlock double-read validation 核心算法不变（R15 成果保留）；SPSC ownership（head=Producer, tail=Consumer）不变；epoch seq 语义不变（`seq = h + 1`）；tryPush 满判定不变（`h - tail == Capacity`）；tryPushDropOldest 不判满、总是覆写不变；**R16 仅重新定义 Queue Invariant（废弃 INV2-OLD，引入 effectiveTail 派生量 + 新 INV2/INV6/INV7/INV8）+ Consumer tryPop 加入 effectiveTail 对齐步骤，不改变 Producer 写入路径、不改变 seqlock double-read validation、不改变 word-atomic payload 存储**。
-> 待用户审查确认后，本文档状态由 DRAFT v1.5 转为 FROZEN 并授权进入下一阶段。
+> **Amendment v1.6（受控修订，不推倒 2556 行 v1.5 主体）**：修复大G 项目经理 Design Gate 终审发现的 2 项 BLOCKER + 1 项 P1 —— Design-R17 effectiveTail / Drop-Oldest logical semantics + accounting consistency（§2.4.8 新增 R17 修复子节：R17-A 概念分离引入 `logicalDropBoundary` / `pendingDropped` / `cumulativeDropCount` 三量分离，废弃 v1.5 INV7 歧义命名拆为 INV7a 瞬时派生量 + INV7b 独立累计统计量；R17-B 区间分解 `[0, head) = [0, logicalDropBoundary) ∪ [logicalDropBoundary, tail) ∪ [tail, head)` 替代 v1.5 INV8 代数恒等式，明确 `tail ≤ logicalDropBoundary ≤ head` + `head - logicalDropBoundary ≤ Capacity`；`cumulativeDropCount` 降级为 observational metric 非 correctness invariant；v1.5 INV7/INV8 原文保留加 v1.6 修正注释）；Design-R18 Drop-Oldest linearization under derived effectiveTail + concurrent head advancement（§2.4.8 新增 R18 修复子节：R18-1 Drop 发生时间统一定义选择定义 A Producer-side logical drop 为规范定义 B/C 为 Consumer 发现机制；R18-2 完整 Push/Pop 线性化证明 P1～P8 穷举 Producer LP=`Lp`(seq.store release) / Consumer LP=`Lc`(s2 seq.load acquire) / effectiveTail 对齐 LP=`L_align`，每种明确正确性结论；R18-3 核心结论形式化 `Lp < Lc` ⇒ old item cannot be returned / `Lc < Lp` ⇒ old item may be returned legitimately；R18-4 变量层 vs 语义层层次分离 no stale variable race ≠ no semantic linearization race）；AtomicPayload 平台契约强化（§2.4.8 AtomicPayload 平台契约子节强化：CF2 platform support matrix Supported={x86_64,arm64} / Required=`is_lock_free()==true` / Unsupported=非 lock-free / Failure=build error before runtime activation；禁止 `is_always_lock_free` 误导不声称所有 C++20 平台支持；使用 `is_lock_free()` + architecture guard 组合；不 fallback 到 mutex）；§2.6.8 回映表新增 R17 行 + R18 行 + AtomicPayload 平台契约强化行）。新增 §2.6.8 R17 + R18 + AtomicPayload 平台契约强化 修订回映。
+> **保持不变（v1.6）**：不修改 CF0/CF1 Frozen 文档；不引入 Coordinator election / Raft / Paxos；不改变 NodeID/Topology Authority 语义；不修改 Handoff FSM；不引入内核扩展或驱动；不采集屏幕画面；不进入 Task Design；不直接 Coding；六个模块（CF2-S01～S06）、CF0-CF1 边界、Driverless User-Mode Architecture、CF0 Safety Invariant（P1/P2/P3）、CF0 七契约、CF0 8 线程模型、CF1 Node Identity、第一原则落地路径、Requirements v1.4 FROZEN 全部内容、双通道架构（SPSC_DATA=256 / SPSC_STATE=64）、STATE saturation safety path、CGEventSourceFlagsState ground truth、bitmap ownership（方案 B SPSC snapshot publication）、RECOVERY、R9 ≤100ms total deadline、R11 ownership model、Callback Boundary（R14）、Design-R1/R2/R3/R4/R5/R6/R8/R9/R10/R12/R13/R14/R15/R16 已修复内容全部保持不变；`SpscRingBuffer` 公开接口签名（`tryPush/tryPop/tryPushDropOldest`）不变；方案 A++ 的 word-atomic payload + seqlock double-read validation 核心算法不变（R15 成果保留）；SPSC ownership（head=Producer, tail=Consumer）不变；epoch seq 语义不变（`seq = h + 1`）；tryPush 满判定不变（`h - tail == Capacity`）；tryPushDropOldest 不判满、总是覆写不变；**R17/R18 仅做语义闭合（drop 概念分离 + 区间分解 + 线性化证明 P1～P8 + Drop 定义统一），不改变 Producer 写入路径、不改变 seqlock double-read validation、不改变 word-atomic payload 存储、不改变 effectiveTail 对齐步骤、不重新引入 publishedTail、不让 Producer 写 Consumer-owned tail。**
+> 待用户审查确认后，本文档状态由 DRAFT v1.6 转为 FROZEN 并授权进入下一阶段。
