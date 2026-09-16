@@ -13,6 +13,10 @@ add_library(cfx_platform_mac STATIC
     capture_handle.hpp
     cg_event_normalizer.hpp
     cg_event_normalizer.cpp
+    dual_channel_spsc.hpp
+    dual_channel_spsc.cpp
+    authoritative_resync.hpp
+    authoritative_resync.cpp
 )
 
 target_include_directories(cfx_platform_mac PUBLIC

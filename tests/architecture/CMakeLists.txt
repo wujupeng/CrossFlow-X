@@ -1,0 +1,3 @@
+add_executable(test_platform_isolation platform_isolation_test.cpp)
+target_link_libraries(test_platform_isolation PRIVATE)
+add_test(NAME test_platform_isolation COMMAND test_platform_isolation)
