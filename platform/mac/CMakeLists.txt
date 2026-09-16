@@ -4,6 +4,15 @@ endif()
 
 add_library(cfx_platform_mac STATIC
     ${CMAKE_SOURCE_DIR}/cmake/placeholder.cpp
+    mac_event_tap.hpp
+    mac_event_tap.cpp
+    a11y_permission_guard.hpp
+    a11y_permission_guard.cpp
+    mac_event_field_extractor.hpp
+    mac_event_field_extractor.cpp
+    capture_handle.hpp
+    cg_event_normalizer.hpp
+    cg_event_normalizer.cpp
 )
 
 target_include_directories(cfx_platform_mac PUBLIC
@@ -14,4 +23,11 @@ target_link_libraries(cfx_platform_mac PUBLIC cfx_platform_common)
 
 find_library(CORE_GRAPHICS CoreGraphics REQUIRED)
 find_library(CORE_FOUNDATION CoreFoundation REQUIRED)
-target_link_libraries(cfx_platform_mac PRIVATE ${CORE_GRAPHICS} ${CORE_FOUNDATION})
+find_library(APPLICATION_SERVICES ApplicationServices REQUIRED)
+find_library(CARBON Carbon REQUIRED)
+target_link_libraries(cfx_platform_mac PRIVATE
+    ${CORE_GRAPHICS}
+    ${CORE_FOUNDATION}
+    ${APPLICATION_SERVICES}
+    ${CARBON}
+)
