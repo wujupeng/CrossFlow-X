@@ -191,6 +191,7 @@ int testAllInvariantsUnderStress() {
 
     constexpr int TOTAL = 10000;
     std::atomic<bool> done{false};
+    std::atomic<bool> invariantViolation{false};
 
     std::thread producer([&]() {
         for (int i = 1; i <= TOTAL; ++i) {
@@ -206,6 +207,7 @@ int testAllInvariantsUnderStress() {
             if (rb.tryPop(out)) {
 #ifndef NDEBUG
                 if (!rb.validateAllInvariants()) {
+                    invariantViolation.store(true, std::memory_order_relaxed);
                 }
 #endif
             } else {
@@ -217,6 +219,7 @@ int testAllInvariantsUnderStress() {
     producer.join();
     consumer.join();
 
+    if (invariantViolation.load()) return 1;
 #ifndef NDEBUG
     if (!rb.validateAllInvariants()) return 1;
 #endif

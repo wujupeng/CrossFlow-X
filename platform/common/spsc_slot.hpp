@@ -13,9 +13,11 @@ template <typename T>
 struct Slot {
     AtomicPayload<T> payload;
     std::atomic<uint64_t> seq{0};
+    std::atomic<uint64_t> writeVersion{0};
 
     void initialize(uint64_t initialSeq) noexcept {
         seq.store(initialSeq, std::memory_order_relaxed);
+        writeVersion.store(0, std::memory_order_relaxed);
     }
 };
 
@@ -23,21 +25,28 @@ template <typename T>
 class SeqlockValidator {
 public:
     static std::optional<T> tryRead(const Slot<T>& slot, uint64_t expectedSeq) noexcept {
+        const uint64_t v1 = slot.writeVersion.load(std::memory_order_acquire);
+        if (v1 % 2 != 0) {
+            return std::nullopt;
+        }
         const uint64_t s1 = slot.seq.load(std::memory_order_acquire);
         if (s1 != expectedSeq) {
             return std::nullopt;
         }
-        T item = slot.payload.load(std::memory_order_relaxed);
+        T item = slot.payload.load(std::memory_order_acquire);
         const uint64_t s2 = slot.seq.load(std::memory_order_acquire);
-        if (s1 != s2) {
+        const uint64_t v2 = slot.writeVersion.load(std::memory_order_acquire);
+        if (v1 != v2 || s1 != s2) {
             return std::nullopt;
         }
         return item;
     }
 
     static void write(Slot<T>& slot, const T& item, uint64_t newSeq) noexcept {
-        slot.payload.store(item, std::memory_order_relaxed);
+        slot.writeVersion.fetch_add(1, std::memory_order_acq_rel);
+        slot.payload.store(item, std::memory_order_release);
         slot.seq.store(newSeq, std::memory_order_release);
+        slot.writeVersion.fetch_add(1, std::memory_order_release);
     }
 };
 

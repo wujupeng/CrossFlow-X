@@ -32,14 +32,16 @@ public:
             const std::size_t byteOffset = k * 8;
             const std::size_t bytesToCopy = (byteOffset + 8 <= sizeof(T)) ? 8 : (sizeof(T) - byteOffset);
             std::memcpy(&word, src + byteOffset, bytesToCopy);
-            words_[k].store(word, mo);
+            const std::memory_order word_mo = (k + 1 == N) ? mo : std::memory_order_relaxed;
+            words_[k].store(word, word_mo);
         }
     }
 
     T load(std::memory_order mo = std::memory_order_relaxed) const noexcept {
         alignas(T) unsigned char dst[sizeof(T)] = {};
         for (std::size_t k = 0; k < N; ++k) {
-            const ap_u64 word = words_[k].load(mo);
+            const std::memory_order word_mo = (k == 0) ? mo : std::memory_order_relaxed;
+            const ap_u64 word = words_[k].load(word_mo);
             const std::size_t byteOffset = k * 8;
             const std::size_t bytesToCopy = (byteOffset + 8 <= sizeof(T)) ? 8 : (sizeof(T) - byteOffset);
             std::memcpy(dst + byteOffset, &word, bytesToCopy);

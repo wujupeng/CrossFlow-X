@@ -36,8 +36,10 @@ public:
             return false;
         }
         const uint64_t i = h % Capacity;
-        buffer_[i].payload.store(item, std::memory_order_relaxed);
+        buffer_[i].writeVersion.fetch_add(1, std::memory_order_acq_rel);
+        buffer_[i].payload.store(item, std::memory_order_release);
         buffer_[i].seq.store(h + 1, std::memory_order_release);
+        buffer_[i].writeVersion.fetch_add(1, std::memory_order_release);
         head_.store(h + 1, std::memory_order_release);
         return true;
     }
@@ -45,8 +47,10 @@ public:
     bool tryPushDropOldest(const T& item) noexcept {
         const uint64_t h = head_.load(std::memory_order_relaxed);
         const uint64_t i = h % Capacity;
-        buffer_[i].payload.store(item, std::memory_order_relaxed);
+        buffer_[i].writeVersion.fetch_add(1, std::memory_order_acq_rel);
+        buffer_[i].payload.store(item, std::memory_order_release);
         buffer_[i].seq.store(h + 1, std::memory_order_release);
+        buffer_[i].writeVersion.fetch_add(1, std::memory_order_release);
         head_.store(h + 1, std::memory_order_release);
         if (h - tail_.load(std::memory_order_acquire) >= Capacity) {
             cumulativeDropCount_.fetch_add(1, std::memory_order_relaxed);
@@ -55,38 +59,43 @@ public:
     }
 
     bool tryPop(T& outItem) noexcept {
-        uint64_t ct = tail_.load(std::memory_order_relaxed);
-        const uint64_t h = head_.load(std::memory_order_acquire);
+        while (true) {
+            uint64_t ct = tail_.load(std::memory_order_relaxed);
+            const uint64_t h = head_.load(std::memory_order_acquire);
 
-        const uint64_t logicalDropBoundary = (ct > (h > Capacity ? h - Capacity : 0))
-                                                 ? ct
-                                                 : (h > Capacity ? h - Capacity : 0);
-        if (ct < logicalDropBoundary) {
-            tail_.store(logicalDropBoundary, std::memory_order_release);
-            ct = logicalDropBoundary;
-        }
+            const uint64_t hMinusCap = (h > Capacity) ? (h - Capacity) : 0;
+            const uint64_t logicalDropBoundary = (ct > hMinusCap) ? ct : hMinusCap;
+            if (ct < logicalDropBoundary) {
+                tail_.store(logicalDropBoundary, std::memory_order_release);
+                ct = logicalDropBoundary;
+            }
 
-        if (ct >= h) {
-            return false;
-        }
+            if (ct >= h) {
+                return false;
+            }
 
-        const uint64_t i = ct % Capacity;
-        const uint64_t s1 = buffer_[i].seq.load(std::memory_order_acquire);
-        if (s1 != ct + 1) {
+            const uint64_t i = ct % Capacity;
+            const uint64_t v1 = buffer_[i].writeVersion.load(std::memory_order_acquire);
+            if (v1 % 2 != 0) {
+                return false;
+            }
+            const uint64_t s1 = buffer_[i].seq.load(std::memory_order_acquire);
+            if (s1 != ct + 1) {
+                tail_.store(ct + 1, std::memory_order_release);
+                continue;
+            }
+
+            T item = buffer_[i].payload.load(std::memory_order_acquire);
+            const uint64_t s2 = buffer_[i].seq.load(std::memory_order_acquire);
+            const uint64_t v2 = buffer_[i].writeVersion.load(std::memory_order_acquire);
+            if (v1 != v2 || s1 != s2) {
+                return false;
+            }
+
             tail_.store(ct + 1, std::memory_order_release);
-            return tryPop(outItem);
+            outItem = item;
+            return true;
         }
-
-        T item = buffer_[i].payload.load(std::memory_order_relaxed);
-        const uint64_t s2 = buffer_[i].seq.load(std::memory_order_acquire);
-        if (s1 != s2) {
-            tail_.store(ct + 1, std::memory_order_release);
-            return tryPop(outItem);
-        }
-
-        tail_.store(ct + 1, std::memory_order_release);
-        outItem = item;
-        return true;
     }
 
     uint64_t head() const noexcept {
