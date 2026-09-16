@@ -11,6 +11,17 @@ namespace cfx {
 inline constexpr uint64_t SPSC_DATA_CAPACITY = 256;
 inline constexpr uint64_t SPSC_STATE_CAPACITY = 64;
 
+struct LPEvent {
+    const char* name;
+    uint64_t head;
+    uint64_t tail;
+    uint64_t slotIndex;
+    uint64_t slotSeq;
+    uint64_t writeVersion;
+};
+
+using LPCallback = void (*)(const LPEvent&, void*);
+
 template <typename T, uint64_t Capacity>
 class SpscRingBuffer {
     static_assert(Capacity > 0, "Capacity must be > 0");
@@ -29,6 +40,11 @@ public:
     SpscRingBuffer(const SpscRingBuffer&) = delete;
     SpscRingBuffer& operator=(const SpscRingBuffer&) = delete;
 
+    void setLPCallback(LPCallback cb, void* userData) noexcept {
+        lpCallback_ = cb;
+        lpUserData_ = userData;
+    }
+
     bool tryPush(const T& item) noexcept {
         const uint64_t h = head_.load(std::memory_order_relaxed);
         const uint64_t ct = tail_.load(std::memory_order_acquire);
@@ -41,6 +57,12 @@ public:
         buffer_[i].seq.store(h + 1, std::memory_order_release);
         buffer_[i].writeVersion.fetch_add(1, std::memory_order_release);
         head_.store(h + 1, std::memory_order_release);
+        if (lpCallback_) {
+            lpCallback_({"Lp", h + 1, tail_.load(std::memory_order_acquire),
+                         i, h + 1,
+                         buffer_[i].writeVersion.load(std::memory_order_acquire)},
+                        lpUserData_);
+        }
         return true;
     }
 
@@ -52,6 +74,12 @@ public:
         buffer_[i].seq.store(h + 1, std::memory_order_release);
         buffer_[i].writeVersion.fetch_add(1, std::memory_order_release);
         head_.store(h + 1, std::memory_order_release);
+        if (lpCallback_) {
+            lpCallback_({"Lp", h + 1, tail_.load(std::memory_order_acquire),
+                         i, h + 1,
+                         buffer_[i].writeVersion.load(std::memory_order_acquire)},
+                        lpUserData_);
+        }
         if (h - tail_.load(std::memory_order_acquire) >= Capacity) {
             cumulativeDropCount_.fetch_add(1, std::memory_order_relaxed);
         }
@@ -67,6 +95,11 @@ public:
             const uint64_t logicalDropBoundary = (ct > hMinusCap) ? ct : hMinusCap;
             if (ct < logicalDropBoundary) {
                 tail_.store(logicalDropBoundary, std::memory_order_release);
+                if (lpCallback_) {
+                    lpCallback_({"Ld", h, logicalDropBoundary,
+                                 ct % Capacity, 0, 0},
+                                lpUserData_);
+                }
                 ct = logicalDropBoundary;
             }
 
@@ -82,6 +115,10 @@ public:
             const uint64_t s1 = buffer_[i].seq.load(std::memory_order_acquire);
             if (s1 != ct + 1) {
                 tail_.store(ct + 1, std::memory_order_release);
+                if (lpCallback_) {
+                    lpCallback_({"Ld", h, ct + 1, i, s1, v1},
+                                lpUserData_);
+                }
                 continue;
             }
 
@@ -93,6 +130,10 @@ public:
             }
 
             tail_.store(ct + 1, std::memory_order_release);
+            if (lpCallback_) {
+                lpCallback_({"Lc", h, ct + 1, i, s1, v1},
+                            lpUserData_);
+            }
             outItem = item;
             return true;
         }
@@ -180,6 +221,8 @@ private:
     std::atomic<uint64_t> head_{0};
     std::atomic<uint64_t> tail_{0};
     std::atomic<uint64_t> cumulativeDropCount_{0};
+    LPCallback lpCallback_{nullptr};
+    void* lpUserData_{nullptr};
 };
 
 }  // namespace cfx
