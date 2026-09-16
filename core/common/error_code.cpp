@@ -12,7 +12,7 @@ struct ErrorMeta {
     std::string_view reason;
 };
 
-constexpr std::array<ErrorMeta, 49> kErrorMeta = {{
+constexpr std::array<ErrorMeta, 62> kErrorMeta = {{
     {ErrorLevel::Error,     ErrorModule::Cap,         "PERM"},
     {ErrorLevel::Error,     ErrorModule::Cap,         "API"},
     {ErrorLevel::Error,     ErrorModule::Inj,         "PERM"},
@@ -62,6 +62,19 @@ constexpr std::array<ErrorMeta, 49> kErrorMeta = {{
     {ErrorLevel::Error,     ErrorModule::Recovery,    "UNREACHABLE"},
     {ErrorLevel::Error,     ErrorModule::Recovery,    "TIMEOUT"},
     {ErrorLevel::Warn,      ErrorModule::Handoff,     "UNREGISTERED-PEER"},
+    {ErrorLevel::Error,     ErrorModule::Cap,         "TAP-FAIL"},
+    {ErrorLevel::Error,     ErrorModule::Cap,         "STATE-CHANNEL-SATURATED"},
+    {ErrorLevel::Error,     ErrorModule::Cap,         "ARCH-UNSUPPORTED"},
+    {ErrorLevel::Error,     ErrorModule::Inj,         "UNAUTHORIZED-SOURCE"},
+    {ErrorLevel::Error,     ErrorModule::Inj,         "RELEASE-FAILED"},
+    {ErrorLevel::Warn,      ErrorModule::Cap,         "A11Y-DENIED"},
+    {ErrorLevel::Warn,      ErrorModule::Cap,         "QUEUE-DROP"},
+    {ErrorLevel::Warn,      ErrorModule::Cap,         "UNKNOWN-EVENT-TYPE"},
+    {ErrorLevel::Warn,      ErrorModule::Cap,         "UNKNOWN-KEYCODE"},
+    {ErrorLevel::Warn,      ErrorModule::Cap,         "CALLBACK-SLOW"},
+    {ErrorLevel::Warn,      ErrorModule::Inj,         "FAIL-STREAK"},
+    {ErrorLevel::Warn,      ErrorModule::Inj,         "INVALID-PARAM"},
+    {ErrorLevel::Warn,      ErrorModule::Inj,         "RELEASE-INCOMPLETE"},
 }};
 
 constexpr std::size_t errorCodeIndex(ErrorCode code) noexcept {

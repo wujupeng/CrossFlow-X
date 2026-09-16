@@ -41,6 +41,19 @@ int testAllErrorCodes() {
         {ErrorCode::ProtoVer,          ErrorLevel::Error, ErrorModule::Proto,   "CFX-E-PROTO-VER"},
         {ErrorCode::LinkDown,          ErrorLevel::Error, ErrorModule::Link,    "CFX-E-LINK-DOWN"},
         {ErrorCode::PairUnpaired,      ErrorLevel::Error, ErrorModule::Pair,    "CFX-E-PAIR-UNPAIRED"},
+        {ErrorCode::CapTapFail,                ErrorLevel::Error, ErrorModule::Cap,     "CFX-E-CAP-TAP-FAIL"},
+        {ErrorCode::CapStateChannelSaturated,  ErrorLevel::Error, ErrorModule::Cap,     "CFX-E-CAP-STATE-CHANNEL-SATURATED"},
+        {ErrorCode::CapArchUnsupported,        ErrorLevel::Error, ErrorModule::Cap,     "CFX-E-CAP-ARCH-UNSUPPORTED"},
+        {ErrorCode::InjUnauthorizedSource,     ErrorLevel::Error, ErrorModule::Inj,     "CFX-E-INJ-UNAUTHORIZED-SOURCE"},
+        {ErrorCode::InjReleaseFailed,          ErrorLevel::Error, ErrorModule::Inj,     "CFX-E-INJ-RELEASE-FAILED"},
+        {ErrorCode::CapA11yDenied,             ErrorLevel::Warn,  ErrorModule::Cap,     "CFX-W-CAP-A11Y-DENIED"},
+        {ErrorCode::CapQueueDrop,              ErrorLevel::Warn,  ErrorModule::Cap,     "CFX-W-CAP-QUEUE-DROP"},
+        {ErrorCode::CapUnknownEventType,       ErrorLevel::Warn,  ErrorModule::Cap,     "CFX-W-CAP-UNKNOWN-EVENT-TYPE"},
+        {ErrorCode::CapUnknownKeycode,         ErrorLevel::Warn,  ErrorModule::Cap,     "CFX-W-CAP-UNKNOWN-KEYCODE"},
+        {ErrorCode::CapCallbackSlow,           ErrorLevel::Warn,  ErrorModule::Cap,     "CFX-W-CAP-CALLBACK-SLOW"},
+        {ErrorCode::InjFailStreak,             ErrorLevel::Warn,  ErrorModule::Inj,     "CFX-W-INJ-FAIL-STREAK"},
+        {ErrorCode::InjInvalidParam,           ErrorLevel::Warn,  ErrorModule::Inj,     "CFX-W-INJ-INVALID-PARAM"},
+        {ErrorCode::InjReleaseIncomplete,      ErrorLevel::Warn,  ErrorModule::Inj,     "CFX-W-INJ-RELEASE-INCOMPLETE"},
     };
     for (const auto& c : cases) {
         if (levelOf(c.code) != c.level) return 1;

@@ -23,6 +23,10 @@ elseif(CFX_PLATFORM_WIN)
     add_compile_definitions(CFX_PLATFORM_WIN=1)
 endif()
 
+if(NOT CFX_PLATFORM_MAC AND NOT CFX_PLATFORM_WIN)
+    message(FATAL_ERROR "CFX-E-CAP-ARCH-UNSUPPORTED: CF2 requires x86_64 or arm64 on macOS or Windows")
+endif()
+
 if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     add_compile_options(/W4 /WX /permissive- /utf-8 /Zc:__cplusplus)
     add_compile_definitions(_CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)

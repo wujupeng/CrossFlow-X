@@ -18,6 +18,30 @@ add_executable(test_platform_ports test_platform_ports.cpp)
 target_link_libraries(test_platform_ports PRIVATE cfx_platform_common)
 add_test(NAME test_platform_ports COMMAND test_platform_ports)
 
+add_executable(test_atomic_payload test_atomic_payload.cpp)
+target_link_libraries(test_atomic_payload PRIVATE cfx_platform_common)
+add_test(NAME test_atomic_payload COMMAND test_atomic_payload)
+
+add_executable(test_atomic_payload_platform test_atomic_payload_platform.cpp)
+target_link_libraries(test_atomic_payload_platform PRIVATE cfx_platform_common)
+add_test(NAME test_atomic_payload_platform COMMAND test_atomic_payload_platform)
+
+add_executable(test_spsc_ring_buffer test_spsc_ring_buffer.cpp)
+target_link_libraries(test_spsc_ring_buffer PRIVATE cfx_platform_common)
+add_test(NAME test_spsc_ring_buffer COMMAND test_spsc_ring_buffer)
+
+add_executable(test_spsc_invariants test_spsc_invariants.cpp)
+target_link_libraries(test_spsc_invariants PRIVATE cfx_platform_common)
+add_test(NAME test_spsc_invariants COMMAND test_spsc_invariants)
+
+add_executable(test_r18_linearization test_r18_linearization.cpp)
+target_link_libraries(test_r18_linearization PRIVATE cfx_platform_common)
+add_test(NAME test_r18_linearization COMMAND test_r18_linearization)
+
+add_executable(test_spsc_slot test_spsc_slot.cpp)
+target_link_libraries(test_spsc_slot PRIVATE cfx_platform_common)
+add_test(NAME test_spsc_slot COMMAND test_spsc_slot)
+
 add_executable(test_business_interfaces test_business_interfaces.cpp)
 target_link_libraries(test_business_interfaces PRIVATE
     cfx_common

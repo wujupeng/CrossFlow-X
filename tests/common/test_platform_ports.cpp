@@ -39,12 +39,14 @@ int testPressedStateSnapshot() {
     using namespace cfx;
     PressedStateSnapshot snap{};
     snap.modifiers = ModifierState{true, false, false, false, false};
-    snap.pressedMouseButtons = {MouseButton::Left};
-    snap.pressedKeys = {65, 66};
+    snap.pressedMouseButtons.setPressed(MouseButton::Left);
+    snap.pressedKeys.setPressed(65);
+    snap.pressedKeys.setPressed(66);
 
     if (!snap.modifiers.shift) return 1;
-    if (snap.pressedMouseButtons.size() != 1) return 1;
-    if (snap.pressedKeys.size() != 2) return 1;
+    if (snap.pressedMouseButtons.count() != 1) return 1;
+    if (snap.pressedKeys.count() != 2) return 1;
+    if (snap.stale) return 1;
     return 0;
 }
 
@@ -71,7 +73,7 @@ int testMockInterfaces() {
             return InjectResult{true, 0, static_cast<u64>(events.size()) * 50};
         }
         ReleaseResult releaseAllPressed(const PressedStateSnapshot& pressed) override {
-            return ReleaseResult{static_cast<u32>(pressed.pressedKeys.size()), 1};
+            return ReleaseResult{static_cast<u32>(pressed.pressedKeys.count()), 1};
         }
     };
 

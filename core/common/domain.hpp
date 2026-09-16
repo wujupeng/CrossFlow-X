@@ -148,6 +148,12 @@ struct EntryCoord {
     u32 y;
 };
 
+struct EdgeOverflowEvent {
+    EdgeDirection direction;
+    u32 overflow;
+    u32 cursorY;
+};
+
 struct ModifierState {
     bool shift;
     bool ctrl;

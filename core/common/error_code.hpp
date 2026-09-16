@@ -80,6 +80,19 @@ enum class ErrorCode : uint16_t {
     RecoveryUnreachable,
     RecoveryTimeout,
     HandoffUnregisteredPeer,
+    CapTapFail,
+    CapStateChannelSaturated,
+    CapArchUnsupported,
+    InjUnauthorizedSource,
+    InjReleaseFailed,
+    CapA11yDenied,
+    CapQueueDrop,
+    CapUnknownEventType,
+    CapUnknownKeycode,
+    CapCallbackSlow,
+    InjFailStreak,
+    InjInvalidParam,
+    InjReleaseIncomplete,
 };
 
 std::string_view levelString(ErrorLevel level) noexcept;
