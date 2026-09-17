@@ -26,5 +26,5 @@ target_include_directories(cfx_s07_discovery PUBLIC
 if(CFX_PLATFORM_WIN)
     target_link_libraries(cfx_s07_discovery PUBLIC ws2_32 dnsapi)
 elseif(CFX_PLATFORM_MAC)
-    target_link_libraries(cfx_s07_discovery PUBLIC dns_sd)
+    # dns_sd API is part of libSystem on macOS, no explicit link needed
 endif()
