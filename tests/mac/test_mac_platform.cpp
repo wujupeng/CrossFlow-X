@@ -168,6 +168,7 @@ static void test_normalizer_to_raw_input_event() {
     assert(event.platformTime == 999);
     assert(event.kind == RawEventKind::KeyRelease);
     assert(std::get<RawKeyPayload>(event.payload).keyCode == 88);
+    (void)event;
 
     printf("  [PASS] test_normalizer_to_raw_input_event\n");
 }
@@ -245,6 +246,7 @@ static void test_spsc_with_raw_input_event_flat() {
     assert(out.deltaX == 100);
     assert(out.deltaY == 200);
     assert(out.valid == 1);
+    (void)out;
 
     printf("  [PASS] test_spsc_with_raw_input_event_flat\n");
 }
