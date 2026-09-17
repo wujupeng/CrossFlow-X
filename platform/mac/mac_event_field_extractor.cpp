@@ -59,7 +59,7 @@ RawInputEventFlat MacEventFieldExtractor::extract(const void* cgEvent) const noe
         }
         case RawEventKind::MouseButtonPress:
         case RawEventKind::MouseButtonRelease: {
-            const CGMouseButton btn = CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber);
+            const CGMouseButton btn = static_cast<CGMouseButton>(CGEventGetIntegerValueField(event, kCGMouseEventButtonNumber));
             out.button = mapMouseButton(static_cast<uint8_t>(btn));
             break;
         }
