@@ -281,6 +281,7 @@ int testP5ConsumerS1ProducerOverwrite() {
             std::this_thread::yield();
 
         Event item = slot.payload.load(std::memory_order_acquire);
+        (void)item;
         consumerS2 = slot.seq.load(std::memory_order_acquire);
         uint64_t v2 = slot.writeVersion.load(std::memory_order_acquire);
         rec.record("Lc", consumerS2);
@@ -630,6 +631,7 @@ int testCoreConclusionLpBeforeLcOldItemNotReturned() {
             while (!overwriteDone.load(std::memory_order_acquire))
                 std::this_thread::yield();
             Event item = slot.payload.load(std::memory_order_acquire);
+            (void)item;
             s2 = slot.seq.load(std::memory_order_acquire);
         });
 
