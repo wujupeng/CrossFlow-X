@@ -41,7 +41,7 @@ bool A11yPermissionGuard::checkAccessibility() const noexcept {
 }
 
 bool A11yPermissionGuard::checkInputMonitoring() const noexcept {
-    return CGPreflightSessionEventAccess();
+    return CGPreflightListenEventAccess();
 }
 
 void A11yPermissionGuard::promptAccessibility() const noexcept {
@@ -59,7 +59,7 @@ void A11yPermissionGuard::promptAccessibility() const noexcept {
 }
 
 void A11yPermissionGuard::promptInputMonitoring() const noexcept {
-    (void)CGRequestSessionEventAccess();
+    (void)CGRequestListenEventAccess();
 }
 
 bool A11yPermissionGuard::ensurePermissions() noexcept {
