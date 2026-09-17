@@ -177,6 +177,16 @@ void MacEventTap::captureThreadLoop() noexcept {
             gotEvent = true;
         }
 
+        if (dualChannel_.isStateChannelSaturated()) {
+            while (dualChannel_.tryPopState(flat)) {
+                processEvent(flat);
+                gotEvent = true;
+            }
+            if (dualChannel_.stateEmpty()) {
+                dualChannel_.clearStateChannelSaturated();
+            }
+        }
+
         if (!gotEvent) {
             std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
