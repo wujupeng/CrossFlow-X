@@ -377,7 +377,7 @@ static int test_macos_physical_cgeventtap_chain() {
     }
 
     CGEventRef moveEvent = CGEventCreateMouseEvent(
-        nullptr, kCGEventMouseMoved, CGPointMake(100, 100), 0);
+        nullptr, kCGEventMouseMoved, CGPointMake(100, 100), kCGMouseButtonLeft);
     CGEventPost(kCGHIDEventTap, moveEvent);
     CFRelease(moveEvent);
 
