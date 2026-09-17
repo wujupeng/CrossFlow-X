@@ -57,7 +57,28 @@ public:
 
     static constexpr size_t kListenEventCount = 10;
 
+    enum class ListenEventId : uint8_t {
+        MouseMoved = 0,
+        LeftMouseDown = 1,
+        LeftMouseUp = 2,
+        RightMouseDown = 3,
+        RightMouseUp = 4,
+        OtherMouseDown = 5,
+        OtherMouseUp = 6,
+        ScrollWheel = 7,
+        KeyDown = 8,
+        KeyUp = 9,
+    };
+
+    static uint32_t listenEventType(size_t index) noexcept;
+
+    static uint64_t buildListenEventMask() noexcept;
+
+    static bool isEventMaskComplete() noexcept;
+
     CGEventNormalizer& normalizer() noexcept { return normalizer_; }
+
+    void processEvent(const RawInputEventFlat& flat) noexcept;
 
 private:
     static void* cgEventCallback(void* proxy, uint32_t type, void* event, void* userInfo) noexcept;
@@ -67,7 +88,7 @@ private:
     void enterDegradedState() noexcept;
 
     void captureThreadLoop() noexcept;
-    void processEvent(const RawInputEventFlat& flat) noexcept;
+
 
     A11yPermissionGuard permissionGuard_;
     MacEventFieldExtractor fieldExtractor_;

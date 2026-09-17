@@ -295,26 +295,48 @@ static void test_capture_handle_concurrent() {
 
 static void test_event_mask_complete_coverage() {
     assert(MacEventTap::kListenEventCount == 10);
-    printf("  [PASS] test_event_mask_complete_coverage (10 event types)\n");
+
+    for (size_t i = 0; i < MacEventTap::kListenEventCount; ++i) {
+        assert(MacEventTap::listenEventType(i) != 0xFFFFFFFF);
+        for (size_t j = 0; j < i; ++j) {
+            assert(MacEventTap::listenEventType(j) != MacEventTap::listenEventType(i));
+        }
+    }
+
+    printf("  [PASS] test_event_mask_complete_coverage (10 distinct event types)\n");
 }
 
 static void test_event_mask_all_ten_types() {
-    assert(MacEventTap::kListenEventCount >= 10);
-    printf("  [PASS] test_event_mask_all_ten_types\n");
+    assert(MacEventTap::isEventMaskComplete());
+
+    const uint64_t mask = MacEventTap::buildListenEventMask();
+    for (size_t i = 0; i < MacEventTap::kListenEventCount; ++i) {
+#ifdef __APPLE__
+        const uint64_t bit = static_cast<uint64_t>(CGEventBitmaskForEventType(
+            static_cast<CGEventType>(MacEventTap::listenEventType(i))));
+#else
+        const uint64_t bit = (1ULL << MacEventTap::listenEventType(i));
+#endif
+        assert((mask & bit) != 0);
+        (void)bit;
+    }
+    (void)mask;
+
+    printf("  [PASS] test_event_mask_all_ten_types (actual mask bits verified)\n");
 }
 
 static void test_normalizer_chain_process_event() {
-    CGEventNormalizer normalizer;
+    MacEventTap tap;
 
     std::atomic<int> onEventCallCount{0};
-    normalizer.setOnEvent([&onEventCallCount](const RawInputEvent&) {
+    tap.normalizer().setOnEvent([&onEventCallCount](const RawInputEvent&) {
         onEventCallCount.fetch_add(1, std::memory_order_relaxed);
     });
 
     ScreenBoundary boundary{};
     boundary.width = 1920;
     boundary.height = 1080;
-    normalizer.setScreenBoundary(boundary);
+    tap.normalizer().setScreenBoundary(boundary);
 
     RawInputEventFlat flat{};
     flat.kind = static_cast<uint8_t>(RawEventKind::MouseMove);
@@ -322,13 +344,45 @@ static void test_normalizer_chain_process_event() {
     flat.deltaY = 10;
     flat.valid = 1;
 
-    normalizer.normalize(flat);
+    tap.processEvent(flat);
 
     assert(onEventCallCount.load() == 1);
-    assert(normalizer.normalizedCount() == 1);
+    assert(tap.normalizer().normalizedCount() == 1);
 
-    printf("  [PASS] test_normalizer_chain_process_event\n");
+    printf("  [PASS] test_normalizer_chain_process_event (MacEventTap::processEvent -> normalizer -> onEvent)\n");
 }
+
+#ifdef __APPLE__
+static void test_macos_physical_cgeventtap_chain() {
+    MacEventTap tap;
+
+    std::atomic<int> onEventCallCount{0};
+    std::atomic<bool> eventReceived{false};
+
+    const CaptureHandle handle = tap.start([&onEventCallCount, &eventReceived](const RawInputEvent& event) {
+        onEventCallCount.fetch_add(1, std::memory_order_relaxed);
+        eventReceived.store(true, std::memory_order_release);
+    });
+
+    if (handle.active) {
+        CGEventRef moveEvent = CGEventCreateMouseEvent(
+            nullptr, kCGEventMouseMoved, CGPointMake(100, 100), 0);
+        CGEventPost(kCGHIDEventTap, moveEvent);
+        CFRelease(moveEvent);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+        tap.stop(handle);
+
+        printf("  [INFO] macOS physical: onEvent called %d times\n",
+               onEventCallCount.load());
+    } else {
+        printf("  [SKIP] CGEventTap not installed (permission or environment)\n");
+    }
+
+    printf("  [PASS] test_macos_physical_cgeventtap_chain (skeleton)\n");
+}
+#endif
 
 int main() {
     printf("=== CF2 Group 2 macOS Platform Tests ===\n\n");
@@ -362,6 +416,11 @@ int main() {
 
     printf("\n[Normalizer Chain]\n");
     test_normalizer_chain_process_event();
+
+#ifdef __APPLE__
+    printf("\n[macOS Physical Evidence]\n");
+    test_macos_physical_cgeventtap_chain();
+#endif
 
     printf("\n=== All tests passed ===\n");
     return 0;

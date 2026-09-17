@@ -39,6 +39,54 @@ static const CGEventType kListenEvents[] = {
     kCGEventKeyUp,
 };
 
+#endif
+
+uint32_t MacEventTap::listenEventType(size_t index) noexcept {
+#ifdef __APPLE__
+    if (index < kListenEventCount) {
+        return static_cast<uint32_t>(kListenEvents[index]);
+    }
+#else
+    static const uint32_t types[] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+    if (index < kListenEventCount) {
+        return types[index];
+    }
+#endif
+    return 0xFFFFFFFF;
+}
+
+uint64_t MacEventTap::buildListenEventMask() noexcept {
+    uint64_t mask = 0;
+    for (size_t i = 0; i < kListenEventCount; ++i) {
+#ifdef __APPLE__
+        mask |= static_cast<uint64_t>(CGEventBitmaskForEventType(
+            static_cast<CGEventType>(listenEventType(i))));
+#else
+        mask |= (1ULL << listenEventType(i));
+#endif
+    }
+    return mask;
+}
+
+bool MacEventTap::isEventMaskComplete() noexcept {
+    const uint64_t mask = buildListenEventMask();
+    for (size_t i = 0; i < kListenEventCount; ++i) {
+        uint64_t bit;
+#ifdef __APPLE__
+        bit = static_cast<uint64_t>(CGEventBitmaskForEventType(
+            static_cast<CGEventType>(listenEventType(i))));
+#else
+        bit = (1ULL << listenEventType(i));
+#endif
+        if ((mask & bit) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+#ifdef __APPLE__
+
 void* MacEventTap::cgEventCallback(void* /*proxy*/, uint32_t /*type*/, void* event, void* userInfo) noexcept {
     MacEventTap* self = static_cast<MacEventTap*>(userInfo);
     if (!self || !event) {
@@ -64,11 +112,7 @@ void* MacEventTap::cgEventCallback(void* /*proxy*/, uint32_t /*type*/, void* eve
 }
 
 bool MacEventTap::installEventTap() noexcept {
-    CGEventMask eventMask = 0;
-    constexpr size_t kNumListenEvents = sizeof(kListenEvents) / sizeof(kListenEvents[0]);
-    for (size_t i = 0; i < kNumListenEvents; ++i) {
-        eventMask |= CGEventBitmaskForEventType(kListenEvents[i]);
-    }
+    const CGEventMask eventMask = static_cast<CGEventMask>(buildListenEventMask());
 
     CFMachPortRef tap = CGEventTapCreate(
         kCGSessionEventTap,
