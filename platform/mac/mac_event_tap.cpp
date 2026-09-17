@@ -58,12 +58,7 @@ uint32_t MacEventTap::listenEventType(size_t index) noexcept {
 uint64_t MacEventTap::buildListenEventMask() noexcept {
     uint64_t mask = 0;
     for (size_t i = 0; i < kListenEventCount; ++i) {
-#ifdef __APPLE__
-        mask |= static_cast<uint64_t>(CGEventBitmaskForEventType(
-            static_cast<CGEventType>(listenEventType(i))));
-#else
         mask |= (1ULL << listenEventType(i));
-#endif
     }
     return mask;
 }
@@ -72,12 +67,7 @@ bool MacEventTap::isEventMaskComplete() noexcept {
     const uint64_t mask = buildListenEventMask();
     for (size_t i = 0; i < kListenEventCount; ++i) {
         uint64_t bit;
-#ifdef __APPLE__
-        bit = static_cast<uint64_t>(CGEventBitmaskForEventType(
-            static_cast<CGEventType>(listenEventType(i))));
-#else
         bit = (1ULL << listenEventType(i));
-#endif
         if ((mask & bit) == 0) {
             return false;
         }
