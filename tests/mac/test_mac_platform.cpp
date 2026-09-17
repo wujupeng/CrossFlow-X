@@ -353,34 +353,67 @@ static void test_normalizer_chain_process_event() {
 }
 
 #ifdef __APPLE__
-static void test_macos_physical_cgeventtap_chain() {
+static int test_macos_physical_cgeventtap_chain() {
     MacEventTap tap;
 
     std::atomic<int> onEventCallCount{0};
-    std::atomic<bool> eventReceived{false};
+    std::atomic<uint32_t> receivedKinds{0};
 
-    const CaptureHandle handle = tap.start([&onEventCallCount, &eventReceived](const RawInputEvent& event) {
+    const CaptureHandle handle = tap.start([&onEventCallCount, &receivedKinds](const RawInputEvent& event) {
         onEventCallCount.fetch_add(1, std::memory_order_relaxed);
-        eventReceived.store(true, std::memory_order_release);
+        receivedKinds.fetch_or(1u << static_cast<uint32_t>(event.kind),
+                               std::memory_order_relaxed);
     });
 
-    if (handle.active) {
-        CGEventRef moveEvent = CGEventCreateMouseEvent(
-            nullptr, kCGEventMouseMoved, CGPointMake(100, 100), 0);
-        CGEventPost(kCGHIDEventTap, moveEvent);
-        CFRelease(moveEvent);
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-        tap.stop(handle);
-
-        printf("  [INFO] macOS physical: onEvent called %d times\n",
-               onEventCallCount.load());
-    } else {
-        printf("  [SKIP] CGEventTap not installed (permission or environment)\n");
+    if (!handle.active) {
+        printf("  [FAIL] CGEventTap installation failed — cannot provide physical evidence\n");
+        return 1;
     }
 
-    printf("  [PASS] test_macos_physical_cgeventtap_chain (skeleton)\n");
+    CGEventRef moveEvent = CGEventCreateMouseEvent(
+        nullptr, kCGEventMouseMoved, CGPointMake(100, 100), 0);
+    CGEventPost(kCGHIDEventTap, moveEvent);
+    CFRelease(moveEvent);
+
+    CGEventRef leftDown = CGEventCreateMouseEvent(
+        nullptr, kCGEventLeftMouseDown, CGPointMake(100, 100), kCGMouseButtonLeft);
+    CGEventPost(kCGHIDEventTap, leftDown);
+    CFRelease(leftDown);
+
+    CGEventRef leftUp = CGEventCreateMouseEvent(
+        nullptr, kCGEventLeftMouseUp, CGPointMake(100, 100), kCGMouseButtonLeft);
+    CGEventPost(kCGHIDEventTap, leftUp);
+    CFRelease(leftUp);
+
+    CGEventRef scroll = CGEventCreateScrollWheelEvent(
+        nullptr, kCGScrollEventUnitLine, 1, 1);
+    CGEventPost(kCGHIDEventTap, scroll);
+    CFRelease(scroll);
+
+    CGEventRef keyDown = CGEventCreateKeyboardEvent(nullptr, 0, true);
+    CGEventPost(kCGHIDEventTap, keyDown);
+    CFRelease(keyDown);
+
+    CGEventRef keyUp = CGEventCreateKeyboardEvent(nullptr, 0, false);
+    CGEventPost(kCGHIDEventTap, keyUp);
+    CFRelease(keyUp);
+
+    for (int i = 0; i < 50 && onEventCallCount.load() < 6; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    tap.stop(handle);
+
+    const int count = onEventCallCount.load();
+    const uint32_t kinds = receivedKinds.load();
+
+    printf("  [INFO] macOS physical: onEvent called %d times, kinds=0x%08x\n",
+           count, kinds);
+
+    assert(count > 0);
+
+    printf("  [PASS] test_macos_physical_cgeventtap_chain (%d events received)\n", count);
+    return 0;
 }
 #endif
 
@@ -419,7 +452,10 @@ int main() {
 
 #ifdef __APPLE__
     printf("\n[macOS Physical Evidence]\n");
-    test_macos_physical_cgeventtap_chain();
+    if (test_macos_physical_cgeventtap_chain() != 0) {
+        printf("\n=== FAILED: macOS physical evidence test ===\n");
+        return 1;
+    }
 #endif
 
     printf("\n=== All tests passed ===\n");
