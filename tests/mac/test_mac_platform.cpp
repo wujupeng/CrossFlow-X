@@ -9,6 +9,12 @@
 #include "mac/cg_event_normalizer.hpp"
 #include "mac/mac_event_tap.hpp"
 
+#ifdef __APPLE__
+#include <ApplicationServices/ApplicationServices.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <Carbon/Carbon.h>
+#endif
+
 #include <cassert>
 #include <cstdio>
 
