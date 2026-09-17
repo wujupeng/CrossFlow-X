@@ -17,27 +17,36 @@
 
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
+
+inline void cfx_test_check(bool cond, const char* file, int line, const char* expr) {
+    if (!cond) {
+        fprintf(stderr, "  [FAIL] %s:%d: %s\n", file, line, expr);
+        std::exit(1);
+    }
+}
+#define CFX_TEST_CHECK(cond) cfx_test_check(static_cast<bool>(cond), __FILE__, __LINE__, #cond)
 
 using namespace cfx;
 
 static void test_capture_handle_basic() {
     CaptureHandleManager mgr;
     CaptureHandle h1 = mgr.acquire();
-    assert(h1.id > 0);
-    assert(h1.active);
-    assert(mgr.activeCount() == 1);
+    CFX_TEST_CHECK(h1.id > 0);
+    CFX_TEST_CHECK(h1.active);
+    CFX_TEST_CHECK(mgr.activeCount() == 1);
 
     CaptureHandle h2 = mgr.acquire();
-    assert(h2.id > h1.id);
-    assert(mgr.activeCount() == 2);
+    CFX_TEST_CHECK(h2.id > h1.id);
+    CFX_TEST_CHECK(mgr.activeCount() == 2);
 
     mgr.release(h1);
-    assert(!h1.active);
-    assert(mgr.activeCount() == 1);
+    CFX_TEST_CHECK(!h1.active);
+    CFX_TEST_CHECK(mgr.activeCount() == 1);
 
     mgr.release(h2);
-    assert(!h2.active);
-    assert(mgr.activeCount() == 0);
+    CFX_TEST_CHECK(!h2.active);
+    CFX_TEST_CHECK(mgr.activeCount() == 0);
 
     printf("  [PASS] test_capture_handle_basic\n");
 }
@@ -47,11 +56,11 @@ static void test_capture_handle_raii() {
 
     {
         ScopedCaptureHandle scoped(mgr);
-        assert(scoped.isValid());
-        assert(mgr.activeCount() == 1);
+        CFX_TEST_CHECK(scoped.isValid());
+        CFX_TEST_CHECK(mgr.activeCount() == 1);
     }
 
-    assert(mgr.activeCount() == 0);
+    CFX_TEST_CHECK(mgr.activeCount() == 0);
 
     printf("  [PASS] test_capture_handle_raii\n");
 }
@@ -60,13 +69,13 @@ static void test_capture_handle_move() {
     CaptureHandleManager mgr;
 
     ScopedCaptureHandle scoped1(mgr);
-    assert(scoped1.isValid());
-    assert(mgr.activeCount() == 1);
+    CFX_TEST_CHECK(scoped1.isValid());
+    CFX_TEST_CHECK(mgr.activeCount() == 1);
 
     ScopedCaptureHandle scoped2 = std::move(scoped1);
-    assert(!scoped1.isValid());
-    assert(scoped2.isValid());
-    assert(mgr.activeCount() == 1);
+    CFX_TEST_CHECK(!scoped1.isValid());
+    CFX_TEST_CHECK(scoped2.isValid());
+    CFX_TEST_CHECK(mgr.activeCount() == 1);
 
     printf("  [PASS] test_capture_handle_move\n");
 }
@@ -76,7 +85,7 @@ static void test_capture_handle_double_release() {
     CaptureHandle h = mgr.acquire();
     mgr.release(h);
     mgr.release(h);
-    assert(mgr.activeCount() == 0);
+    CFX_TEST_CHECK(mgr.activeCount() == 0);
 
     printf("  [PASS] test_capture_handle_double_release\n");
 }
@@ -93,10 +102,10 @@ static void test_raw_input_event_flat_trivially_copyable() {
     a.valid = 1;
 
     RawInputEventFlat b = a;
-    assert(b.platformTime == 12345);
-    assert(b.deltaX == 10);
-    assert(b.deltaY == -20);
-    assert(b.valid == 1);
+    CFX_TEST_CHECK(b.platformTime == 12345);
+    CFX_TEST_CHECK(b.deltaX == 10);
+    CFX_TEST_CHECK(b.deltaY == -20);
+    CFX_TEST_CHECK(b.valid == 1);
 
     printf("  [PASS] test_raw_input_event_flat_trivially_copyable\n");
 }
@@ -113,10 +122,10 @@ static void test_field_extractor_to_raw_input_event() {
         flat.valid = 1;
 
         RawInputEvent event = extractor.toRawInputEvent(flat);
-        assert(event.platformTime == 1000);
-        assert(event.kind == RawEventKind::MouseMove);
-        assert(std::get<RawMouseMovePayload>(event.payload).deltaX == 5);
-        assert(std::get<RawMouseMovePayload>(event.payload).deltaY == -3);
+        CFX_TEST_CHECK(event.platformTime == 1000);
+        CFX_TEST_CHECK(event.kind == RawEventKind::MouseMove);
+        CFX_TEST_CHECK(std::get<RawMouseMovePayload>(event.payload).deltaX == 5);
+        CFX_TEST_CHECK(std::get<RawMouseMovePayload>(event.payload).deltaY == -3);
     }
 
     {
@@ -126,8 +135,8 @@ static void test_field_extractor_to_raw_input_event() {
         flat.valid = 1;
 
         RawInputEvent event = extractor.toRawInputEvent(flat);
-        assert(event.kind == RawEventKind::MouseButtonPress);
-        assert(std::get<RawMouseButtonPayload>(event.payload).button == MouseButton::Right);
+        CFX_TEST_CHECK(event.kind == RawEventKind::MouseButtonPress);
+        CFX_TEST_CHECK(std::get<RawMouseButtonPayload>(event.payload).button == MouseButton::Right);
     }
 
     {
@@ -138,9 +147,9 @@ static void test_field_extractor_to_raw_input_event() {
         flat.valid = 1;
 
         RawInputEvent event = extractor.toRawInputEvent(flat);
-        assert(event.kind == RawEventKind::Wheel);
-        assert(std::get<RawWheelPayload>(event.payload).delta == 42);
-        assert(std::get<RawWheelPayload>(event.payload).axis == WheelAxis::Vertical);
+        CFX_TEST_CHECK(event.kind == RawEventKind::Wheel);
+        CFX_TEST_CHECK(std::get<RawWheelPayload>(event.payload).delta == 42);
+        CFX_TEST_CHECK(std::get<RawWheelPayload>(event.payload).axis == WheelAxis::Vertical);
     }
 
     {
@@ -150,8 +159,8 @@ static void test_field_extractor_to_raw_input_event() {
         flat.valid = 1;
 
         RawInputEvent event = extractor.toRawInputEvent(flat);
-        assert(event.kind == RawEventKind::KeyPress);
-        assert(std::get<RawKeyPayload>(event.payload).keyCode == 65);
+        CFX_TEST_CHECK(event.kind == RawEventKind::KeyPress);
+        CFX_TEST_CHECK(std::get<RawKeyPayload>(event.payload).keyCode == 65);
     }
 
     printf("  [PASS] test_field_extractor_to_raw_input_event\n");
@@ -165,10 +174,10 @@ static void test_normalizer_to_raw_input_event() {
     flat.valid = 1;
 
     RawInputEvent event = CGEventNormalizer::toRawInputEvent(flat);
-    assert(event.platformTime == 999);
-    assert(event.kind == RawEventKind::KeyRelease);
-    assert(std::get<RawKeyPayload>(event.payload).keyCode == 88);
-    (void)event;
+    CFX_TEST_CHECK(event.platformTime == 999);
+    CFX_TEST_CHECK(event.kind == RawEventKind::KeyRelease);
+    CFX_TEST_CHECK(std::get<RawKeyPayload>(event.payload).keyCode == 88);
+
 
     printf("  [PASS] test_normalizer_to_raw_input_event\n");
 }
@@ -189,7 +198,7 @@ static void test_normalizer_edge_overflow() {
     flat.deltaY = 0;
     flat.valid = 1;
 
-    assert(!normalizer.detectEdgeOverflow(flat));
+    CFX_TEST_CHECK(!normalizer.detectEdgeOverflow(flat));
 
     printf("  [PASS] test_normalizer_edge_overflow\n");
 }
@@ -209,8 +218,8 @@ static void test_normalizer_normalize_calls_on_event() {
     flat.valid = 1;
 
     normalizer.normalize(flat);
-    assert(callCount.load() == 1);
-    assert(normalizer.normalizedCount() == 1);
+    CFX_TEST_CHECK(callCount.load() == 1);
+    CFX_TEST_CHECK(normalizer.normalizedCount() == 1);
 
     printf("  [PASS] test_normalizer_normalize_calls_on_event\n");
 }
@@ -222,8 +231,8 @@ static void test_normalizer_invalid_event() {
     flat.valid = 0;
 
     normalizer.normalize(flat);
-    assert(normalizer.normalizedCount() == 0);
-    assert(normalizer.unknownEventCount() == 1);
+    CFX_TEST_CHECK(normalizer.normalizedCount() == 0);
+    CFX_TEST_CHECK(normalizer.unknownEventCount() == 1);
 
     printf("  [PASS] test_normalizer_invalid_event\n");
 }
@@ -238,15 +247,15 @@ static void test_spsc_with_raw_input_event_flat() {
     in.deltaY = 200;
     in.valid = 1;
 
-    assert(queue.tryPushDropOldest(in));
+    CFX_TEST_CHECK(queue.tryPushDropOldest(in));
 
     RawInputEventFlat out{};
-    assert(queue.tryPop(out));
-    assert(out.platformTime == 42);
-    assert(out.deltaX == 100);
-    assert(out.deltaY == 200);
-    assert(out.valid == 1);
-    (void)out;
+    CFX_TEST_CHECK(queue.tryPop(out));
+    CFX_TEST_CHECK(out.platformTime == 42);
+    CFX_TEST_CHECK(out.deltaX == 100);
+    CFX_TEST_CHECK(out.deltaY == 200);
+    CFX_TEST_CHECK(out.valid == 1);
+
 
     printf("  [PASS] test_spsc_with_raw_input_event_flat\n");
 }
@@ -261,15 +270,15 @@ static void test_spsc_drop_oldest_with_flat() {
         queue.tryPushDropOldest(e);
     }
 
-    assert(queue.cumulativeDropCount() >= 2);
+    CFX_TEST_CHECK(queue.cumulativeDropCount() >= 2);
 
     RawInputEventFlat out{};
     int popped = 0;
     while (queue.tryPop(out)) {
         ++popped;
     }
-    assert(popped <= 4);
-    (void)popped;
+    CFX_TEST_CHECK(popped <= 4);
+
 
     printf("  [PASS] test_spsc_drop_oldest_with_flat\n");
 }
@@ -292,23 +301,23 @@ static void test_capture_handle_concurrent() {
     t1.join();
     t2.join();
 
-    assert(mgr.activeCount() == N);
+    CFX_TEST_CHECK(mgr.activeCount() == N);
 
     for (auto& h : handles) {
         mgr.release(h);
     }
-    assert(mgr.activeCount() == 0);
+    CFX_TEST_CHECK(mgr.activeCount() == 0);
 
     printf("  [PASS] test_capture_handle_concurrent\n");
 }
 
 static void test_event_mask_complete_coverage() {
-    assert(MacEventTap::kListenEventCount == 10);
+    CFX_TEST_CHECK(MacEventTap::kListenEventCount == 10);
 
     for (size_t i = 0; i < MacEventTap::kListenEventCount; ++i) {
-        assert(MacEventTap::listenEventType(i) != 0xFFFFFFFF);
+        CFX_TEST_CHECK(MacEventTap::listenEventType(i) != 0xFFFFFFFF);
         for (size_t j = 0; j < i; ++j) {
-            assert(MacEventTap::listenEventType(j) != MacEventTap::listenEventType(i));
+            CFX_TEST_CHECK(MacEventTap::listenEventType(j) != MacEventTap::listenEventType(i));
         }
     }
 
@@ -316,15 +325,13 @@ static void test_event_mask_complete_coverage() {
 }
 
 static void test_event_mask_all_ten_types() {
-    assert(MacEventTap::isEventMaskComplete());
+    CFX_TEST_CHECK(MacEventTap::isEventMaskComplete());
 
     const uint64_t mask = MacEventTap::buildListenEventMask();
     for (size_t i = 0; i < MacEventTap::kListenEventCount; ++i) {
         const uint64_t bit = (1ULL << MacEventTap::listenEventType(i));
-        assert((mask & bit) != 0);
-        (void)bit;
+        CFX_TEST_CHECK((mask & bit) != 0);
     }
-    (void)mask;
 
     printf("  [PASS] test_event_mask_all_ten_types (actual mask bits verified)\n");
 }
@@ -350,8 +357,8 @@ static void test_normalizer_chain_process_event() {
 
     tap.processEvent(flat);
 
-    assert(onEventCallCount.load() == 1);
-    assert(tap.normalizer().normalizedCount() == 1);
+    CFX_TEST_CHECK(onEventCallCount.load() == 1);
+    CFX_TEST_CHECK(tap.normalizer().normalizedCount() == 1);
 
     printf("  [PASS] test_normalizer_chain_process_event (MacEventTap::processEvent -> normalizer -> onEvent)\n");
 }
@@ -414,7 +421,7 @@ static int test_macos_physical_cgeventtap_chain() {
     printf("  [INFO] macOS physical: onEvent called %d times, kinds=0x%08x\n",
            count, kinds);
 
-    assert(count > 0);
+    CFX_TEST_CHECK(count > 0);
 
     printf("  [PASS] test_macos_physical_cgeventtap_chain (%d events received)\n", count);
     return 0;

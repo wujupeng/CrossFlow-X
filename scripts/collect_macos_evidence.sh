@@ -99,16 +99,16 @@ else
     echo "$PHYSICAL_OUTPUT"
 
     # Extract physical evidence from output
-    TAP_ACTIVE=$(echo "$PHYSICAL_OUTPUT" | grep -c "CGEventTap installation failed" || true)
+    INSTALL_FAILED=$(echo "$PHYSICAL_OUTPUT" | grep -c "CGEventTap installation failed" || true)
+    TAP_ACTIVE=$([ "$INSTALL_FAILED" -eq 0 ] && echo "YES" || echo "NO")
     CALLBACK_COUNT=$(echo "$PHYSICAL_OUTPUT" | grep "onEvent called" | grep -oE '[0-9]+' || echo "0")
     RECEIVED_KINDS=$(echo "$PHYSICAL_OUTPUT" | grep "kinds=" | grep -oE '0x[0-9a-fA-F]+' || echo "0x00000000")
-    PHYSICAL_PASS=$(echo "$PHYSICAL_OUTPUT" | grep -c "test_macos_physical_cgeventtap_chain" || true)
 
-    if [ $PHYSICAL_EXIT -eq 0 ] && [ "$TAP_ACTIVE" -eq 0 ]; then
-        echo "  [PASS] Physical CGEventTap: callback=$CALLBACK_COUNT, kinds=$RECEIVED_KINDS"
+    if [ $PHYSICAL_EXIT -eq 0 ] && [ "$INSTALL_FAILED" -eq 0 ]; then
+        echo "  [PASS] Physical CGEventTap: tap=$TAP_ACTIVE, callback=$CALLBACK_COUNT, kinds=$RECEIVED_KINDS"
         gate_pass "E4 Physical CGEventTap"
     else
-        echo "  [FAIL] Physical CGEventTap (exit=$PHYSICAL_EXIT)"
+        echo "  [FAIL] Physical CGEventTap (exit=$PHYSICAL_EXIT, tap=$TAP_ACTIVE)"
         gate_fail "E4 Physical CGEventTap"
     fi
 fi
@@ -136,7 +136,7 @@ Failed: $CTEST_FAILED
 Not Run: $CTEST_NOTRUN
 
 --- Physical CGEventTap Evidence ---
-Tap Active: $([ "$TAP_ACTIVE" -eq 0 ] && echo "YES" || echo "NO")
+Tap Active: $TAP_ACTIVE
 Callback Count: $CALLBACK_COUNT
 Received Kinds: $RECEIVED_KINDS
 Physical Test Exit: $PHYSICAL_EXIT
