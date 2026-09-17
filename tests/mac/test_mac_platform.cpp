@@ -267,6 +267,7 @@ static void test_spsc_drop_oldest_with_flat() {
         ++popped;
     }
     assert(popped <= 4);
+    (void)popped;
 
     printf("  [PASS] test_spsc_drop_oldest_with_flat\n");
 }
@@ -317,12 +318,7 @@ static void test_event_mask_all_ten_types() {
 
     const uint64_t mask = MacEventTap::buildListenEventMask();
     for (size_t i = 0; i < MacEventTap::kListenEventCount; ++i) {
-#ifdef __APPLE__
-        const uint64_t bit = static_cast<uint64_t>(CGEventBitmaskForEventType(
-            static_cast<CGEventType>(MacEventTap::listenEventType(i))));
-#else
         const uint64_t bit = (1ULL << MacEventTap::listenEventType(i));
-#endif
         assert((mask & bit) != 0);
         (void)bit;
     }
