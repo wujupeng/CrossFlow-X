@@ -26,10 +26,12 @@ A11yPermissionStatus A11yPermissionGuard::check() const noexcept {
 }
 
 bool A11yPermissionGuard::checkAccessibility() const noexcept {
+    const void* keys[] = {kAXTrustedCheckOptionPrompt};
+    const void* values[] = {kCFBooleanTrue};
     CFDictionaryRef options = CFDictionaryCreate(
         kCFAllocatorDefault,
-        (const void**)(const void*[]){kAXTrustedCheckOptionPrompt},
-        (const void**)(const void*[]){kCFBooleanTrue},
+        keys,
+        values,
         1,
         &kCFTypeDictionaryKeyCallBacks,
         &kCFTypeDictionaryValueCallBacks);
@@ -45,10 +47,12 @@ bool A11yPermissionGuard::checkInputMonitoring() const noexcept {
 }
 
 void A11yPermissionGuard::promptAccessibility() const noexcept {
+    const void* keys[] = {kAXTrustedCheckOptionPrompt};
+    const void* values[] = {kCFBooleanTrue};
     CFDictionaryRef options = CFDictionaryCreate(
         kCFAllocatorDefault,
-        (const void**)(const void*[]){kAXTrustedCheckOptionPrompt},
-        (const void**)(const void*[]){kCFBooleanTrue},
+        keys,
+        values,
         1,
         &kCFTypeDictionaryKeyCallBacks,
         &kCFTypeDictionaryValueCallBacks);
