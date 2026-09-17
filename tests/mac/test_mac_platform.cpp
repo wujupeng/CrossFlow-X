@@ -440,7 +440,7 @@ static int test_macos_physical_cgeventtap_chain() {
     CFRelease(keyUp);
 
     for (int i = 0; i < 50 && onEventCallCount.load() < 6; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, false);
     }
 
     tap.stop(handle);
