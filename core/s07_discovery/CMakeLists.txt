@@ -26,6 +26,5 @@ target_include_directories(cfx_s07_discovery PUBLIC
 if(CFX_PLATFORM_WIN)
     target_link_libraries(cfx_s07_discovery PUBLIC ws2_32 dnsapi)
 elseif(CFX_PLATFORM_MAC)
-    find_library(DNSSD_LIBRARY dns_sd)
-    target_link_libraries(cfx_s07_discovery PUBLIC ${DNSSD_LIBRARY})
+    target_link_libraries(cfx_s07_discovery PUBLIC dns_sd)
 endif()
