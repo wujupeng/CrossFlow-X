@@ -34,6 +34,8 @@ public:
     void setDiscoveryCallback(DiscoveryCallback cb) noexcept { callback_ = std::move(cb); }
     std::optional<ErrorCode> poll(std::chrono::milliseconds timeout) noexcept;
 
+    static std::vector<std::pair<std::string, std::string>> parseTxt(const u8* data, u16 length) noexcept;
+
 private:
     bool running_{false};
     std::string serviceType_;
@@ -48,7 +50,6 @@ private:
     void* browseContext_{nullptr};
 #endif
 
-    static std::vector<std::pair<std::string, std::string>> parseTxt(const u8* data, u16 length) noexcept;
 };
 
 }  // namespace cfx
