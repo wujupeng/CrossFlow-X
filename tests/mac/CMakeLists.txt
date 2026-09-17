@@ -23,3 +23,24 @@ endif()
 
 add_test(NAME test_mac_platform COMMAND test_mac_platform)
 
+add_executable(test_dual_channel
+    test_dual_channel.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/dual_channel_spsc.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/authoritative_resync.cpp
+)
+target_link_libraries(test_dual_channel PRIVATE cfx_platform_common)
+target_include_directories(test_dual_channel PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+if(CFX_PLATFORM_MAC)
+    find_library(DC_CORE_GRAPHICS CoreGraphics REQUIRED)
+    find_library(DC_CORE_FOUNDATION CoreFoundation REQUIRED)
+    find_library(DC_APPLICATION_SERVICES ApplicationServices REQUIRED)
+    target_link_libraries(test_dual_channel PRIVATE
+        ${DC_CORE_GRAPHICS}
+        ${DC_CORE_FOUNDATION}
+        ${DC_APPLICATION_SERVICES}
+    )
+endif()
+
+add_test(NAME test_dual_channel COMMAND test_dual_channel)
+
