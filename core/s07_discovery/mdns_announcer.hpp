@@ -75,7 +75,7 @@ private:
     void* txtRecordData_{nullptr};
 #elif defined(__APPLE__)
     void* serviceRef_{nullptr};
-    void* txtRecordRef_{nullptr};
+
 #endif
 
     std::vector<u8> encodeTxt(const std::vector<std::pair<std::string, std::string>>& txt) const noexcept;
