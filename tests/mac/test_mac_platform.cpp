@@ -367,6 +367,26 @@ static void test_normalizer_chain_process_event() {
 static int test_macos_physical_cgeventtap_chain() {
     MacEventTap tap;
 
+    printf("  [DIAG] === Permission Diagnostics ===\n");
+    bool axTrusted = AXIsProcessTrustedWithOptions(NULL);
+    printf("  [DIAG] AXIsProcessTrustedWithOptions(NULL): %s\n", axTrusted ? "YES" : "NO");
+
+    bool inputMon = CGPreflightListenEventAccess();
+    printf("  [DIAG] CGPreflightListenEventAccess(): %s\n", inputMon ? "YES" : "NO");
+
+    A11yPermissionStatus permStatus = tap.permissionGuard().check();
+    const char* permStr = "Unknown";
+    switch (permStatus) {
+        case A11yPermissionStatus::Granted:               permStr = "Granted"; break;
+        case A11yPermissionStatus::BothDenied:            permStr = "BothDenied"; break;
+        case A11yPermissionStatus::AccessibilityDenied:   permStr = "AccessibilityDenied"; break;
+        case A11yPermissionStatus::InputMonitoringDenied: permStr = "InputMonitoringDenied"; break;
+    }
+    printf("  [DIAG] A11yPermissionGuard::check(): %s\n", permStr);
+    printf("  [DIAG] checkAccessibility(): %s\n", tap.permissionGuard().checkAccessibility() ? "YES" : "NO");
+    printf("  [DIAG] checkInputMonitoring(): %s\n", tap.permissionGuard().checkInputMonitoring() ? "YES" : "NO");
+    printf("  [DIAG] === End Permission Diagnostics ===\n");
+
     std::atomic<int> onEventCallCount{0};
     std::atomic<uint32_t> receivedKinds{0};
 
@@ -378,6 +398,16 @@ static int test_macos_physical_cgeventtap_chain() {
 
     if (!handle.active) {
         printf("  [FAIL] CGEventTap installation failed — cannot provide physical evidence\n");
+        printf("  [DIAG] tap.state() = %d (0=Inactive, 1=Active, 2=Degraded)\n", (int)tap.state());
+        printf("  [DIAG] tap.isDegraded() = %s\n", tap.isDegraded() ? "YES" : "NO");
+        if (!axTrusted) {
+            printf("  [DIAG] ROOT CAUSE: Accessibility permission NOT granted.\n");
+            printf("  [DIAG] FIX: System Settings > Privacy & Security > Accessibility > add Terminal/iTerm\n");
+        }
+        if (!inputMon) {
+            printf("  [DIAG] ROOT CAUSE: Input Monitoring permission NOT granted.\n");
+            printf("  [DIAG] FIX: System Settings > Privacy & Security > Input Monitoring > add Terminal/iTerm\n");
+        }
         return 1;
     }
 
