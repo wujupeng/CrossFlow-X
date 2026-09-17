@@ -38,7 +38,7 @@ RawInputEventFlat MacEventFieldExtractor::extract(const void* cgEvent) const noe
         return out;
     }
 
-    const CGEventRef event = static_cast<CGEventRef>(cgEvent);
+    const CGEventRef event = static_cast<CGEventRef>(const_cast<void*>(cgEvent));
     const CGEventType type = CGEventGetType(event);
 
     out.platformTime = static_cast<uint64_t>(CGEventGetTimestamp(event));
@@ -92,12 +92,12 @@ RawInputEventFlat MacEventFieldExtractor::extract(const void* cgEvent) const noe
 
 uint64_t MacEventFieldExtractor::extractPlatformTime(const void* cgEvent) noexcept {
     if (!cgEvent) return 0;
-    return static_cast<uint64_t>(CGEventGetTimestamp(static_cast<CGEventRef>(cgEvent)));
+    return static_cast<uint64_t>(CGEventGetTimestamp(static_cast<CGEventRef>(const_cast<void*>(cgEvent))));
 }
 
 uint64_t MacEventFieldExtractor::extractModifierFlags(const void* cgEvent) noexcept {
     if (!cgEvent) return 0;
-    return static_cast<uint64_t>(CGEventGetFlags(static_cast<CGEventRef>(cgEvent)));
+    return static_cast<uint64_t>(CGEventGetFlags(static_cast<CGEventRef>(const_cast<void*>(cgEvent))));
 }
 
 uint8_t MacEventFieldExtractor::mapEventType(uint32_t cgEventType) noexcept {
