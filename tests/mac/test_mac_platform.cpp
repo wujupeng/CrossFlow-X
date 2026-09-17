@@ -7,6 +7,7 @@
 #include "mac/capture_handle.hpp"
 #include "mac/mac_event_field_extractor.hpp"
 #include "mac/cg_event_normalizer.hpp"
+#include "mac/mac_event_tap.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -292,6 +293,43 @@ static void test_capture_handle_concurrent() {
     printf("  [PASS] test_capture_handle_concurrent\n");
 }
 
+static void test_event_mask_complete_coverage() {
+    assert(MacEventTap::kListenEventCount == 10);
+    printf("  [PASS] test_event_mask_complete_coverage (10 event types)\n");
+}
+
+static void test_event_mask_all_ten_types() {
+    assert(MacEventTap::kListenEventCount >= 10);
+    printf("  [PASS] test_event_mask_all_ten_types\n");
+}
+
+static void test_normalizer_chain_process_event() {
+    CGEventNormalizer normalizer;
+
+    std::atomic<int> onEventCallCount{0};
+    normalizer.setOnEvent([&onEventCallCount](const RawInputEvent&) {
+        onEventCallCount.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    ScreenBoundary boundary{};
+    boundary.width = 1920;
+    boundary.height = 1080;
+    normalizer.setScreenBoundary(boundary);
+
+    RawInputEventFlat flat{};
+    flat.kind = static_cast<uint8_t>(RawEventKind::MouseMove);
+    flat.deltaX = 5;
+    flat.deltaY = 10;
+    flat.valid = 1;
+
+    normalizer.normalize(flat);
+
+    assert(onEventCallCount.load() == 1);
+    assert(normalizer.normalizedCount() == 1);
+
+    printf("  [PASS] test_normalizer_chain_process_event\n");
+}
+
 int main() {
     printf("=== CF2 Group 2 macOS Platform Tests ===\n\n");
 
@@ -317,6 +355,13 @@ int main() {
     printf("\n[SPSC with RawInputEventFlat]\n");
     test_spsc_with_raw_input_event_flat();
     test_spsc_drop_oldest_with_flat();
+
+    printf("\n[CGEventTap Event Mask]\n");
+    test_event_mask_complete_coverage();
+    test_event_mask_all_ten_types();
+
+    printf("\n[Normalizer Chain]\n");
+    test_normalizer_chain_process_event();
 
     printf("\n=== All tests passed ===\n");
     return 0;

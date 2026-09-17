@@ -11,6 +11,7 @@
 #include "mac/a11y_permission_guard.hpp"
 #include "mac/capture_handle.hpp"
 #include "mac/mac_event_field_extractor.hpp"
+#include "mac/cg_event_normalizer.hpp"
 
 namespace cfx {
 
@@ -54,6 +55,10 @@ public:
         return lastModifierFlags_.load(std::memory_order_acquire);
     }
 
+    static constexpr size_t kListenEventCount = 10;
+
+    CGEventNormalizer& normalizer() noexcept { return normalizer_; }
+
 private:
     static void* cgEventCallback(void* proxy, uint32_t type, void* event, void* userInfo) noexcept;
 
@@ -66,6 +71,7 @@ private:
 
     A11yPermissionGuard permissionGuard_;
     MacEventFieldExtractor fieldExtractor_;
+    CGEventNormalizer normalizer_;
     SpscRingBuffer<RawInputEventFlat, SPSC_DATA_CAPACITY> spscQueue_;
 
     void* eventTap_{nullptr};

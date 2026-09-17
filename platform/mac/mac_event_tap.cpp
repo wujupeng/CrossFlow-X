@@ -64,11 +64,17 @@ void* MacEventTap::cgEventCallback(void* /*proxy*/, uint32_t /*type*/, void* eve
 }
 
 bool MacEventTap::installEventTap() noexcept {
+    CGEventMask eventMask = 0;
+    constexpr size_t kNumListenEvents = sizeof(kListenEvents) / sizeof(kListenEvents[0]);
+    for (size_t i = 0; i < kNumListenEvents; ++i) {
+        eventMask |= CGEventBitmaskForEventType(kListenEvents[i]);
+    }
+
     CFMachPortRef tap = CGEventTapCreate(
         kCGSessionEventTap,
         kCGHeadInsertEventTap,
         kCGEventTapOptionListenOnly,
-        CGEventBitmaskForEventType(kListenEvents[0]),
+        eventMask,
         [](CGEventTapProxy proxy, CGEventType type, CGEventRef event, void* userInfo) -> CGEventRef {
             return static_cast<CGEventRef>(MacEventTap::cgEventCallback(proxy, type, event, userInfo));
         },
@@ -143,10 +149,9 @@ void MacEventTap::processEvent(const RawInputEventFlat& flat) noexcept {
     if (!flat.valid) {
         return;
     }
-    if (onEvent_) {
-        const RawInputEvent event = fieldExtractor_.toRawInputEvent(flat);
-        onEvent_(event);
-    }
+    // Capture thread → CGEventNormalizer::normalize() → edge detection → onEvent
+    // (TASK-015: normalizer runs in Capture thread, NOT in callback)
+    normalizer_.normalize(flat);
 }
 
 CaptureHandle MacEventTap::start(std::function<void(const RawInputEvent&)> onEvent) {
@@ -166,6 +171,8 @@ CaptureHandle MacEventTap::start(std::function<void(const RawInputEvent&)> onEve
     }
 
     onEvent_ = std::move(onEvent);
+    normalizer_.setOnEvent(onEvent_);
+    normalizer_.setScreenBoundary(queryScreenBoundary());
 
     if (!installEventTap()) {
         enterDegradedState();
