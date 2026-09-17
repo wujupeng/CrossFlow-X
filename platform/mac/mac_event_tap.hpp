@@ -10,6 +10,7 @@
 #include "common/spsc_ring_buffer.hpp"
 #include "mac/a11y_permission_guard.hpp"
 #include "mac/capture_handle.hpp"
+#include "mac/dual_channel_spsc.hpp"
 #include "mac/mac_event_field_extractor.hpp"
 #include "mac/cg_event_normalizer.hpp"
 
@@ -46,8 +47,18 @@ public:
     }
 
     uint64_t totalDropped() const noexcept {
-        return spscQueue_.cumulativeDropCount();
+        return dualChannel_.droppedOldestCount();
     }
+
+    bool isStateChannelSaturated() const noexcept {
+        return dualChannel_.isStateChannelSaturated();
+    }
+
+    uint64_t stateChannelSaturatedCount() const noexcept {
+        return dualChannel_.stateChannelSaturatedCount();
+    }
+
+    DualChannelSpsc& dualChannel() noexcept { return dualChannel_; }
 
     A11yPermissionGuard& permissionGuard() noexcept { return permissionGuard_; }
 
@@ -93,7 +104,7 @@ private:
     A11yPermissionGuard permissionGuard_;
     MacEventFieldExtractor fieldExtractor_;
     CGEventNormalizer normalizer_;
-    SpscRingBuffer<RawInputEventFlat, SPSC_DATA_CAPACITY> spscQueue_;
+    DualChannelSpsc dualChannel_;
 
     void* eventTap_{nullptr};
     void* runLoopSource_{nullptr};

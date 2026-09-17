@@ -12,7 +12,7 @@ namespace cfx {
 MacEventTap::MacEventTap() noexcept
     : permissionGuard_{},
       fieldExtractor_{},
-      spscQueue_{},
+      dualChannel_{},
       eventTap_{nullptr},
       runLoopSource_{nullptr},
       onEvent_{} {}
@@ -92,8 +92,8 @@ void* MacEventTap::cgEventCallback(void* /*proxy*/, uint32_t /*type*/, void* eve
     // Step 2: Modifier atomic update (std::atomic store, ≤200ns)
     self->lastModifierFlags_.store(flat.modifierFlags, std::memory_order_release);
 
-    // Step 3: RawInputEvent enqueue (lock-free SPSC, no heap alloc)
-    (void)self->spscQueue_.tryPushDropOldest(flat);
+    // Step 3: DualChannelSpsc enqueue (lock-free, no heap alloc, non-blocking)
+    (void)self->dualChannel_.enqueue(flat);
     self->totalCaptured_.fetch_add(1, std::memory_order_relaxed);
 
     // Callback MUST NOT: call onEvent / call FSM / perform edge detection /
@@ -166,15 +166,27 @@ void MacEventTap::enterDegradedState() noexcept {
 void MacEventTap::captureThreadLoop() noexcept {
     while (captureThreadRunning_.load(std::memory_order_acquire)) {
         RawInputEventFlat flat{};
-        if (spscQueue_.tryPop(flat)) {
+        bool gotEvent = false;
+
+        if (dualChannel_.tryPopState(flat)) {
             processEvent(flat);
-        } else {
+            gotEvent = true;
+        }
+        if (dualChannel_.tryPopData(flat)) {
+            processEvent(flat);
+            gotEvent = true;
+        }
+
+        if (!gotEvent) {
             std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
     }
 
     RawInputEventFlat flat{};
-    while (spscQueue_.tryPop(flat)) {
+    while (dualChannel_.tryPopState(flat)) {
+        processEvent(flat);
+    }
+    while (dualChannel_.tryPopData(flat)) {
         processEvent(flat);
     }
 }
