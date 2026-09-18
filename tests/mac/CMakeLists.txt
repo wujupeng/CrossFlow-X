@@ -64,3 +64,21 @@ endif()
 
 add_test(NAME test_callback_boundary COMMAND test_callback_boundary)
 
+add_executable(test_saturation_recovery
+    test_saturation_recovery.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/dual_channel_spsc.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/authoritative_resync.cpp
+)
+target_link_libraries(test_saturation_recovery PRIVATE cfx_platform_common)
+target_include_directories(test_saturation_recovery PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+if(CFX_PLATFORM_MAC)
+    target_link_libraries(test_saturation_recovery PRIVATE
+        ${DC_CORE_GRAPHICS}
+        ${DC_CORE_FOUNDATION}
+        ${DC_APPLICATION_SERVICES}
+    )
+endif()
+
+add_test(NAME test_saturation_recovery COMMAND test_saturation_recovery)
+
