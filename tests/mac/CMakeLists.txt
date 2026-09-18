@@ -5,6 +5,7 @@ add_executable(test_mac_platform
     ${CMAKE_SOURCE_DIR}/platform/mac/mac_event_field_extractor.cpp
     ${CMAKE_SOURCE_DIR}/platform/mac/cg_event_normalizer.cpp
     ${CMAKE_SOURCE_DIR}/platform/mac/dual_channel_spsc.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/authoritative_resync.cpp
 )
 target_link_libraries(test_mac_platform PRIVATE cfx_platform_common)
 target_include_directories(test_mac_platform PRIVATE ${CMAKE_SOURCE_DIR}/platform)

@@ -9,6 +9,7 @@
 #include "common/platform_ports.hpp"
 #include "common/spsc_ring_buffer.hpp"
 #include "mac/a11y_permission_guard.hpp"
+#include "mac/authoritative_resync.hpp"
 #include "mac/capture_handle.hpp"
 #include "mac/dual_channel_spsc.hpp"
 #include "mac/mac_event_field_extractor.hpp"
@@ -89,6 +90,8 @@ public:
 
     CGEventNormalizer& normalizer() noexcept { return normalizer_; }
 
+    AuthoritativeResync& resync() noexcept { return resync_; }
+
     void processEvent(const RawInputEventFlat& flat) noexcept;
 
 private:
@@ -105,6 +108,7 @@ private:
     MacEventFieldExtractor fieldExtractor_;
     CGEventNormalizer normalizer_;
     DualChannelSpsc dualChannel_;
+    AuthoritativeResync resync_;
 
     void* eventTap_{nullptr};
     void* runLoopSource_{nullptr};

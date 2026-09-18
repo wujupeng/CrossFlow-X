@@ -178,11 +178,18 @@ void MacEventTap::captureThreadLoop() noexcept {
         }
 
         if (dualChannel_.isStateChannelSaturated()) {
+            if (resync_.state() == ResyncState::Idle ||
+                resync_.state() == ResyncState::Recovered) {
+                resync_.resynchronize();
+            }
             while (dualChannel_.tryPopState(flat)) {
                 processEvent(flat);
                 gotEvent = true;
             }
             if (dualChannel_.stateEmpty()) {
+                if (resync_.state() == ResyncState::RecoveryPending) {
+                    resync_.confirmRecovery();
+                }
                 dualChannel_.clearStateChannelSaturated();
             }
         }
