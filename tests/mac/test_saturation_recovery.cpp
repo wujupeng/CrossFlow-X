@@ -127,9 +127,12 @@ static void test_resync_ground_truthModifiers() {
     AuthoritativeResync resync;
 
     ModifierState mods = resync.resynchronize();
-    (void)mods;
 
     ModifierState stored = resync.groundTruthModifiers();
+    CFX_TEST_CHECK(stored.shift == mods.shift);
+    CFX_TEST_CHECK(stored.ctrl == mods.ctrl);
+    CFX_TEST_CHECK(stored.alt == mods.alt);
+    CFX_TEST_CHECK(stored.cmd == mods.cmd);
     CFX_TEST_CHECK(resync.state() == ResyncState::RecoveryPending);
     CFX_TEST_CHECK(resync.bitmapStale());
 
