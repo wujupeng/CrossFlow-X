@@ -46,3 +46,21 @@ endif()
 
 add_test(NAME test_dual_channel COMMAND test_dual_channel)
 
+add_executable(test_callback_boundary
+    test_callback_boundary.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/dual_channel_spsc.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/authoritative_resync.cpp
+)
+target_link_libraries(test_callback_boundary PRIVATE cfx_platform_common)
+target_include_directories(test_callback_boundary PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+if(CFX_PLATFORM_MAC)
+    target_link_libraries(test_callback_boundary PRIVATE
+        ${DC_CORE_GRAPHICS}
+        ${DC_CORE_FOUNDATION}
+        ${DC_APPLICATION_SERVICES}
+    )
+endif()
+
+add_test(NAME test_callback_boundary COMMAND test_callback_boundary)
+
