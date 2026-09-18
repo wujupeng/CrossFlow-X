@@ -178,6 +178,38 @@ static void test_injector_all_event_types() {
     printf("  [PASS] test_injector_all_event_types\n");
 }
 
+static void test_injector_all_button_types() {
+    NodeId src = makeNodeId(1, 100);
+    MacEventInjector injector(src);
+
+    CFX_TEST_CHECK(injector.inject(makeMouseButtonEvent(src, EventType::MouseButtonPress, MouseButton::Left)).ok);
+    CFX_TEST_CHECK(injector.inject(makeMouseButtonEvent(src, EventType::MouseButtonRelease, MouseButton::Left)).ok);
+    CFX_TEST_CHECK(injector.inject(makeMouseButtonEvent(src, EventType::MouseButtonPress, MouseButton::Right)).ok);
+    CFX_TEST_CHECK(injector.inject(makeMouseButtonEvent(src, EventType::MouseButtonRelease, MouseButton::Right)).ok);
+    CFX_TEST_CHECK(injector.inject(makeMouseButtonEvent(src, EventType::MouseButtonPress, MouseButton::Middle)).ok);
+    CFX_TEST_CHECK(injector.inject(makeMouseButtonEvent(src, EventType::MouseButtonRelease, MouseButton::Middle)).ok);
+
+    CFX_TEST_CHECK(injector.totalInjected() == 6);
+    CFX_TEST_CHECK(injector.totalRejected() == 0);
+
+    printf("  [PASS] test_injector_all_button_types\n");
+}
+
+static void test_injector_injection_method_location_compute() {
+    NodeId src = makeNodeId(1, 100);
+    MacEventInjector injector(src);
+
+    injector.setInjectionMethod(MacEventInjector::InjectionMethod::LocationCompute);
+    CFX_TEST_CHECK(injector.injectionMethod() == MacEventInjector::InjectionMethod::LocationCompute);
+
+    auto event = makeMouseMoveEvent(src);
+    auto result = injector.inject(event);
+    CFX_TEST_CHECK(result.ok);
+    CFX_TEST_CHECK(injector.totalInjected() == 1);
+
+    printf("  [PASS] test_injector_injection_method_location_compute\n");
+}
+
 static void test_injector_batch() {
     NodeId src = makeNodeId(1, 100);
     MacEventInjector injector(src);
@@ -613,6 +645,8 @@ int main() {
     test_injector_param_validation();
     test_injector_injection_method();
     test_injector_all_event_types();
+    test_injector_all_button_types();
+    test_injector_injection_method_location_compute();
     test_injector_batch();
     test_injector_release_all_pressed_empty();
     test_injector_release_all_pressed_buttons();
@@ -636,6 +670,6 @@ int main() {
     test_executor_result_string();
     test_executor_bounded_within_100ms();
 
-    printf("\n=== All TASK-042 tests passed (25/25) ===\n");
+    printf("\n=== All TASK-042 tests passed (27/27) ===\n");
     return 0;
 }

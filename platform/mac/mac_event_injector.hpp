@@ -32,6 +32,7 @@ public:
     enum class InjectionMethod : uint8_t {
         RelativeDelta,
         AbsolutePosition,
+        LocationCompute,
     };
 
     void setInjectionMethod(InjectionMethod method) noexcept { injectionMethod_ = method; }

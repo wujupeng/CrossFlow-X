@@ -39,6 +39,18 @@ InjectResult MacEventInjector::injectMouseEvent(const CanonicalInputEvent& event
         if (!moveEvent) return {false, 1, 0};
         CGEventPost(kCGHIDEventTap, moveEvent);
         CFRelease(moveEvent);
+    } else if (injectionMethod_ == InjectionMethod::LocationCompute) {
+        CGEventRef locEvent = CGEventCreate(nullptr);
+        if (!locEvent) return {false, 1, 0};
+        CGPoint cursor = CGEventGetLocation(locEvent);
+        CFRelease(locEvent);
+        CGFloat targetX = cursor.x + static_cast<CGFloat>(payload.deltaX);
+        CGFloat targetY = cursor.y + static_cast<CGFloat>(payload.deltaY);
+        CGEventRef moveEvent = CGEventCreateMouseEvent(
+            nullptr, kCGEventMouseMoved, CGPointMake(targetX, targetY), kCGMouseButtonLeft);
+        if (!moveEvent) return {false, 1, 0};
+        CGEventPost(kCGHIDEventTap, moveEvent);
+        CFRelease(moveEvent);
     } else {
         CGEventRef moveEvent = CGEventCreateMouseEvent(
             nullptr, kCGEventMouseMoved, CGPointMake(0, 0), kCGMouseButtonLeft);
@@ -53,10 +65,26 @@ InjectResult MacEventInjector::injectMouseEvent(const CanonicalInputEvent& event
 
 InjectResult MacEventInjector::injectMouseButtonEvent(const CanonicalInputEvent& event) noexcept {
     const auto& payload = std::get<MouseButtonPayload>(event.payload);
-    const CGEventType type = (event.eventType == EventType::MouseButtonPress)
-        ? kCGEventLeftMouseDown : kCGEventLeftMouseUp;
-    const CGMouseButton button = (payload.button == MouseButton::Left)
-        ? kCGMouseButtonLeft : kCGMouseButtonRight;
+    const bool isPress = (event.eventType == EventType::MouseButtonPress);
+
+    CGEventType type;
+    CGMouseButton button;
+    switch (payload.button) {
+        case MouseButton::Left:
+            type = isPress ? kCGEventLeftMouseDown : kCGEventLeftMouseUp;
+            button = kCGMouseButtonLeft;
+            break;
+        case MouseButton::Right:
+            type = isPress ? kCGEventRightMouseDown : kCGEventRightMouseUp;
+            button = kCGMouseButtonRight;
+            break;
+        case MouseButton::Middle:
+            type = isPress ? kCGEventOtherMouseDown : kCGEventOtherMouseUp;
+            button = kCGMouseButtonCenter;
+            break;
+        default:
+            return {false, 1, 0};
+    }
 
     CGEventRef btnEvent = CGEventCreateMouseEvent(nullptr, type, CGPointMake(0, 0), button);
     if (!btnEvent) return {false, 1, 0};
