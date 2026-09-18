@@ -82,3 +82,26 @@ endif()
 
 add_test(NAME test_saturation_recovery COMMAND test_saturation_recovery)
 
+add_executable(test_mac_injector
+    test_mac_injector.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/mac_event_injector.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/release_all_pressed_executor.cpp
+)
+target_link_libraries(test_mac_injector PRIVATE cfx_platform_common)
+target_include_directories(test_mac_injector PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+if(CFX_PLATFORM_MAC)
+    find_library(INJ_CORE_GRAPHICS CoreGraphics REQUIRED)
+    find_library(INJ_CORE_FOUNDATION CoreFoundation REQUIRED)
+    find_library(INJ_APPLICATION_SERVICES ApplicationServices REQUIRED)
+    find_library(INJ_CARBON Carbon REQUIRED)
+    target_link_libraries(test_mac_injector PRIVATE
+        ${INJ_CORE_GRAPHICS}
+        ${INJ_CORE_FOUNDATION}
+        ${INJ_APPLICATION_SERVICES}
+        ${INJ_CARBON}
+    )
+endif()
+
+add_test(NAME test_mac_injector COMMAND test_mac_injector)
+
