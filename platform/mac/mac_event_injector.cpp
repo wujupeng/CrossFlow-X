@@ -6,6 +6,7 @@
 #endif
 
 #include <atomic>
+#include <cstdio>
 
 namespace cfx {
 
@@ -14,15 +15,56 @@ MacEventInjector::MacEventInjector(NodeId sourceNodeId) noexcept
 
 bool MacEventInjector::validateSource(const CanonicalInputEvent& event) const noexcept {
     if (isController_) {
+        fprintf(stderr, "[CFX-E-INJ-UNAUTHORIZED-SOURCE] controller mode rejects injection\n");
         return false;
     }
-    return event.sourceNodeId == sourceNodeId_;
+    if (event.sourceNodeId != sourceNodeId_) {
+        fprintf(stderr, "[CFX-E-INJ-UNAUTHORIZED-SOURCE] source node mismatch\n");
+        return false;
+    }
+    return true;
 }
 
 bool MacEventInjector::validateParams(const CanonicalInputEvent& event) const noexcept {
     if (!event.validate()) {
+        fprintf(stderr, "[CFX-W-INJ-INVALID-PARAM] event.validate() failed\n");
         return false;
     }
+
+    if (event.eventType == EventType::KeyPress || event.eventType == EventType::KeyRelease) {
+        const auto& payload = std::get<KeyPayload>(event.payload);
+        if (payload.keyCode >= 256) {
+            fprintf(stderr, "[CFX-W-INJ-INVALID-PARAM] keyCode %u out of range [0,255]\n", payload.keyCode);
+            return false;
+        }
+    }
+
+    if (event.eventType == EventType::MouseButtonPress || event.eventType == EventType::MouseButtonRelease) {
+        const auto& payload = std::get<MouseButtonPayload>(event.payload);
+        if (static_cast<uint8_t>(payload.button) > static_cast<uint8_t>(MouseButton::Middle)) {
+            fprintf(stderr, "[CFX-W-INJ-INVALID-PARAM] button %u out of enum range\n", static_cast<uint8_t>(payload.button));
+            return false;
+        }
+    }
+
+    if (event.eventType == EventType::MouseMove && injectionMethod_ == InjectionMethod::AbsolutePosition) {
+        const auto& payload = std::get<MouseMovePayload>(event.payload);
+        if (screenBoundary_.isValid()) {
+            if (payload.deltaX < 0 || payload.deltaY < 0) {
+                fprintf(stderr, "[CFX-W-INJ-INVALID-PARAM] absolute position (%d,%d) negative\n", payload.deltaX, payload.deltaY);
+                return false;
+            }
+            if (static_cast<uint32_t>(payload.deltaX) > screenBoundary_.originX + screenBoundary_.width ||
+                static_cast<uint32_t>(payload.deltaY) > screenBoundary_.originY + screenBoundary_.height) {
+                fprintf(stderr, "[CFX-W-INJ-INVALID-PARAM] absolute position (%d,%d) exceeds screen (%u,%u)\n",
+                        payload.deltaX, payload.deltaY,
+                        screenBoundary_.originX + screenBoundary_.width,
+                        screenBoundary_.originY + screenBoundary_.height);
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 

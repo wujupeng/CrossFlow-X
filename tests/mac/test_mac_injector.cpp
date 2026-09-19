@@ -138,6 +138,64 @@ static void test_injector_param_validation() {
     printf("  [PASS] test_injector_param_validation\n");
 }
 
+static void test_injector_keycode_range_validation() {
+    NodeId src = makeNodeId(1, 100);
+    MacEventInjector injector(src);
+
+    CFX_TEST_CHECK(injector.inject(makeKeyEvent(src, EventType::KeyPress, 0)).ok);
+    CFX_TEST_CHECK(injector.inject(makeKeyEvent(src, EventType::KeyPress, 255)).ok);
+
+    auto event = makeKeyEvent(src, EventType::KeyPress, 256);
+    CFX_TEST_CHECK(!injector.inject(event).ok);
+
+    event = makeKeyEvent(src, EventType::KeyRelease, 999);
+    CFX_TEST_CHECK(!injector.inject(event).ok);
+
+    CFX_TEST_CHECK(injector.totalInjected() == 2);
+    CFX_TEST_CHECK(injector.totalRejected() == 2);
+
+    printf("  [PASS] test_injector_keycode_range_validation\n");
+}
+
+static void test_injector_screen_boundary_validation() {
+    NodeId src = makeNodeId(1, 100);
+    MacEventInjector injector(src);
+
+    ScreenBoundary sb{};
+    sb.width = 1920;
+    sb.height = 1080;
+    sb.originX = 0;
+    sb.originY = 0;
+    injector.setScreenBoundary(sb);
+    injector.setInjectionMethod(MacEventInjector::InjectionMethod::AbsolutePosition);
+
+    CFX_TEST_CHECK(injector.screenBoundary().isValid());
+
+    auto event = makeMouseMoveEvent(src);
+    event.payload = MouseMovePayload{100, 200};
+    CFX_TEST_CHECK(injector.inject(event).ok);
+
+    event.payload = MouseMovePayload{1920, 1080};
+    CFX_TEST_CHECK(injector.inject(event).ok);
+
+    event.payload = MouseMovePayload{-1, 100};
+    CFX_TEST_CHECK(!injector.inject(event).ok);
+
+    event.payload = MouseMovePayload{100, -1};
+    CFX_TEST_CHECK(!injector.inject(event).ok);
+
+    event.payload = MouseMovePayload{2000, 100};
+    CFX_TEST_CHECK(!injector.inject(event).ok);
+
+    event.payload = MouseMovePayload{100, 2000};
+    CFX_TEST_CHECK(!injector.inject(event).ok);
+
+    CFX_TEST_CHECK(injector.totalInjected() == 2);
+    CFX_TEST_CHECK(injector.totalRejected() == 4);
+
+    printf("  [PASS] test_injector_screen_boundary_validation\n");
+}
+
 static void test_injector_injection_method() {
     NodeId src = makeNodeId(1, 100);
     MacEventInjector injector(src);
@@ -643,6 +701,8 @@ int main() {
     test_injector_source_validation();
     test_injector_controller_mode_rejects_all();
     test_injector_param_validation();
+    test_injector_keycode_range_validation();
+    test_injector_screen_boundary_validation();
     test_injector_injection_method();
     test_injector_all_event_types();
     test_injector_all_button_types();
@@ -670,6 +730,6 @@ int main() {
     test_executor_result_string();
     test_executor_bounded_within_100ms();
 
-    printf("\n=== All TASK-042 tests passed (27/27) ===\n");
+    printf("\n=== All TASK-042 tests passed (29/29) ===\n");
     return 0;
 }

@@ -38,6 +38,9 @@ public:
     void setInjectionMethod(InjectionMethod method) noexcept { injectionMethod_ = method; }
     InjectionMethod injectionMethod() const noexcept { return injectionMethod_; }
 
+    void setScreenBoundary(ScreenBoundary sb) noexcept { screenBoundary_ = sb; }
+    ScreenBoundary screenBoundary() const noexcept { return screenBoundary_; }
+
     bool syncModifiers(const ModifierState& sourceState) noexcept;
 
 private:
@@ -59,6 +62,7 @@ private:
     NodeId sourceNodeId_{};
     bool isController_{false};
     InjectionMethod injectionMethod_{InjectionMethod::RelativeDelta};
+    ScreenBoundary screenBoundary_{};
     std::atomic<uint64_t> totalInjected_{0};
     std::atomic<uint64_t> totalRejected_{0};
 };
