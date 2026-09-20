@@ -105,3 +105,24 @@ endif()
 
 add_test(NAME test_mac_injector COMMAND test_mac_injector)
 
+add_executable(physical_evidence_phase_e
+    physical_evidence_phase_e.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/mac_event_injector.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/release_all_pressed_executor.cpp
+)
+target_link_libraries(physical_evidence_phase_e PRIVATE cfx_platform_common)
+target_include_directories(physical_evidence_phase_e PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+if(CFX_PLATFORM_MAC)
+    find_library(PE_CORE_GRAPHICS CoreGraphics REQUIRED)
+    find_library(PE_CORE_FOUNDATION CoreFoundation REQUIRED)
+    find_library(PE_APPLICATION_SERVICES ApplicationServices REQUIRED)
+    find_library(PE_CARBON Carbon REQUIRED)
+    target_link_libraries(physical_evidence_phase_e PRIVATE
+        ${PE_CORE_GRAPHICS}
+        ${PE_CORE_FOUNDATION}
+        ${PE_APPLICATION_SERVICES}
+        ${PE_CARBON}
+    )
+endif()
+
