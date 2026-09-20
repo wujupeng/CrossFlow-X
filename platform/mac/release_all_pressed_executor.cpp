@@ -26,6 +26,9 @@ ReleaseAllPressedExecutor::Result ReleaseAllPressedExecutor::execute(
     executionCount_.fetch_add(1, std::memory_order_relaxed);
 
     uint32_t released = 0;
+    static std::atomic<uint64_t> s_eventId{1};
+    const auto nowNs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+        tStart.time_since_epoch()).count());
 
     for (uint8_t btn = 0; btn < 8; ++btn) {
         if (snapshot.pressedMouseButtons.isPressed(static_cast<MouseButton>(btn))) {
@@ -35,6 +38,8 @@ ReleaseAllPressedExecutor::Result ReleaseAllPressedExecutor::execute(
             }
 
             CanonicalInputEvent event{};
+            event.eventId = s_eventId.fetch_add(1, std::memory_order_relaxed);
+            event.timestamp = nowNs;
             event.eventType = EventType::MouseButtonRelease;
             event.payload = MouseButtonPayload{static_cast<MouseButton>(btn)};
             event.sourceNodeId = sourceNodeId;
@@ -58,6 +63,8 @@ ReleaseAllPressedExecutor::Result ReleaseAllPressedExecutor::execute(
             }
 
             CanonicalInputEvent event{};
+            event.eventId = s_eventId.fetch_add(1, std::memory_order_relaxed);
+            event.timestamp = nowNs;
             event.eventType = EventType::KeyRelease;
             event.payload = KeyPayload{static_cast<KeyCode>(code)};
             event.sourceNodeId = sourceNodeId;
