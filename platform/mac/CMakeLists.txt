@@ -17,6 +17,14 @@ add_library(cfx_platform_mac STATIC
     dual_channel_spsc.cpp
     authoritative_resync.hpp
     authoritative_resync.cpp
+    native_coord_normalizer.hpp
+    native_coord_normalizer.cpp
+    screen_boundary_cache.hpp
+    screen_boundary_cache.cpp
+    multi_display_merge_policy.hpp
+    multi_display_merge_policy.cpp
+    mac_screen_query.hpp
+    mac_screen_query.cpp
 )
 
 target_include_directories(cfx_platform_mac PUBLIC

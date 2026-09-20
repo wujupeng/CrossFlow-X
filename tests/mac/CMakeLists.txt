@@ -126,3 +126,26 @@ if(CFX_PLATFORM_MAC)
     )
 endif()
 
+add_executable(test_mac_screen_query
+    test_mac_screen_query.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/mac_screen_query.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/native_coord_normalizer.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/screen_boundary_cache.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/multi_display_merge_policy.cpp
+)
+target_link_libraries(test_mac_screen_query PRIVATE cfx_platform_common)
+target_include_directories(test_mac_screen_query PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+if(CFX_PLATFORM_MAC)
+    find_library(SQ_CORE_GRAPHICS CoreGraphics REQUIRED)
+    find_library(SQ_CORE_FOUNDATION CoreFoundation REQUIRED)
+    find_library(SQ_APPLICATION_SERVICES ApplicationServices REQUIRED)
+    target_link_libraries(test_mac_screen_query PRIVATE
+        ${SQ_CORE_GRAPHICS}
+        ${SQ_CORE_FOUNDATION}
+        ${SQ_APPLICATION_SERVICES}
+    )
+endif()
+
+add_test(NAME test_mac_screen_query COMMAND test_mac_screen_query)
+
