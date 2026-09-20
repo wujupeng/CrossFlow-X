@@ -218,24 +218,53 @@ ReleaseResult MacEventInjector::releaseAllPressed(const PressedStateSnapshot& pr
 }
 
 bool MacEventInjector::syncModifiers(const ModifierState& sourceState) noexcept {
-#ifdef __APPLE__
-    CGEventFlags flags = 0;
-    if (sourceState.shift) flags |= kCGEventFlagMaskShift;
-    if (sourceState.ctrl)  flags |= kCGEventFlagMaskControl;
-    if (sourceState.alt)   flags |= kCGEventFlagMaskAlternate;
-    if (sourceState.cmd)   flags |= kCGEventFlagMaskCommand;
-    if (sourceState.fn)    flags |= kCGEventFlagMaskSecondaryFn;
+    fprintf(stderr, "[CFX-I-INJ-MODIFIER-SYNC] source: shift=%d ctrl=%d alt=%d cmd=%d fn=%d\n",
+            sourceState.shift, sourceState.ctrl, sourceState.alt, sourceState.cmd, sourceState.fn);
 
-    CGEventRef event = CGEventCreate(nullptr);
-    if (!event) return false;
-    CGEventSetFlags(event, flags);
-    CGEventPost(kCGHIDEventTap, event);
-    CFRelease(event);
-    return true;
-#else
-    (void)sourceState;
-    return true;
+    struct ModifierEntry {
+        bool source;
+        bool local;
+        uint16_t keyCode;
+        const char* name;
+    };
+
+    ModifierEntry entries[] = {
+        {sourceState.shift, localModifierState_.shift, 56, "Shift"},
+        {sourceState.ctrl,  localModifierState_.ctrl,  59, "Control"},
+        {sourceState.alt,   localModifierState_.alt,   58, "Option"},
+        {sourceState.cmd,   localModifierState_.cmd,   55, "Command"},
+        {sourceState.fn,    localModifierState_.fn,    63, "Fn"},
+    };
+
+    bool allOk = true;
+
+    for (const auto& e : entries) {
+        if (e.source == e.local) continue;
+
+#ifdef __APPLE__
+        CGEventRef keyEvent = CGEventCreateKeyboardEvent(
+            nullptr, static_cast<CGKeyCode>(e.keyCode), e.source);
+        if (!keyEvent) {
+            fprintf(stderr, "[CFX-E-INJ-MODIFIER-SYNC] failed to create %s %s event\n",
+                    e.name, e.source ? "press" : "release");
+            allOk = false;
+            continue;
+        }
+        CGEventPost(kCGHIDEventTap, keyEvent);
+        CFRelease(keyEvent);
 #endif
+
+        fprintf(stderr, "[CFX-I-INJ-MODIFIER-SYNC] %s %s\n",
+                e.name, e.source ? "press" : "release");
+    }
+
+    localModifierState_ = sourceState;
+
+    fprintf(stderr, "[CFX-I-INJ-MODIFIER-SYNC] aligned: shift=%d ctrl=%d alt=%d cmd=%d fn=%d\n",
+            localModifierState_.shift, localModifierState_.ctrl,
+            localModifierState_.alt, localModifierState_.cmd, localModifierState_.fn);
+
+    return allOk;
 }
 
 }  // namespace cfx

@@ -353,14 +353,67 @@ static void test_injector_sync_modifiers() {
 
     ModifierState none{false, false, false, false, false};
     CFX_TEST_CHECK(injector.syncModifiers(none));
+    CFX_TEST_CHECK(injector.localModifierState() == none);
 
     ModifierState all{true, true, true, true, true};
     CFX_TEST_CHECK(injector.syncModifiers(all));
+    CFX_TEST_CHECK(injector.localModifierState() == all);
 
     ModifierState partial{true, false, true, false, true};
     CFX_TEST_CHECK(injector.syncModifiers(partial));
+    CFX_TEST_CHECK(injector.localModifierState() == partial);
 
     printf("  [PASS] test_injector_sync_modifiers\n");
+}
+
+static void test_injector_sync_modifiers_explicit_alignment() {
+    MacEventInjector injector(makeNodeId(1, 100));
+
+    CFX_TEST_CHECK(!injector.localModifierState().shift);
+
+    ModifierState sourceShift{true, false, false, false, false};
+    CFX_TEST_CHECK(injector.syncModifiers(sourceShift));
+    CFX_TEST_CHECK(injector.localModifierState().shift);
+    CFX_TEST_CHECK(injector.localModifierState() == sourceShift);
+
+    ModifierState releaseShift{false, false, false, false, false};
+    CFX_TEST_CHECK(injector.syncModifiers(releaseShift));
+    CFX_TEST_CHECK(!injector.localModifierState().shift);
+    CFX_TEST_CHECK(injector.localModifierState() == releaseShift);
+
+    printf("  [PASS] test_injector_sync_modifiers_explicit_alignment\n");
+}
+
+static void test_injector_sync_modifiers_partial_alignment() {
+    MacEventInjector injector(makeNodeId(1, 100));
+
+    ModifierState initial{true, true, false, false, false};
+    CFX_TEST_CHECK(injector.syncModifiers(initial));
+    CFX_TEST_CHECK(injector.localModifierState() == initial);
+
+    ModifierState target{false, true, true, false, true};
+    CFX_TEST_CHECK(injector.syncModifiers(target));
+    CFX_TEST_CHECK(injector.localModifierState() == target);
+    CFX_TEST_CHECK(!injector.localModifierState().shift);
+    CFX_TEST_CHECK(injector.localModifierState().ctrl);
+    CFX_TEST_CHECK(injector.localModifierState().alt);
+    CFX_TEST_CHECK(!injector.localModifierState().cmd);
+    CFX_TEST_CHECK(injector.localModifierState().fn);
+
+    printf("  [PASS] test_injector_sync_modifiers_partial_alignment\n");
+}
+
+static void test_injector_sync_modifiers_idempotent() {
+    MacEventInjector injector(makeNodeId(1, 100));
+
+    ModifierState state{true, false, true, false, false};
+    CFX_TEST_CHECK(injector.syncModifiers(state));
+    CFX_TEST_CHECK(injector.localModifierState() == state);
+
+    CFX_TEST_CHECK(injector.syncModifiers(state));
+    CFX_TEST_CHECK(injector.localModifierState() == state);
+
+    printf("  [PASS] test_injector_sync_modifiers_idempotent\n");
 }
 
 static void test_injector_set_source_node_id() {
@@ -713,6 +766,9 @@ int main() {
     test_injector_release_all_pressed_keys();
     test_injector_release_all_pressed_mixed();
     test_injector_sync_modifiers();
+    test_injector_sync_modifiers_explicit_alignment();
+    test_injector_sync_modifiers_partial_alignment();
+    test_injector_sync_modifiers_idempotent();
     test_injector_set_source_node_id();
 
     printf("\n[ReleaseAllPressedExecutor]\n");
@@ -730,6 +786,6 @@ int main() {
     test_executor_result_string();
     test_executor_bounded_within_100ms();
 
-    printf("\n=== All TASK-042 tests passed (29/29) ===\n");
+    printf("\n=== All TASK-042 tests passed (32/32) ===\n");
     return 0;
 }

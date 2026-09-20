@@ -43,6 +43,8 @@ public:
 
     bool syncModifiers(const ModifierState& sourceState) noexcept;
 
+    ModifierState localModifierState() const noexcept { return localModifierState_; }
+
 private:
 #ifdef __APPLE__
     InjectResult injectMouseEvent(const CanonicalInputEvent& event) noexcept;
@@ -63,6 +65,7 @@ private:
     bool isController_{false};
     InjectionMethod injectionMethod_{InjectionMethod::RelativeDelta};
     ScreenBoundary screenBoundary_{};
+    ModifierState localModifierState_{false, false, false, false, false};
     std::atomic<uint64_t> totalInjected_{0};
     std::atomic<uint64_t> totalRejected_{0};
 };
