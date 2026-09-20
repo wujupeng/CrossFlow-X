@@ -27,12 +27,14 @@ static CanonicalInputEvent makeEvent(NodeId src, EventType type, EventPayload pa
 }
 
 static bool checkAccessibilityPermission() {
-    @autoreleasepool {
-        NSDictionary* options = @{
-            (__bridge id)kAXTrustedCheckOptionPrompt: @YES
-        };
-        return AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
-    }
+    const void* keys[] = { kAXTrustedCheckOptionPrompt };
+    const void* values[] = { kCFBooleanTrue };
+    CFDictionaryRef options = CFDictionaryCreate(
+        kCFAllocatorDefault, keys, values, 1,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    bool trusted = AXIsProcessTrustedWithOptions(options);
+    if (options) CFRelease(options);
+    return trusted;
 }
 
 static void printHeader() {
