@@ -13,6 +13,19 @@
 using namespace cfx;
 using Clock = std::chrono::high_resolution_clock;
 
+static uint64_t g_eventId = 1;
+
+static CanonicalInputEvent makeEvent(NodeId src, EventType type, EventPayload payload) {
+    CanonicalInputEvent event{};
+    event.eventId = g_eventId++;
+    event.sourceNodeId = src;
+    event.timestamp = static_cast<u64>(Clock::now().time_since_epoch().count());
+    event.eventType = type;
+    event.payload = payload;
+    event.modifierState = {false, false, false, false, false};
+    return event;
+}
+
 static bool checkAccessibilityPermission() {
     @autoreleasepool {
         NSDictionary* options = @{
@@ -54,10 +67,7 @@ static void test_single_inject_latency() {
     int failCount = 0;
 
     for (int i = 0; i < iterations; ++i) {
-        CanonicalInputEvent event{};
-        event.sourceNodeId = src;
-        event.eventType = EventType::MouseMove;
-        event.payload = MouseMovePayload{1, 0};
+        auto event = makeEvent(src, EventType::MouseMove, MouseMovePayload{1, 0});
 
         auto start = Clock::now();
         InjectResult result = injector.inject(event);
@@ -99,11 +109,7 @@ static void test_batch_inject_latency() {
         std::vector<CanonicalInputEvent> events;
         events.reserve(batchSize);
         for (int i = 0; i < batchSize; ++i) {
-            CanonicalInputEvent event{};
-            event.sourceNodeId = src;
-            event.eventType = EventType::MouseMove;
-            event.payload = MouseMovePayload{1, 0};
-            events.push_back(event);
+            events.push_back(makeEvent(src, EventType::MouseMove, MouseMovePayload{1, 0}));
         }
 
         auto start = Clock::now();
@@ -195,22 +201,23 @@ static void test_release_all_pressed_physical() {
     ReleaseAllPressedExecutor executor;
 
     PressedStateSnapshot snapshot{};
-    snapshot.pressedMouseButtons.press(MouseButton::Left);
-    snapshot.pressedMouseButtons.press(MouseButton::Right);
-    snapshot.pressedKeys.press(static_cast<KeyCode>(56));
-    snapshot.pressedKeys.press(static_cast<KeyCode>(59));
-    snapshot.pressedKeys.press(static_cast<KeyCode>(58));
+    snapshot.pressedMouseButtons.setPressed(MouseButton::Left);
+    snapshot.pressedMouseButtons.setPressed(MouseButton::Right);
+    snapshot.pressedKeys.setPressed(static_cast<KeyCode>(56));
+    snapshot.pressedKeys.setPressed(static_cast<KeyCode>(59));
+    snapshot.pressedKeys.setPressed(static_cast<KeyCode>(58));
 
     auto start = Clock::now();
-    ReleaseResult result = executor.execute(snapshot, [&injector](const CanonicalInputEvent& event) {
+    auto result = executor.execute(snapshot, [&injector](const CanonicalInputEvent& event) {
         return injector.inject(event);
     });
     auto end = Clock::now();
 
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
-    printf("  Released count: %u\n", result.releasedCount);
+    printf("  Result: %s\n", ReleaseAllPressedExecutor::resultString(result));
+    printf("  Released count: %u\n", executor.releasedCount());
     printf("  Elapsed: %.3f ms\n", ms);
-    printf("  Degraded: %s\n", result.degraded ? "YES" : "NO");
+    printf("  Degraded: %s\n", executor.degraded() ? "YES" : "NO");
     printf("  Target: <=100.000 ms\n");
     if (ms <= 100.0) {
         printf("  [PASS] releaseAllPressed %.3fms <= 100ms (Contract #9)\n", ms);
@@ -229,10 +236,7 @@ static void test_keyboard_injection_physical() {
     const uint16_t testKeyCode = 0;
     printf("  Testing keyCode=%u (virtual key A)\n", testKeyCode);
 
-    CanonicalInputEvent pressEvent{};
-    pressEvent.sourceNodeId = src;
-    pressEvent.eventType = EventType::KeyPress;
-    pressEvent.payload = KeyPayload{testKeyCode};
+    auto pressEvent = makeEvent(src, EventType::KeyPress, KeyPayload{testKeyCode});
 
     auto start1 = Clock::now();
     InjectResult r1 = injector.inject(pressEvent);
@@ -240,10 +244,7 @@ static void test_keyboard_injection_physical() {
     double ms1 = std::chrono::duration<double, std::milli>(end1 - start1).count();
     printf("  KeyPress: ok=%s, latency=%.3f ms\n", r1.ok ? "true" : "false", ms1);
 
-    CanonicalInputEvent releaseEvent{};
-    releaseEvent.sourceNodeId = src;
-    releaseEvent.eventType = EventType::KeyRelease;
-    releaseEvent.payload = KeyPayload{testKeyCode};
+    auto releaseEvent = makeEvent(src, EventType::KeyRelease, KeyPayload{testKeyCode});
 
     auto start2 = Clock::now();
     InjectResult r2 = injector.inject(releaseEvent);
@@ -269,20 +270,14 @@ static void test_mouse_button_injection_physical() {
         const char* name = button == MouseButton::Left ? "Left" :
                            button == MouseButton::Right ? "Right" : "Middle";
 
-        CanonicalInputEvent pressEvent{};
-        pressEvent.sourceNodeId = src;
-        pressEvent.eventType = EventType::MouseButtonPress;
-        pressEvent.payload = MouseButtonPayload{button};
+        auto pressEvent = makeEvent(src, EventType::MouseButtonPress, MouseButtonPayload{button});
 
         auto s1 = Clock::now();
         InjectResult r1 = injector.inject(pressEvent);
         auto e1 = Clock::now();
         double ms1 = std::chrono::duration<double, std::milli>(e1 - s1).count();
 
-        CanonicalInputEvent releaseEvent{};
-        releaseEvent.sourceNodeId = src;
-        releaseEvent.eventType = EventType::MouseButtonRelease;
-        releaseEvent.payload = MouseButtonPayload{button};
+        auto releaseEvent = makeEvent(src, EventType::MouseButtonRelease, MouseButtonPayload{button});
 
         auto s2 = Clock::now();
         InjectResult r2 = injector.inject(releaseEvent);
@@ -303,10 +298,7 @@ static void test_injection_methods_physical() {
     NodeId src = {1, 100};
     MacEventInjector injector(src);
 
-    CanonicalInputEvent moveEvent{};
-    moveEvent.sourceNodeId = src;
-    moveEvent.eventType = EventType::MouseMove;
-    moveEvent.payload = MouseMovePayload{5, 5};
+    auto moveEvent = makeEvent(src, EventType::MouseMove, MouseMovePayload{5, 5});
 
     const char* methodNames[] = {"RelativeDelta", "AbsolutePosition", "LocationCompute"};
     MacEventInjector::InjectionMethod methods[] = {
