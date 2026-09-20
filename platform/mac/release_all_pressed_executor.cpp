@@ -17,6 +17,7 @@ const char* ReleaseAllPressedExecutor::resultString(Result r) noexcept {
 ReleaseAllPressedExecutor::Result ReleaseAllPressedExecutor::execute(
     const PressedStateSnapshot& snapshot,
     std::function<InjectResult(const CanonicalInputEvent&)> injectFn,
+    NodeId sourceNodeId,
     ClockFn clockFn) noexcept {
 
     const auto tStart = clockFn();
@@ -25,7 +26,6 @@ ReleaseAllPressedExecutor::Result ReleaseAllPressedExecutor::execute(
     executionCount_.fetch_add(1, std::memory_order_relaxed);
 
     uint32_t released = 0;
-    NodeId sourceId{};
 
     for (uint8_t btn = 0; btn < 8; ++btn) {
         if (snapshot.pressedMouseButtons.isPressed(static_cast<MouseButton>(btn))) {
@@ -37,7 +37,7 @@ ReleaseAllPressedExecutor::Result ReleaseAllPressedExecutor::execute(
             CanonicalInputEvent event{};
             event.eventType = EventType::MouseButtonRelease;
             event.payload = MouseButtonPayload{static_cast<MouseButton>(btn)};
-            event.sourceNodeId = sourceId;
+            event.sourceNodeId = sourceNodeId;
 
             InjectResult r = injectFn(event);
             if (r.ok) {
@@ -60,7 +60,7 @@ ReleaseAllPressedExecutor::Result ReleaseAllPressedExecutor::execute(
             CanonicalInputEvent event{};
             event.eventType = EventType::KeyRelease;
             event.payload = KeyPayload{static_cast<KeyCode>(code)};
-            event.sourceNodeId = sourceId;
+            event.sourceNodeId = sourceNodeId;
 
             InjectResult r = injectFn(event);
             if (r.ok) {

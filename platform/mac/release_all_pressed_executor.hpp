@@ -31,6 +31,7 @@ public:
 
     Result execute(const PressedStateSnapshot& snapshot,
                    std::function<InjectResult(const CanonicalInputEvent&)> injectFn,
+                   NodeId sourceNodeId = {},
                    ClockFn clockFn = []() { return std::chrono::high_resolution_clock::now(); }) noexcept;
 
     Result lastResult() const noexcept {

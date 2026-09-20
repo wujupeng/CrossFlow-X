@@ -589,7 +589,7 @@ static void test_executor_deadline_deterministic_clock() {
         return {true, 0, 0};
     };
 
-    auto result = executor.execute(snapshot, injectFn, clockFn);
+    auto result = executor.execute(snapshot, injectFn, NodeId{}, clockFn);
 
     CFX_TEST_CHECK(result == ReleaseAllPressedExecutor::Result::DeadlineReached);
     CFX_TEST_CHECK(callCount == 10);
@@ -620,7 +620,7 @@ static void test_executor_deadline_deterministic_under_limit() {
         return {true, 0, 0};
     };
 
-    auto result = executor.execute(snapshot, injectFn, clockFn);
+    auto result = executor.execute(snapshot, injectFn, NodeId{}, clockFn);
 
     CFX_TEST_CHECK(result == ReleaseAllPressedExecutor::Result::Success);
     CFX_TEST_CHECK(callCount == 5);
@@ -656,7 +656,7 @@ static void test_executor_deadline_deterministic_no_calls_after() {
         return {true, 0, 0};
     };
 
-    auto result = executor.execute(snapshot, injectFn, clockFn);
+    auto result = executor.execute(snapshot, injectFn, NodeId{}, clockFn);
 
     CFX_TEST_CHECK(result == ReleaseAllPressedExecutor::Result::DeadlineReached);
     CFX_TEST_CHECK(!calledAfterDeadline);

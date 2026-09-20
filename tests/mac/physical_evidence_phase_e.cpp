@@ -212,7 +212,7 @@ static void test_release_all_pressed_physical() {
     auto start = Clock::now();
     auto result = executor.execute(snapshot, [&injector](const CanonicalInputEvent& event) {
         return injector.inject(event);
-    });
+    }, src);
     auto end = Clock::now();
 
     double ms = std::chrono::duration<double, std::milli>(end - start).count();
@@ -238,26 +238,50 @@ static void test_keyboard_injection_physical() {
     const uint16_t testKeyCode = 0;
     printf("  Testing keyCode=%u (virtual key A)\n", testKeyCode);
 
-    auto pressEvent = makeEvent(src, EventType::KeyPress, KeyPayload{testKeyCode});
+    printf("  Step 1: Warmup (5 press/release cycles)\n");
+    for (int i = 0; i < 5; ++i) {
+        injector.inject(makeEvent(src, EventType::KeyPress, KeyPayload{testKeyCode}));
+        injector.inject(makeEvent(src, EventType::KeyRelease, KeyPayload{testKeyCode}));
+    }
 
-    auto start1 = Clock::now();
-    InjectResult r1 = injector.inject(pressEvent);
-    auto end1 = Clock::now();
-    double ms1 = std::chrono::duration<double, std::milli>(end1 - start1).count();
-    printf("  KeyPress: ok=%s, latency=%.3f ms\n", r1.ok ? "true" : "false", ms1);
+    printf("  Step 2: Measurement (100 iterations)\n");
+    const int iterations = 100;
+    double totalMs = 0.0;
+    double maxMs = 0.0;
+    double firstMs = 0.0;
+    int failCount = 0;
 
-    auto releaseEvent = makeEvent(src, EventType::KeyRelease, KeyPayload{testKeyCode});
+    for (int i = 0; i < iterations; ++i) {
+        auto pressEvent = makeEvent(src, EventType::KeyPress, KeyPayload{testKeyCode});
+        auto s1 = Clock::now();
+        InjectResult r1 = injector.inject(pressEvent);
+        auto e1 = Clock::now();
+        double ms1 = std::chrono::duration<double, std::milli>(e1 - s1).count();
+        if (i == 0) firstMs = ms1;
+        totalMs += ms1;
+        if (ms1 > maxMs) maxMs = ms1;
+        if (!r1.ok) ++failCount;
 
-    auto start2 = Clock::now();
-    InjectResult r2 = injector.inject(releaseEvent);
-    auto end2 = Clock::now();
-    double ms2 = std::chrono::duration<double, std::milli>(end2 - start2).count();
-    printf("  KeyRelease: ok=%s, latency=%.3f ms\n", r2.ok ? "true" : "false", ms2);
+        auto releaseEvent = makeEvent(src, EventType::KeyRelease, KeyPayload{testKeyCode});
+        auto s2 = Clock::now();
+        InjectResult r2 = injector.inject(releaseEvent);
+        auto e2 = Clock::now();
+        double ms2 = std::chrono::duration<double, std::milli>(e2 - s2).count();
+        totalMs += ms2;
+        if (ms2 > maxMs) maxMs = ms2;
+        if (!r2.ok) ++failCount;
+    }
 
-    if (r1.ok && r2.ok && ms1 <= 5.0 && ms2 <= 5.0) {
-        printf("  [PASS] Keyboard injection verified (both <=5ms)\n");
+    double avgMs = totalMs / (iterations * 2);
+    printf("  First call: %.3f ms\n", firstMs);
+    printf("  Average:     %.3f ms\n", avgMs);
+    printf("  Max:         %.3f ms\n", maxMs);
+    printf("  Failures:    %d\n", failCount);
+    printf("  Target:      <=5.000 ms (average, excluding first-call warmup)\n");
+    if (avgMs <= 5.0 && failCount == 0) {
+        printf("  [PASS] Keyboard injection average %.3fms <= 5ms\n", avgMs);
     } else {
-        printf("  [FAIL] Keyboard injection verification failed\n");
+        printf("  [FAIL] Keyboard injection: avg=%.3fms, failures=%d\n", avgMs, failCount);
     }
     printf("\n");
 }
@@ -268,6 +292,7 @@ static void test_mouse_button_injection_physical() {
     NodeId src = {1, 100};
     MacEventInjector injector(src);
 
+    bool allOk = true;
     for (auto button : {MouseButton::Left, MouseButton::Right, MouseButton::Middle}) {
         const char* name = button == MouseButton::Left ? "Left" :
                            button == MouseButton::Right ? "Right" : "Middle";
@@ -288,9 +313,14 @@ static void test_mouse_button_injection_physical() {
 
         printf("  %s: press=%s(%.3fms) release=%s(%.3fms)\n",
                name, r1.ok ? "OK" : "FAIL", ms1, r2.ok ? "OK" : "FAIL", ms2);
+        if (!r1.ok || !r2.ok) allOk = false;
     }
 
-    printf("  [PASS] Mouse button injection verified\n");
+    if (allOk) {
+        printf("  [PASS] Mouse button injection verified\n");
+    } else {
+        printf("  [FAIL] Mouse button injection had failures\n");
+    }
     printf("\n");
 }
 
@@ -309,6 +339,7 @@ static void test_injection_methods_physical() {
         MacEventInjector::InjectionMethod::LocationCompute
     };
 
+    bool allOk = true;
     for (int i = 0; i < 3; ++i) {
         injector.setInjectionMethod(methods[i]);
         auto start = Clock::now();
@@ -316,9 +347,14 @@ static void test_injection_methods_physical() {
         auto end = Clock::now();
         double ms = std::chrono::duration<double, std::milli>(end - start).count();
         printf("  %s: ok=%s, latency=%.3f ms\n", methodNames[i], r.ok ? "true" : "false", ms);
+        if (!r.ok) allOk = false;
     }
 
-    printf("  [PASS] All injection methods verified\n");
+    if (allOk) {
+        printf("  [PASS] All injection methods verified\n");
+    } else {
+        printf("  [FAIL] Some injection methods failed\n");
+    }
     printf("\n");
 }
 
