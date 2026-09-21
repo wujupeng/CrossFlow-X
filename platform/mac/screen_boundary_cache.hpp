@@ -26,7 +26,7 @@ public:
     bool isValid() const;
 
 private:
-    std::atomic<std::shared_ptr<const ScreenBoundary>> snapshot_;
+    mutable std::shared_ptr<const ScreenBoundary> snapshot_;
     std::atomic<bool> reconfigPending_{false};
 };
 

@@ -1,5 +1,15 @@
 #include "mac/screen_boundary_cache.hpp"
 
+#include <memory>
+
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable: 4996)
+#endif
+
 namespace cfx {
 
 ScreenBoundaryCache::ScreenBoundaryCache()
@@ -9,11 +19,11 @@ ScreenBoundaryCache::ScreenBoundaryCache()
 ScreenBoundaryCache::~ScreenBoundaryCache() = default;
 
 std::shared_ptr<const ScreenBoundary> ScreenBoundaryCache::getSnapshot() const {
-    return snapshot_.load(std::memory_order_acquire);
+    return std::atomic_load_explicit(&snapshot_, std::memory_order_acquire);
 }
 
 void ScreenBoundaryCache::publishSnapshot(std::shared_ptr<const ScreenBoundary> newSnapshot) {
-    snapshot_.store(std::move(newSnapshot), std::memory_order_release);
+    std::atomic_store_explicit(&snapshot_, std::move(newSnapshot), std::memory_order_release);
 }
 
 void ScreenBoundaryCache::setReconfigPending() {
@@ -25,8 +35,14 @@ bool ScreenBoundaryCache::consumeReconfigPending() {
 }
 
 bool ScreenBoundaryCache::isValid() const {
-    auto snap = snapshot_.load(std::memory_order_acquire);
+    auto snap = std::atomic_load_explicit(&snapshot_, std::memory_order_acquire);
     return snap != nullptr && snap->isValid();
 }
 
 }  // namespace cfx
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(_MSC_VER)
+#pragma warning(pop)
+#endif
