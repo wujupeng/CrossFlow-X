@@ -129,8 +129,7 @@ static void test_multi_display_merge_policy_single() {
     MultiDisplayMergePolicyConfig config;
 
     auto policy = config.loadPolicy(1);
-    CFX_TEST_CHECK(policy.has_value());
-    CFX_TEST_CHECK(policy.value() == MultiDisplayMergePolicy::MergeBoundingBox);
+    CFX_TEST_CHECK(!policy.has_value());
 }
 
 static void test_multi_display_merge_policy_multi_undeclared() {

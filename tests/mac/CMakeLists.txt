@@ -198,3 +198,12 @@ endif()
 
 add_test(NAME test_display_reconfig COMMAND test_display_reconfig)
 
+add_executable(test_multi_display_merge
+    test_multi_display_merge.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/multi_display_merge_policy.cpp
+)
+target_link_libraries(test_multi_display_merge PRIVATE cfx_platform_common)
+target_include_directories(test_multi_display_merge PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+add_test(NAME test_multi_display_merge COMMAND test_multi_display_merge)
+
