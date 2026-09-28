@@ -8,23 +8,25 @@
 
 namespace cfx {
 
+#ifdef __APPLE__
+namespace {
+void reconfigCallback(CGDirectDisplayID /*display*/,
+                      CGDisplayChangeSummaryFlags /*flags*/,
+                      void* userInfo) {
+    if (userInfo) {
+        auto* cache = static_cast<ScreenBoundaryCache*>(userInfo);
+        cache->setReconfigPending();
+    }
+}
+}  // anonymous namespace
+#endif
+
 DisplayReconfigListener::DisplayReconfigListener(ScreenBoundaryCache& cache) noexcept
     : cache_(cache) {}
 
 DisplayReconfigListener::~DisplayReconfigListener() {
     unregisterCallback();
 }
-
-#ifdef __APPLE__
-void DisplayReconfigListener::reconfigCallback(CGDirectDisplayID /*display*/,
-                                                CGDisplayChangeSummaryFlags /*flags*/,
-                                                void* userInfo) {
-    if (userInfo) {
-        auto* cache = static_cast<ScreenBoundaryCache*>(userInfo);
-        cache->setReconfigPending();
-    }
-}
-#endif
 
 bool DisplayReconfigListener::registerCallback() noexcept {
 #ifdef __APPLE__

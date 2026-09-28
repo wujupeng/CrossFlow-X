@@ -20,11 +20,6 @@ private:
     ScreenBoundaryCache& cache_;
     bool registered_{false};
 
-#ifdef __APPLE__
-    static void reconfigCallback(CGDirectDisplayID display,
-                                 CGDisplayChangeSummaryFlags flags,
-                                 void* userInfo);
-#endif
 };
 
 }  // namespace cfx
