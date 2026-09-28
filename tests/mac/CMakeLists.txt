@@ -158,3 +158,13 @@ target_include_directories(test_native_coord_normalizer PRIVATE ${CMAKE_SOURCE_D
 
 add_test(NAME test_native_coord_normalizer COMMAND test_native_coord_normalizer)
 
+add_executable(test_edge_detector
+    test_edge_detector.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/edge_detector.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/edge_overflow_spsc.cpp
+)
+target_link_libraries(test_edge_detector PRIVATE cfx_platform_common)
+target_include_directories(test_edge_detector PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+add_test(NAME test_edge_detector COMMAND test_edge_detector)
+

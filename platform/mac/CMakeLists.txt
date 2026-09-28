@@ -25,6 +25,10 @@ add_library(cfx_platform_mac STATIC
     multi_display_merge_policy.cpp
     mac_screen_query.hpp
     mac_screen_query.cpp
+    edge_detector.hpp
+    edge_detector.cpp
+    edge_overflow_spsc.hpp
+    edge_overflow_spsc.cpp
 )
 
 target_include_directories(cfx_platform_mac PUBLIC
