@@ -29,6 +29,8 @@ add_library(cfx_platform_mac STATIC
     edge_detector.cpp
     edge_overflow_spsc.hpp
     edge_overflow_spsc.cpp
+    display_reconfig_listener.hpp
+    display_reconfig_listener.cpp
 )
 
 target_include_directories(cfx_platform_mac PUBLIC

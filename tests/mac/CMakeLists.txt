@@ -168,3 +168,33 @@ target_include_directories(test_edge_detector PRIVATE ${CMAKE_SOURCE_DIR}/platfo
 
 add_test(NAME test_edge_detector COMMAND test_edge_detector)
 
+add_executable(test_screen_boundary_cache
+    test_screen_boundary_cache.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/screen_boundary_cache.cpp
+)
+target_link_libraries(test_screen_boundary_cache PRIVATE cfx_platform_common)
+target_include_directories(test_screen_boundary_cache PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+add_test(NAME test_screen_boundary_cache COMMAND test_screen_boundary_cache)
+
+add_executable(test_display_reconfig
+    test_display_reconfig.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/screen_boundary_cache.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/display_reconfig_listener.cpp
+)
+target_link_libraries(test_display_reconfig PRIVATE cfx_platform_common)
+target_include_directories(test_display_reconfig PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+if(CFX_PLATFORM_MAC)
+    find_library(DR_CORE_GRAPHICS CoreGraphics REQUIRED)
+    find_library(DR_CORE_FOUNDATION CoreFoundation REQUIRED)
+    find_library(DR_APPLICATION_SERVICES ApplicationServices REQUIRED)
+    target_link_libraries(test_display_reconfig PRIVATE
+        ${DR_CORE_GRAPHICS}
+        ${DR_CORE_FOUNDATION}
+        ${DR_APPLICATION_SERVICES}
+    )
+endif()
+
+add_test(NAME test_display_reconfig COMMAND test_display_reconfig)
+
