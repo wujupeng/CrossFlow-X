@@ -149,3 +149,12 @@ endif()
 
 add_test(NAME test_mac_screen_query COMMAND test_mac_screen_query)
 
+add_executable(test_native_coord_normalizer
+    test_native_coord_normalizer.cpp
+    ${CMAKE_SOURCE_DIR}/platform/mac/native_coord_normalizer.cpp
+)
+target_link_libraries(test_native_coord_normalizer PRIVATE cfx_platform_common)
+target_include_directories(test_native_coord_normalizer PRIVATE ${CMAKE_SOURCE_DIR}/platform)
+
+add_test(NAME test_native_coord_normalizer COMMAND test_native_coord_normalizer)
+

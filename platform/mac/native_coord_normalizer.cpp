@@ -9,7 +9,16 @@ NormalizedCoord NativeCoordNormalizer::normalizeSingleDisplay(const NativeCoord&
                                                                const NativeScreenGeometry& geometry) const noexcept {
     NormalizedCoord result;
     result.x = static_cast<int32_t>(native.x - geometry.originX);
-    result.y = static_cast<int32_t>(native.y - geometry.originY);
+
+    if (geometry.apiSource == NativeScreenGeometry::ApiSource::NSScreen) {
+        // NSScreen: left-bottom origin, y-axis up → y_flip
+        // D2_y = height - (D1_y - originY) = height + originY - D1_y
+        result.y = static_cast<int32_t>(static_cast<int64_t>(geometry.height) + geometry.originY - native.y);
+    } else {
+        // CGDisplay: left-top origin, y-axis down → direct mapping
+        result.y = static_cast<int32_t>(native.y - geometry.originY);
+    }
+
     return result;
 }
 
@@ -37,7 +46,7 @@ DisplayBoundingBox NativeCoordNormalizer::computeBoundingBox(const std::vector<N
 }
 
 NormalizedCoord NativeCoordNormalizer::normalizeMultiDisplay(const NativeCoord& native,
-                                                             const DisplayBoundingBox& bbox) const noexcept {
+                                                              const DisplayBoundingBox& bbox) const noexcept {
     NormalizedCoord result;
     result.x = static_cast<int32_t>(native.x - bbox.left);
     result.y = static_cast<int32_t>(native.y - bbox.top);
@@ -48,8 +57,8 @@ ScreenBoundary NativeCoordNormalizer::toScreenBoundary(const NativeScreenGeometr
     ScreenBoundary boundary;
     boundary.width = geometry.width;
     boundary.height = geometry.height;
-    boundary.originX = static_cast<uint32_t>(geometry.originX);
-    boundary.originY = static_cast<uint32_t>(geometry.originY);
+    boundary.originX = 0;
+    boundary.originY = 0;
     return boundary;
 }
 
@@ -57,8 +66,8 @@ ScreenBoundary NativeCoordNormalizer::toScreenBoundaryMerged(const DisplayBoundi
     ScreenBoundary boundary;
     boundary.width = static_cast<uint32_t>(bbox.right - bbox.left);
     boundary.height = static_cast<uint32_t>(bbox.bottom - bbox.top);
-    boundary.originX = static_cast<uint32_t>(bbox.left);
-    boundary.originY = static_cast<uint32_t>(bbox.top);
+    boundary.originX = 0;
+    boundary.originY = 0;
     return boundary;
 }
 

@@ -29,6 +29,7 @@ static void test_native_coord_normalizer_single_display() {
     geom.originY = 0;
     geom.width = 1920;
     geom.height = 1080;
+    geom.apiSource = NativeScreenGeometry::ApiSource::CGDisplay;
     geom.backingScaleFactor = 1.0;
 
     NativeCoord native{100, 200};
