@@ -49,6 +49,7 @@ add_subdirectory(core/s09_membership)
 add_subdirectory(platform/common)
 add_subdirectory(platform/mac)
 add_subdirectory(platform/win)
+add_subdirectory(integration)
 
 add_executable(cfx_agent src/main.cpp)
 target_link_libraries(cfx_agent PRIVATE

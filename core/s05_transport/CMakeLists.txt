@@ -2,6 +2,8 @@ add_library(cfx_s05_transport STATIC
     ${CMAKE_SOURCE_DIR}/cmake/placeholder.cpp
     i_control_plane_channel.hpp
     i_input_plane_channel.hpp
+    transport_impl.hpp
+    transport_impl.cpp
 )
 
 target_include_directories(cfx_s05_transport PUBLIC
@@ -9,3 +11,6 @@ target_include_directories(cfx_s05_transport PUBLIC
 )
 
 target_link_libraries(cfx_s05_transport PUBLIC cfx_common)
+if(CFX_PLATFORM_WIN)
+    target_link_libraries(cfx_s05_transport PUBLIC ws2_32)
+endif()
