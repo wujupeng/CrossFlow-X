@@ -8,6 +8,7 @@
 #include "common/platform_ports.hpp"
 #include "s05_transport/transport_impl.hpp"
 #include "integration/e2e_pipeline_orchestrator.hpp"
+#include "loopback_transport.hpp"
 
 #ifdef _WIN32
 #include "win/win_event_injector.hpp"
@@ -116,58 +117,46 @@ static void test_win_event_injector_release_all_pressed() {
 
 static void test_transport_impl_basic() {
     fprintf(stderr, "[TEST] test_transport_impl_basic\n");
-    TransportConfig config{};
-    config.remoteHost = "127.0.0.1";
-    config.inputPlanePort = 9999;
-    config.controlPlanePort = 10000;
-    config.isServer = false;
+    LoopbackTransportPair pair(11001, 11002);
+    CFX_TEST_CHECK(pair.client.isConnected());
+    CFX_TEST_CHECK(pair.server.isConnected());
 
-    TransportImpl transport(config);
-    CFX_TEST_CHECK(!transport.isConnected());
-
-    transport.connect();
-    CFX_TEST_CHECK(transport.isConnected());
-
-    transport.disconnect();
-    CFX_TEST_CHECK(!transport.isConnected());
+    pair.client.disconnect();
+    CFX_TEST_CHECK(!pair.client.isConnected());
 }
 
 static void test_transport_impl_send_backlog() {
     fprintf(stderr, "[TEST] test_transport_impl_send_backlog\n");
-    TransportConfig config{};
-    config.remoteHost = "127.0.0.1";
-    config.inputPlanePort = 9999;
 
-    TransportImpl transport(config);
+    TransportConfig cfg{};
+    cfg.remoteHost = "127.0.0.1";
+    cfg.inputPlanePort = 11003;
+    cfg.controlPlanePort = 11004;
+    TransportImpl unconnected(cfg);
 
     CanonicalInputEvent event{};
     event.eventType = EventType::MouseMove;
     event.payload = MouseMovePayload{10, 0};
 
-    transport.send(event);
-    CFX_TEST_CHECK(transport.backlog() == 1);
-    CFX_TEST_CHECK(transport.totalSent() == 0);
+    unconnected.send(event);
+    CFX_TEST_CHECK(unconnected.backlog() == 1);
+    CFX_TEST_CHECK(unconnected.totalSent() == 0);
 
-    transport.connect();
-    transport.send(event);
-    CFX_TEST_CHECK(transport.totalSent() == 1);
+    LoopbackTransportPair pair(11005, 11006);
+    pair.client.send(event);
+    CFX_TEST_CHECK(pair.client.totalSent() == 1);
 }
 
 static void test_e2e_pipeline_orchestrator_basic() {
     fprintf(stderr, "[TEST] test_e2e_pipeline_orchestrator_basic\n");
-    TransportConfig config{};
-    config.remoteHost = "127.0.0.1";
-    config.inputPlanePort = 9999;
-    config.controlPlanePort = 10000;
-
-    TransportImpl transport(config);
+    LoopbackTransportPair pair(11007, 11008);
     MockClock clock;
 
     E2EPipelineConfig pipelineConfig{};
     pipelineConfig.localNodeId = NodeId{1, 1};
     pipelineConfig.eventIdSeed = 100;
 
-    E2EPipelineOrchestrator orchestrator(transport, transport, clock, pipelineConfig);
+    E2EPipelineOrchestrator orchestrator(pair.client, pair.client, clock, pipelineConfig);
 
     CFX_TEST_CHECK(!orchestrator.isRunning());
     CFX_TEST_CHECK(orchestrator.start());
@@ -179,25 +168,19 @@ static void test_e2e_pipeline_orchestrator_basic() {
 
 static void test_e2e_pipeline_orchestrator_process_event() {
     fprintf(stderr, "[TEST] test_e2e_pipeline_orchestrator_process_event\n");
-    TransportConfig config{};
-    config.remoteHost = "127.0.0.1";
-    config.inputPlanePort = 9999;
-    config.controlPlanePort = 10000;
-
-    TransportImpl transport(config);
+    LoopbackTransportPair pair(11009, 11010);
     MockClock clock;
 
     E2EPipelineConfig pipelineConfig{};
     pipelineConfig.localNodeId = NodeId{1, 1};
 
-    E2EPipelineOrchestrator orchestrator(transport, transport, clock, pipelineConfig);
+    E2EPipelineOrchestrator orchestrator(pair.client, pair.client, clock, pipelineConfig);
     orchestrator.start();
 
     CanonicalInputEvent event{};
     event.eventType = EventType::MouseMove;
     event.payload = MouseMovePayload{10, 0};
 
-    transport.connect();
     orchestrator.processEvent(event);
 
     CFX_TEST_CHECK(orchestrator.totalProcessed() == 1);
@@ -208,21 +191,15 @@ static void test_e2e_pipeline_orchestrator_process_event() {
 
 static void test_e2e_pipeline_event_id_monotonic() {
     fprintf(stderr, "[TEST] test_e2e_pipeline_event_id_monotonic\n");
-    TransportConfig config{};
-    config.remoteHost = "127.0.0.1";
-    config.inputPlanePort = 9999;
-    config.controlPlanePort = 10000;
-
-    TransportImpl transport(config);
+    LoopbackTransportPair pair(11011, 11012);
     MockClock clock;
 
     E2EPipelineConfig pipelineConfig{};
     pipelineConfig.localNodeId = NodeId{1, 1};
     pipelineConfig.eventIdSeed = 1000;
 
-    E2EPipelineOrchestrator orchestrator(transport, transport, clock, pipelineConfig);
+    E2EPipelineOrchestrator orchestrator(pair.client, pair.client, clock, pipelineConfig);
     orchestrator.start();
-    transport.connect();
 
     CanonicalInputEvent event{};
     event.eventType = EventType::MouseMove;

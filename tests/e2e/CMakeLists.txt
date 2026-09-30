@@ -13,6 +13,7 @@ target_include_directories(test_e2e_pipeline PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/core
     ${CMAKE_SOURCE_DIR}/platform
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 if(CFX_PLATFORM_WIN)
@@ -41,6 +42,7 @@ target_include_directories(test_integration_support PRIVATE
     ${CMAKE_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/core
     ${CMAKE_SOURCE_DIR}/platform
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 add_test(NAME test_integration_support COMMAND test_integration_support)
@@ -53,7 +55,7 @@ set(E2E_TEST_SOURCES
 )
 
 set(E2E_TEST_LIBS cfx_common cfx_s05_transport cfx_platform_common cfx_integration)
-set(E2E_TEST_INCLUDES ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/core ${CMAKE_SOURCE_DIR}/platform)
+set(E2E_TEST_INCLUDES ${CMAKE_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/core ${CMAKE_SOURCE_DIR}/platform ${CMAKE_CURRENT_SOURCE_DIR})
 
 function(add_e2e_test name source)
     add_executable(${name} ${source} ${E2E_TEST_SOURCES})
@@ -69,3 +71,40 @@ add_e2e_test(test_e2e_04_modifier test_e2e_04_modifier.cpp)
 add_e2e_test(test_e2e_05_disconnect_resync test_e2e_05_disconnect_resync.cpp)
 add_e2e_test(test_e2e_06_release_all_pressed test_e2e_06_release_all_pressed.cpp)
 add_e2e_test(test_final_evidence test_final_evidence.cpp)
+add_executable(cross_end_test cross_end_test.cpp ${E2E_TEST_SOURCES})
+target_link_libraries(cross_end_test PRIVATE ${E2E_TEST_LIBS})
+target_include_directories(cross_end_test PRIVATE ${E2E_TEST_INCLUDES})
+add_executable(physical_e2e_runner physical_e2e_runner.cpp ${E2E_TEST_SOURCES})
+target_link_libraries(physical_e2e_runner PRIVATE ${E2E_TEST_LIBS})
+target_include_directories(physical_e2e_runner PRIVATE ${E2E_TEST_INCLUDES})
+
+if(CFX_PLATFORM_MAC)
+    target_sources(physical_e2e_runner PRIVATE
+        ${CMAKE_SOURCE_DIR}/platform/mac/mac_event_tap.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/a11y_permission_guard.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/mac_event_field_extractor.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/cg_event_normalizer.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/dual_channel_spsc.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/authoritative_resync.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/native_coord_normalizer.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/screen_boundary_cache.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/multi_display_merge_policy.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/edge_detector.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/edge_overflow_spsc.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/display_reconfig_listener.cpp
+        ${CMAKE_SOURCE_DIR}/platform/mac/mac_screen_query.cpp
+    )
+    target_link_libraries(physical_e2e_runner PRIVATE
+        "-framework ApplicationServices"
+        "-framework CoreGraphics"
+        "-framework CoreFoundation"
+        "-framework IOKit"
+    )
+endif()
+
+if(CFX_PLATFORM_WIN)
+    target_sources(physical_e2e_runner PRIVATE
+        ${CMAKE_SOURCE_DIR}/platform/win/win_event_injector.cpp
+        ${CMAKE_SOURCE_DIR}/platform/win/win_input_plane_receiver.cpp
+    )
+endif()

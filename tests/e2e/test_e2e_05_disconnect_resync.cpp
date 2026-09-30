@@ -8,6 +8,7 @@
 #include "s05_transport/transport_impl.hpp"
 #include "common/domain.hpp"
 #include "common/platform_ports.hpp"
+#include "loopback_transport.hpp"
 
 #define CHECK(cond) do { if (!(cond)) { fprintf(stderr, "CHECK FAILED: %s:%d: %s\n", __FILE__, __LINE__, #cond); std::exit(1); } } while(0)
 
@@ -28,17 +29,14 @@ private:
 static void test_e2e_05_disconnect_resync() {
     printf("[TEST] E2E-05: disconnect resync\n");
 
-    TransportConfig transportCfg{};
-    transportCfg.remoteHost = "127.0.0.1";
-    TransportImpl transport(transportCfg);
-    transport.connect();
+    LoopbackTransportPair pair(11241, 11242);
 
     StubClock clock;
     E2EPipelineConfig config{};
     config.localNodeId = makeNodeId(1, 1);
     config.enableEdgeDetection = false;
 
-    E2EPipelineOrchestrator orchestrator(transport, transport, clock, config);
+    E2EPipelineOrchestrator orchestrator(pair.client, pair.client, clock, config);
     orchestrator.start();
 
     E2EEvidenceCollector evidence;
@@ -49,7 +47,7 @@ static void test_e2e_05_disconnect_resync() {
     bool resyncCalled = false;
 
     DisconnectResyncCoordinator coordinator(
-        transport,
+        pair.client,
         drscConfig,
         [&](const PressedStateSnapshot&) -> ReleaseResult { releaseCalled = true; return {0, 0}; },
         [&]() -> PressedStateSnapshot { return PressedStateSnapshot{}; },
@@ -62,8 +60,8 @@ static void test_e2e_05_disconnect_resync() {
     CHECK(coordinator.isInputAllowed() == true);
 
     evidence.recordDisconnectEvidence(clock.nowUs(), "simulated_disconnect");
-    transport.disconnect();
-    CHECK(!transport.isConnected());
+    pair.client.disconnect();
+    CHECK(!pair.client.isConnected());
 
     CanonicalInputEvent event{};
     event.eventId = 1;
@@ -74,8 +72,8 @@ static void test_e2e_05_disconnect_resync() {
     orchestrator.processEvent(event);
 
     evidence.recordReconnectEvidence(clock.nowUs(), "simulated_reconnect");
-    transport.connect();
-    CHECK(transport.isConnected());
+    pair.client.connect();
+    CHECK(pair.client.isConnected());
 
     orchestrator.processEvent(event);
     CHECK(orchestrator.totalProcessed() >= 1);
@@ -92,7 +90,6 @@ static void test_e2e_05_disconnect_resync() {
 
     coordinator.stop();
     orchestrator.stop();
-    transport.disconnect();
 }
 
 }  // namespace cfx

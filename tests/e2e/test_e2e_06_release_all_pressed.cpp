@@ -7,6 +7,7 @@
 #include "s05_transport/transport_impl.hpp"
 #include "common/domain.hpp"
 #include "common/platform_ports.hpp"
+#include "loopback_transport.hpp"
 
 #define CHECK(cond) do { if (!(cond)) { fprintf(stderr, "CHECK FAILED: %s:%d: %s\n", __FILE__, __LINE__, #cond); std::exit(1); } } while(0)
 
@@ -23,10 +24,7 @@ private:
 static void test_e2e_06_release_all_pressed() {
     printf("[TEST] E2E-06: release all pressed\n");
 
-    TransportConfig transportCfg{};
-    transportCfg.remoteHost = "127.0.0.1";
-    TransportImpl transport(transportCfg);
-    transport.connect();
+    LoopbackTransportPair pair(11251, 11252);
 
     StubClock clock;
 
@@ -45,7 +43,7 @@ static void test_e2e_06_release_all_pressed() {
     DisconnectResyncConfig config{};
 
     DisconnectResyncCoordinator coordinator(
-        transport,
+        pair.client,
         config,
         [&](const PressedStateSnapshot& snap) -> ReleaseResult {
             u32 count = 0;
@@ -65,7 +63,7 @@ static void test_e2e_06_release_all_pressed() {
 
     evidence.recordDisconnectEvidence(clock.nowUs(), "release_all_pressed_test");
 
-    transport.disconnect();
+    pair.client.disconnect();
 
     CHECK(releasedCount > 0);
     CHECK(releasedCount >= 4);
@@ -80,7 +78,6 @@ static void test_e2e_06_release_all_pressed() {
     CHECK(records.size() == 2);
 
     coordinator.stop();
-    transport.disconnect();
 }
 
 }  // namespace cfx

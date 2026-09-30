@@ -7,6 +7,7 @@
 #include "s05_transport/transport_impl.hpp"
 #include "common/domain.hpp"
 #include "common/platform_ports.hpp"
+#include "loopback_transport.hpp"
 
 #define CHECK(cond) do { if (!(cond)) { fprintf(stderr, "CHECK FAILED: %s:%d: %s\n", __FILE__, __LINE__, #cond); std::exit(1); } } while(0)
 
@@ -36,17 +37,14 @@ private:
 static void test_e2e_04_modifier() {
     printf("[TEST] E2E-04: modifier\n");
 
-    TransportConfig transportCfg{};
-    transportCfg.remoteHost = "127.0.0.1";
-    TransportImpl transport(transportCfg);
-    transport.connect();
+    LoopbackTransportPair pair(11231, 11232);
 
     StubClock clock;
     E2EPipelineConfig config{};
     config.localNodeId = makeNodeId(1, 1);
     config.enableEdgeDetection = false;
 
-    E2EPipelineOrchestrator orchestrator(transport, transport, clock, config);
+    E2EPipelineOrchestrator orchestrator(pair.client, pair.client, clock, config);
     orchestrator.start();
 
     E2EEvidenceCollector evidence;
@@ -83,7 +81,6 @@ static void test_e2e_04_modifier() {
     CHECK(corr.pass);
 
     orchestrator.stop();
-    transport.disconnect();
 }
 
 }  // namespace cfx

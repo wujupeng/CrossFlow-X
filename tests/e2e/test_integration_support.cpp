@@ -6,24 +6,16 @@
 #include "integration/e2e_latency_probe.hpp"
 #include "integration/e2e_evidence_collector.hpp"
 #include "s05_transport/transport_impl.hpp"
+#include "loopback_transport.hpp"
 
 #define CHECK(cond) do { if (!(cond)) { fprintf(stderr, "CHECK FAILED: %s:%d: %s\n", __FILE__, __LINE__, #cond); std::exit(1); } } while(0)
 
 namespace cfx {
 
-static TransportConfig makeTestTransportConfig() {
-    TransportConfig cfg{};
-    cfg.remoteHost = "127.0.0.1";
-    cfg.inputPlanePort = 9001;
-    cfg.controlPlanePort = 9002;
-    cfg.isServer = false;
-    return cfg;
-}
-
 static void test_disconnect_resync_state_transitions() {
     printf("[TEST] test_disconnect_resync_state_transitions\n");
 
-    TransportImpl transport(makeTestTransportConfig());
+    LoopbackTransportPair pair(11101, 11102);
     DisconnectResyncConfig config{};
 
     bool releaseCalled = false;
@@ -31,7 +23,7 @@ static void test_disconnect_resync_state_transitions() {
     bool recoveryConfirmed = true;
 
     DisconnectResyncCoordinator coordinator(
-        transport,
+        pair.client,
         config,
         [&](const PressedStateSnapshot&) -> ReleaseResult { releaseCalled = true; return {0, 0}; },
         [&]() -> PressedStateSnapshot { return PressedStateSnapshot{}; },
@@ -43,11 +35,10 @@ static void test_disconnect_resync_state_transitions() {
     CHECK(coordinator.isInputAllowed() == true);
 
     coordinator.start();
-    transport.connect();
 
     LinkStateEvent disconnectEvent{};
     disconnectEvent.state = LinkState::Disconnected;
-    transport.onLinkState([&](const LinkStateEvent& e) {
+    pair.client.onLinkState([&](const LinkStateEvent& e) {
         (void)e;
     });
 
@@ -61,11 +52,11 @@ static void test_disconnect_resync_state_transitions() {
 static void test_disconnect_resync_input_gate() {
     printf("[TEST] test_disconnect_resync_input_gate\n");
 
-    TransportImpl transport(makeTestTransportConfig());
+    LoopbackTransportPair pair(11103, 11104);
     DisconnectResyncConfig config{};
 
     DisconnectResyncCoordinator coordinator(
-        transport,
+        pair.client,
         config,
         [&](const PressedStateSnapshot&) -> ReleaseResult { return {0, 0}; },
         [&]() -> PressedStateSnapshot { return PressedStateSnapshot{}; },
